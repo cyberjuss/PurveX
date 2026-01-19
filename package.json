@@ -1,0 +1,8 @@
+{
+  "dependencies": {
+    "@radix-ui/react-label": "^2.1.8",
+    "@radix-ui/react-select": "^2.2.6",
+    "date-fns": "^4.1.0",
+    "react-syntax-highlighter": "^16.1.0"
+  }
+}

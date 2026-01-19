@@ -1,0 +1,83 @@
+name: Security Scanning
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+  schedule:
+    # Run weekly on Mondays at 2 AM UTC
+    - cron: '0 2 * * 1'
+
+jobs:
+  security-scan:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+    
+    - name: Install Python dependencies
+      run: |
+        cd backend
+        pip install -r ../requirements.txt
+        pip install -r requirements-dev.txt
+        pip install safety bandit
+    
+    - name: Run Safety (Python dependency scan)
+      run: |
+        cd backend
+        safety check --json > safety-report.json || safety check
+      continue-on-error: true
+    
+    - name: Run Bandit (Python security linting)
+      run: |
+        cd backend
+        bandit -r app/ -f json -o bandit-report.json -ll || bandit -r app/ -ll
+      continue-on-error: true
+      
+    - name: Bandit Summary
+      if: always()
+      run: |
+        cd backend
+        if [ -f bandit-report.json ]; then
+          echo "## Bandit Security Scan Results" >> $GITHUB_STEP_SUMMARY
+          python -c "import json; f=open('bandit-report.json'); d=json.load(f); f.close(); print(f\"Total issues: {d.get('metrics', {}).get('_totals', {}).get('SEVERITY.HIGH', 0) + d.get('metrics', {}).get('_totals', {}).get('SEVERITY.MEDIUM', 0)}\")" >> $GITHUB_STEP_SUMMARY || echo "Could not parse bandit report" >> $GITHUB_STEP_SUMMARY
+        fi
+    
+    - name: Set up Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+    
+    - name: Install Node.js dependencies
+      run: |
+        cd frontend
+        npm ci
+    
+    - name: Run npm audit
+      run: |
+        cd frontend
+        npm audit --audit-level=moderate
+      continue-on-error: true
+    
+    - name: Run Unit Tests
+      run: |
+        cd backend
+        pytest tests/ -v --tb=short
+      continue-on-error: true
+    
+    - name: Upload security reports
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: security-reports
+        path: |
+          backend/safety-report.json
+          backend/bandit-report.json
+        retention-days: 30
+

@@ -1,0 +1,392 @@
+"use client";
+
+import { useEffect, useState, useMemo } from "react";
+import { useRouter } from "next/navigation";
+import { Card, CardContent } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { getTests, getDetections, TestWithDetectionTitle, Detection } from "@/lib/api";
+import { 
+  Clock, 
+  Activity, 
+  ShieldCheck, 
+  Sparkles, 
+  CheckCircle2, 
+  XCircle, 
+  AlertTriangle, 
+  ArrowRight,
+  Filter,
+  RefreshCw,
+  Zap,
+  Bell
+} from "lucide-react";
+import Link from "next/link";
+import { formatRelative, format, isToday, isThisWeek, isThisMonth } from "date-fns";
+import { PageContainer } from "@/components/layout/page-container";
+import { LoadingState } from "@/components/ui/loading-state";
+import { ErrorState } from "@/components/ui/error-state";
+import { cn } from "@/lib/utils";
+import { PageHeader } from "@/components/layout/page-header";
+
+type NotificationType = "test" | "detection" | "platform";
+type NotificationCategory = "all" | "tests" | "detections" | "platform";
+
+interface UnifiedNotification {
+  id: string;
+  type: NotificationType;
+  title: string;
+  description: string;
+  timestamp: Date;
+  status?: "success" | "warning" | "error" | "info";
+  actionUrl: string;
+  metadata?: {
+    techniqueId?: string;
+    environment?: string;
+    score?: number;
+    testId?: number;
+  };
+}
+
+export default function NotificationsPage() {
+  const [tests, setTests] = useState<TestWithDetectionTitle[]>([]);
+  const [detections, setDetections] = useState<Detection[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [category, setCategory] = useState<NotificationCategory>("all");
+  const [refreshing, setRefreshing] = useState(false);
+  const router = useRouter();
+
+  const loadData = async () => {
+      try {
+      setRefreshing(true);
+        setError(null);
+        const [recentTests, recentDetections] = await Promise.all([
+          getTests().catch(() => []),
+          getDetections().catch(() => []),
+        ]);
+      setTests(recentTests.slice(0, 20));
+      setDetections(recentDetections.slice(0, 10));
+      } catch (err: any) {
+        setError(err.message || "Unable to load notifications.");
+      } finally {
+        setLoading(false);
+      setRefreshing(false);
+      }
+  };
+
+  useEffect(() => {
+    // Visiting the notifications page marks test notifications as read.
+    if (typeof window !== "undefined") {
+      window.localStorage.removeItem("purvex_unread_test_notification");
+    }
+    loadData();
+  }, []);
+
+  // Transform data into unified notifications
+  const notifications = useMemo<UnifiedNotification[]>(() => {
+    const items: UnifiedNotification[] = [];
+
+    // Add test notifications
+    tests.forEach((test) => {
+      const status = test.result === "PASS" 
+        ? "success" 
+        : test.result === "FAIL" 
+        ? "error" 
+        : test.status === "running" || test.status === "qa"
+        ? "warning"
+        : "info";
+
+      items.push({
+        id: `test-${test.id}`,
+        type: "test",
+        title: test.detection_title || "Test completed",
+        description: `${test.technique_id || "Unknown technique"} · ${test.environment?.toUpperCase() || "Unknown"}`,
+        timestamp: new Date(test.started_at),
+        status,
+        actionUrl: `/tests/${test.id}`,
+        metadata: {
+          techniqueId: test.technique_id,
+          environment: test.environment,
+          score: test.score,
+          testId: test.id,
+        },
+      });
+    });
+
+    // Add detection notifications
+    detections.forEach((detection) => {
+      items.push({
+        id: `detection-${detection.id}`,
+        type: "detection",
+        title: detection.title,
+        description: `${detection.technique_id || "Unknown"} · ${detection.siem_type?.toUpperCase() || "Unknown"}`,
+        timestamp: detection.last_tested_at ? new Date(detection.last_tested_at) : new Date(detection.created_at || Date.now()),
+        status: detection.last_result === "PASS" ? "success" : detection.last_result === "FAIL" ? "error" : "info",
+        actionUrl: `/detections/${detection.id}`,
+        metadata: {
+          techniqueId: detection.technique_id,
+        },
+      });
+    });
+
+    // Sort by timestamp (newest first)
+    return items.sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
+  }, [tests, detections]);
+
+  // Filter by category
+  const filteredNotifications = useMemo(() => {
+    if (category === "all") return notifications;
+    return notifications.filter((n) => n.type === (category.slice(0, -1) as NotificationType));
+  }, [notifications, category]);
+
+  // Group by time
+  const groupedNotifications = useMemo(() => {
+    const groups: { label: string; items: UnifiedNotification[] }[] = [
+      { label: "Today", items: [] },
+      { label: "This Week", items: [] },
+      { label: "Earlier", items: [] },
+    ];
+
+    filteredNotifications.forEach((notification) => {
+      if (isToday(notification.timestamp)) {
+        groups[0].items.push(notification);
+      } else if (isThisWeek(notification.timestamp)) {
+        groups[1].items.push(notification);
+      } else {
+        groups[2].items.push(notification);
+      }
+    });
+
+    return groups.filter((group) => group.items.length > 0);
+  }, [filteredNotifications]);
+
+  const getStatusIcon = (status?: string) => {
+    switch (status) {
+      case "success":
+        return <CheckCircle2 className="h-5 w-5 text-emerald-400" />;
+      case "error":
+        return <XCircle className="h-5 w-5 text-red-400" />;
+      case "warning":
+        return <AlertTriangle className="h-5 w-5 text-amber-400" />;
+      default:
+        return <Activity className="h-5 w-5 text-slate-400" />;
+    }
+  };
+
+  const getStatusColor = (status?: string) => {
+    switch (status) {
+      case "success":
+        return "hover:border-emerald-500/40";
+      case "error":
+        return "hover:border-red-500/40";
+      case "warning":
+        return "hover:border-amber-500/40";
+      default:
+        return undefined;
+    }
+  };
+
+  const getTypeIcon = (type: NotificationType) => {
+    switch (type) {
+      case "test":
+        return <Activity className="h-4 w-4" />;
+      case "detection":
+        return <ShieldCheck className="h-4 w-4" />;
+      case "platform":
+        return <Sparkles className="h-4 w-4" />;
+    }
+  };
+
+  const unreadCount = notifications.length; // Could be enhanced with actual read/unread tracking
+
+  if (loading) {
+    return (
+      <PageContainer>
+        <LoadingState message="Loading notifications..." />
+      </PageContainer>
+    );
+  }
+
+  if (error) {
+    return (
+      <PageContainer>
+        <ErrorState
+          title="Failed to load notifications"
+          message={error}
+          onRetry={loadData}
+        />
+      </PageContainer>
+    );
+  }
+
+  return (
+    <PageContainer maxWidth="full" className={cn("p-0", refreshing && "page-refreshing")}>
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-1">
+        {/* Hero header removed per request */}
+      </div>
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-6">
+
+      {/* Category Tabs */}
+      <div className="mb-6 flex items-center gap-2 flex-wrap">
+        <Filter className="h-4 w-4 text-slate-400" />
+        {(["all", "tests", "detections", "platform"] as NotificationCategory[]).map((cat) => (
+          <Button
+            key={cat}
+            variant={category === cat ? "default" : "secondary"}
+            size="sm"
+            onClick={() => setCategory(cat)}
+            className={cn(
+              "h-8 text-xs capitalize focus-visible:ring-2 focus-visible:ring-sky-500/50 transition-all font-semibold",
+              category === cat
+                ? "bg-white text-slate-900 border-white shadow-lg"
+                : "bg-white/90 text-slate-800 border border-slate-200 hover:bg-white"
+            )}
+            aria-label={`Filter notifications by ${cat}`}
+            aria-pressed={category === cat}
+          >
+            {cat === "all" ? "All" : cat}
+            {cat === "all" && unreadCount > 0 && (
+              <Badge className="ml-2 h-4 px-1.5 text-[10px] bg-sky-500/30 text-sky-200 border-sky-400/40">
+                {unreadCount}
+              </Badge>
+            )}
+          </Button>
+        ))}
+      </div>
+
+      {/* Notifications Timeline */}
+      {filteredNotifications.length === 0 ? (
+        <Card className="elite-card">
+          <CardContent className="pt-16 pb-16 text-center">
+            <div className="relative inline-flex h-20 w-20 items-center justify-center rounded-full bg-slate-800/50 mb-6">
+              <div className="absolute inset-0 bg-sky-500/10 rounded-full animate-ping" />
+              <Bell className="h-10 w-10 text-slate-500 relative z-10" />
+                </div>
+            <p className="text-lg font-display font-semibold text-slate-200 mb-2">
+              {category === "all" ? "No notifications yet" : `No ${category} notifications`}
+            </p>
+            <p className="text-sm text-slate-400 max-w-md mx-auto">
+              {category === "all"
+                ? "When you run tests, add detections, or receive platform updates, they'll appear here."
+                : `No ${category} notifications available. Try selecting a different category.`}
+            </p>
+            {category !== "all" && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setCategory("all")}
+                className="mt-4"
+              >
+                View All Notifications
+              </Button>
+              )}
+            </CardContent>
+          </Card>
+      ) : (
+        <div className="space-y-8">
+          {groupedNotifications.map((group, groupIndex) => (
+            <div key={group.label} className="space-y-4">
+              {/* Time Group Header */}
+              <div className="flex items-center gap-3">
+                <div className="h-px flex-1 bg-gradient-to-r from-transparent via-slate-700 to-transparent" />
+                <h2 className="text-sm font-display font-semibold text-slate-900 uppercase tracking-wider">
+                  {group.label}
+                </h2>
+                <Badge variant="outline" className="text-[10px] px-2 py-0.5 bg-white/90 border-slate-200 text-slate-900">
+                  {group.items.length}
+                </Badge>
+                <div className="h-px flex-1 bg-gradient-to-r from-transparent via-slate-700 to-transparent" />
+              </div>
+
+              {/* Notifications List */}
+              <div className="space-y-3">
+                {group.items.map((notification, index) => (
+                  <Card
+                    key={notification.id}
+                    className={cn(
+                      "elite-card dynamic-card border transition-all cursor-pointer group",
+                      getStatusColor(notification.status) || ""
+                    )}
+                    style={{
+                      animation: `fadeInScale 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards`,
+                      animationDelay: `${Math.min((groupIndex * 10 + index) * 50, 500)}ms`,
+                      opacity: 0,
+                    }}
+                    onClick={() => router.push(notification.actionUrl)}
+                  >
+                    <CardContent className="p-5">
+                      <div className="flex items-start gap-4">
+                        {/* Status Icon */}
+                        <div className="mt-0.5 shrink-0">
+                          <div className="relative">
+                            <div className="absolute inset-0 bg-current opacity-20 rounded-full blur-md" />
+                            <div className="relative">
+                              {getStatusIcon(notification.status)}
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Content */}
+                        <div className="flex-1 min-w-0 space-y-2">
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-2 mb-1 flex-wrap">
+                                <div className="flex items-center gap-1.5 text-xs text-slate-400">
+                                  {getTypeIcon(notification.type)}
+                                  <span className="capitalize">{notification.type}</span>
+                                </div>
+                                {notification.metadata?.score !== undefined && (
+                                  <>
+                                    <span className="text-slate-600">·</span>
+                                    <span className="text-xs font-semibold text-emerald-400">
+                                      Score: {notification.metadata.score}
+                  </span>
+                                  </>
+                                )}
+                              </div>
+                              <h3 className="text-base font-display font-semibold text-slate-100 group-hover:text-indigo-300 transition-colors">
+                                {notification.title}
+                              </h3>
+                              <p className="text-sm text-slate-400 mt-1">
+                                {notification.description}
+                          </p>
+                        </div>
+                        <Button
+                              variant="ghost"
+                          size="sm"
+                              className="h-8 px-3 text-xs shrink-0 opacity-0 group-hover:opacity-100 transition-all"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                router.push(notification.actionUrl);
+                              }}
+                        >
+                              View
+                              <ArrowRight className="h-3.5 w-3.5 ml-1.5" />
+                        </Button>
+                          </div>
+
+                          {/* Timestamp */}
+                          <div className="flex items-center gap-1.5 text-xs text-slate-500">
+                            <Clock className="h-3.5 w-3.5" />
+                            <span>{formatRelative(notification.timestamp, new Date())}</span>
+                            {notification.metadata?.testId && (
+                              <>
+                                <span className="text-slate-600">·</span>
+                                <span className="font-mono text-slate-400">#{notification.metadata.testId}</span>
+                              </>
+                )}
+                          </div>
+                        </div>
+                      </div>
+              </CardContent>
+            </Card>
+                ))}
+          </div>
+            </div>
+          ))}
+        </div>
+      )}
+        </div>
+      </PageContainer>
+  );
+}

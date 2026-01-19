@@ -1,0 +1,929 @@
+const DEFAULT_API_URL = "http://127.0.0.1:8001";
+const LEGACY_DEFAULT_API_URLS = ["http://127.0.0.1:8000"];
+const FALLBACK_API_PORT =
+  process.env.NEXT_PUBLIC_API_PORT ||
+  process.env.NEXT_PUBLIC_API_FALLBACK_PORT ||
+  "8001";
+
+export interface Detection {
+  id: string;
+  technique_id: string;
+  title: string;
+  description?: string | null;
+  sigma_rule?: string | null;
+  siem_type: string;
+  siem_query: string;
+  owner?: string | null;
+  notes?: string | null;
+  status?: string | null;
+  criticality?: string | null;
+  created_at?: string;
+  last_updated_at?: string;
+  last_tested_at?: string | null;
+  last_pass_at?: string | null;
+  last_fail_at?: string | null;
+  last_alert_at?: string | null;
+  last_reviewed_at?: string | null;
+  last_result?: string | null;
+  lifecycle_stage?: string | null;
+}
+
+export interface DetectionAlert {
+  id: number;
+  name: string;
+  time: string;
+  severity: string;
+  host?: string | null;
+  query: string;
+  raw_event?: string;
+  test_id?: number | null;
+}
+
+export interface Test {
+  id: number;
+  detection_id?: string | null;
+  technique_id?: string | null;
+  marker?: string | null;
+  environment?: string;
+  started_at?: string;
+  finished_at?: string | null;
+  status?: string;
+}
+
+export type TestWithDetectionTitle = Test & {
+  detection_title?: string | null;
+};
+
+export interface TestArtifact {
+  id: number;
+  test_id: number;
+  atomic_command?: string | null;
+  siem_sample_events?: string | null;
+  ai_explanation?: string | null;
+  ai_suggested_rule?: string | null;
+}
+
+export type TestDetailResponse = Test & {
+  detection?: Detection | null;
+  artifact?: TestArtifact | null;
+  detection_title?: string | null;
+};
+
+export interface TestSchedule {
+  id: number;
+  detection_id?: string | null;
+  technique_id?: string | null;
+  environment?: string;
+  mode?: string;
+  schedule_type?: string;
+  run_at?: string | null;
+  cron_expression?: string | null;
+  interval_minutes?: number | null;
+  created_at?: string;
+  last_run_at?: string | null;
+  next_run_at?: string | null;
+}
+
+export interface MitreTechnique {
+  id: string;
+  name: string;
+  tactics: string[];
+  is_subtechnique?: boolean;
+}
+
+export type TwoFactorSetupResponse = {
+  qr_code?: string;
+  secret?: string;
+  backup_codes?: string[];
+  message?: string;
+};
+
+export type TwoFactorStatusResponse = {
+  enabled: boolean;
+  method?: string | null;
+  backup_codes_remaining?: number | null;
+};
+
+export type AtomicTestDefinition = Record<string, any>;
+export type OrganizationSettings = Record<string, any>;
+export type SIEMConnection = Record<string, any>;
+export type EnvironmentRunnerConfig = Record<string, any>;
+export type TestingPolicySettings = Record<string, any>;
+export type DetectionScoringSettings = Record<string, any>;
+export type AIAssistantSettings = Record<string, any>;
+
+/**
+ * Build a list of API base URLs to try.
+ * - Prefer the browser's current host with the API port (covers localhost and LAN testing).
+ * - Respect NEXT_PUBLIC_API_URL when provided (useful for production hosts or tunnels).
+ * - Always fall back to 127.0.0.1 for single-machine workflows.
+ */
+export function getApiBaseCandidates(): string[] {
+  const candidates = new Set<string>();
+
+  if (typeof window !== "undefined") {
+    try {
+      const { protocol, hostname } = window.location;
+      const derived = `${protocol}//${hostname}:${FALLBACK_API_PORT}`;
+      candidates.add(derived.replace(/\/$/, ""));
+    } catch (err) {
+      logClientError("Failed to derive browser API origin", err);
+    }
+  }
+
+  if (process.env.NEXT_PUBLIC_API_URL) {
+    candidates.add(process.env.NEXT_PUBLIC_API_URL.replace(/\/$/, ""));
+  }
+
+  candidates.add(DEFAULT_API_URL);
+  for (const legacy of LEGACY_DEFAULT_API_URLS) {
+    candidates.add(legacy);
+  }
+  return Array.from(candidates);
+}
+
+/**
+ * Minimal client-side error logger for the MVP.
+ * Currently writes to the console only -- swap to a real telemetry sink later.
+ */
+function logClientError(context: string, error: unknown) {
+  // eslint-disable-next-line no-console
+  console.error(`[PurveX] ${context}`, error);
+}
+
+function normalizeHeaders(input?: HeadersInit): Record<string, string> {
+  if (!input) return {};
+
+  if (input instanceof Headers) {
+    const result: Record<string, string> = {};
+    input.forEach((value, key) => {
+      result[key] = value;
+    });
+    return result;
+  }
+
+  if (Array.isArray(input)) {
+    return input.reduce<Record<string, string>>((acc, [key, value]) => {
+      acc[key] = value;
+      return acc;
+    }, {});
+  }
+
+  return { ...input };
+}
+
+/**
+ * Clear local session state and optionally bounce the user back to /login.
+ * This is used on hard auth failures (401/403) and when the session is stale.
+ */
+function clearSessionAndRedirect(reason: "expired" | "unauthorized") {
+  if (typeof window === "undefined") return;
+
+  try {
+    localStorage.removeItem("purvex_username");
+    localStorage.removeItem("purvex_user_role");
+    localStorage.removeItem("purvex_logged_in");
+    localStorage.removeItem("purvex_access_token");
+    localStorage.removeItem("purvex_csrf_token");
+    localStorage.removeItem("purvex_csrf_token_time");
+  } catch (err) {
+    logClientError("Failed to clear session storage", err);
+  }
+
+  // Avoid redirect loops if we're already on the login page.
+  if (window.location.pathname === "/login") return;
+
+  const search = reason ? `?reason=${reason}` : "";
+  window.location.href = `/login${search}`;
+}
+
+/**
+ * Get or fetch CSRF token for the current user.
+ * Tokens are cached in localStorage and refreshed as needed.
+ */
+async function getCsrfToken(forceRefresh = false): Promise<string | null> {
+  if (typeof window === "undefined") return null;
+
+  if (!forceRefresh) {
+    const cached = window.localStorage.getItem("purvex_csrf_token");
+    const cachedTime = window.localStorage.getItem("purvex_csrf_token_time");
+
+    // Token is valid for 1 hour, refresh if older
+    if (cached && cachedTime) {
+      const age = Date.now() - parseInt(cachedTime, 10);
+      if (age < 3600000) {
+        return cached;
+      }
+    }
+  }
+
+  // Fetch new token
+  try {
+    const apiBases = getApiBaseCandidates();
+    for (const base of apiBases) {
+      try {
+        const headers: Record<string, string> = {
+          "Content-Type": "application/json",
+        };
+
+        const res = await fetch(`${base}/auth/csrf-token`, {
+          method: "GET",
+          headers,
+          credentials: "include",
+        });
+
+        if (res.ok) {
+          const data = await res.json();
+          const csrfToken = data.csrf_token;
+          if (csrfToken) {
+            window.localStorage.setItem("purvex_csrf_token", csrfToken);
+            window.localStorage.setItem("purvex_csrf_token_time", Date.now().toString());
+            return csrfToken;
+          }
+        }
+      } catch (err) {
+        // Try next base URL
+        continue;
+      }
+    }
+  } catch (err) {
+    logClientError("Failed to fetch CSRF token", err);
+  }
+
+  return null;
+}
+
+/**
+ * Shared API helper that attaches auth (httpOnly cookies)
+ * and normalises error handling for all frontend HTTP calls.
+ *
+ * - Assumes the backend reads the primary auth token from httpOnly cookies.
+ * - Automatically includes CSRF token for state-changing requests.
+ */
+export async function apiFetch(path: string, options: RequestInit = {}) {
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    ...normalizeHeaders(options.headers),
+  };
+  const isSilent = headers["X-Purvex-Silent"] === "true";
+  if (headers["X-Purvex-Silent"]) {
+    delete headers["X-Purvex-Silent"];
+  }
+
+  const method = (options.method || "GET").toUpperCase();
+  const requiresCsrf = method !== "GET" && method !== "HEAD" && method !== "OPTIONS";
+
+  if (typeof window !== "undefined") {
+    const token = window.localStorage.getItem("purvex_access_token");
+    if (token && !headers.Authorization) {
+      headers.Authorization = `Bearer ${token}`;
+    }
+    // SECURITY: Add CSRF token for state-changing requests
+    if (requiresCsrf) {
+      const csrfToken = await getCsrfToken();
+      if (csrfToken) {
+        headers["X-CSRF-Token"] = csrfToken;
+      }
+    }
+  }
+
+  const apiBases = getApiBaseCandidates();
+  let lastNetworkError: unknown = null;
+
+  const attemptedBases: string[] = [];
+
+  for (const base of apiBases) {
+    attemptedBases.push(base);
+    let retriedCsrf = false;
+
+    while (true) {
+      try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 12000);
+        if (options.signal) {
+          if (options.signal.aborted) {
+            controller.abort();
+          } else {
+            options.signal.addEventListener("abort", () => controller.abort(), { once: true });
+          }
+        }
+        const res = await fetch(`${base}${path}`, {
+          ...options,
+          // Always send cookies for httpOnly token flows.
+          credentials: "include",
+          headers,
+          signal: controller.signal,
+        });
+        clearTimeout(timeoutId);
+
+        if (!res.ok) {
+          const text = await res.text();
+          let errorDetail = "The request failed. Please try again or contact support.";
+          let parsedError: any = null;
+
+          // Try to parse error detail from response
+          try {
+            parsedError = JSON.parse(text);
+            if (parsedError.detail) {
+              errorDetail = parsedError.detail;
+            } else if (parsedError.message) {
+              errorDetail = parsedError.message;
+            }
+          } catch {
+            // If parsing fails, use the text as-is if it's not too long
+            if (text && text.length < 200) {
+              errorDetail = text;
+            }
+          }
+
+          if (res.status === 401) {
+            if (!isSilent) {
+              logClientError(`API auth error ${res.status} on ${path}`, text);
+            }
+            let sessionValid = false;
+            try {
+              const sessionRes = await fetch(`${base}/auth/me`, {
+                credentials: "include",
+              });
+              sessionValid = sessionRes.ok;
+            } catch (err) {
+              sessionValid = false;
+            }
+
+            if (!sessionValid) {
+              clearSessionAndRedirect("expired");
+              throw new Error("Your session has expired. Please sign in again.");
+            }
+
+            throw new Error(errorDetail);
+          }
+
+          // Handle rate limiting (429) with user-friendly message
+          if (res.status === 429) {
+            if (!isSilent) {
+              logClientError(`API rate limit error ${res.status} on ${path}`, text);
+            }
+            // Extract retry-after header if available
+            const retryAfter = res.headers.get("Retry-After");
+            const retryMessage = retryAfter
+              ? `Please wait ${retryAfter} seconds before trying again.`
+              : "Too many requests. Please slow down and try again in a moment.";
+            throw new Error(retryMessage);
+          }
+
+          // Retry once with a fresh CSRF token on 403
+          if (res.status === 403 && requiresCsrf && !retriedCsrf) {
+            retriedCsrf = true;
+            const csrfToken = await getCsrfToken(true);
+            if (csrfToken) {
+              headers["X-CSRF-Token"] = csrfToken;
+            }
+            continue;
+          }
+
+          // Don't log 404 errors - they're often expected (e.g., optional resources that may not exist)
+          // For test endpoints, we'll handle 404s gracefully by returning null in getTest
+          // Still throw the error so components can handle it appropriately, but don't log it
+          if (res.status !== 404) {
+            if (!isSilent) {
+              logClientError(`API error ${res.status} on ${path}`, text);
+            }
+          }
+          // Create error without logging - let the caller handle it
+          // For test endpoints, use a silent error that won't be logged by Next.js
+          const error = res.status === 404 && path.startsWith('/tests/')
+            ? new Error() // Silent error for test 404s - no message to prevent logging
+            : new Error(errorDetail);
+          // Mark 404 errors so getTest can identify them
+          if (res.status === 404) {
+            (error as any).is404 = true;
+            // For test endpoints, mark as silent to prevent console logging
+            if (path.startsWith('/tests/')) {
+              (error as any).silent = true;
+            }
+          }
+          throw error;
+        }
+
+        if (res.status === 204) {
+          return null;
+        }
+
+        const contentLength = res.headers.get("content-length");
+        if (contentLength === "0") {
+          return null;
+        }
+
+        return res.json();
+      } catch (err) {
+        lastNetworkError = err;
+        break;
+      }
+    }
+  }
+
+  if (lastNetworkError && !isSilent) {
+    logClientError(`All API base URL attempts failed for ${path}`, {
+      attemptedBases,
+      error: lastNetworkError,
+    });
+  }
+
+  throw lastNetworkError || new Error("Unable to reach the backend API.");
+}
+export async function getDetections(): Promise<Detection[]> {
+  return apiFetch("/detections/", { cache: "no-store" });
+}
+
+export async function getDetection(id: string): Promise<Detection | null> {
+  try {
+    return await apiFetch(`/detections/${id}`, { cache: "no-store" });
+  } catch (err: any) {
+    // For optional resources, silently return null for 404s
+    const is404 = (err as any)?.is404 || 
+                  err?.message?.toLowerCase().includes("not found") || 
+                  err?.message?.toLowerCase().includes("404");
+    
+    if (is404) {
+      // Return null instead of throwing - this is expected behavior
+      return null;
+    }
+    // Re-throw other errors (network errors, auth errors, etc.)
+    throw err;
+  }
+}
+
+export async function getDetectionAlerts(detectionId: string): Promise<DetectionAlert[]> {
+  try {
+    return await apiFetch(`/detections/${detectionId}/alerts`, { cache: "no-store" });
+  } catch (err: any) {
+    // For optional resources, silently return empty array for 404s
+    const is404 = (err as any)?.is404 || 
+                  err?.message?.toLowerCase().includes("not found") || 
+                  err?.message?.toLowerCase().includes("404");
+    
+    if (is404) {
+      // Return empty array instead of throwing - this is expected behavior
+      return [] as DetectionAlert[];
+    }
+    // Re-throw other errors (network errors, auth errors, etc.)
+    throw err;
+  }
+}
+
+export async function createDetection(payload: Omit<Detection, "id">): Promise<Detection> {
+  return apiFetch("/detections/", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export type TestRunMode = "DETECTION_VALIDATION" | "ALERT_CHECK" | "TELEMETRY_CHECK";
+
+export async function runTest(
+  params: {
+    detectionId?: string | null;
+    techniqueId?: string | null;
+    environment: "lab" | "dev" | "prod";
+    mode?: TestRunMode;
+    atomic?: { atomic_test_id: string; atomic_args?: Record<string, any> };
+    labOs?: "windows" | "linux" | "both";
+  }
+): Promise<Test> {
+  const body: any = {
+    environment: params.environment,
+  };
+
+  if (params.detectionId) {
+    body.detection_id = params.detectionId;
+  }
+  if (params.techniqueId) {
+    body.technique_id = params.techniqueId;
+  }
+  if (params.mode) {
+    body.mode = params.mode;
+  }
+  if (params.atomic) {
+    Object.assign(body, params.atomic);
+  }
+  if (params.labOs) {
+    body.lab_os = params.labOs;
+  }
+
+  return apiFetch("/tests/run", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export async function getTests(): Promise<TestWithDetectionTitle[]> {
+  return apiFetch("/tests/", { cache: "no-store" });
+}
+
+export async function getTest(id: number): Promise<TestDetailResponse | null> {
+  // Use Promise.resolve to wrap the call and immediately catch 404s
+  // This prevents Next.js from logging unhandled promise rejections in development
+  return Promise.resolve(
+    apiFetch(`/tests/${id}`, {
+      cache: "no-store",
+      headers: {
+        "X-Purvex-Silent": "true",
+      },
+    })
+  )
+    .then((result) => result)
+    .catch((err: any) => {
+      // For optional resources like tests, silently return null for 404s
+      // This prevents console errors for expected scenarios (tests may be deleted)
+      const is404 = (err as any)?.is404 || 
+                    err?.message?.toLowerCase().includes("not found") || 
+                    err?.message?.toLowerCase().includes("404") ||
+                    err?.message?.toLowerCase().includes("test not found");
+      
+      if (is404) {
+        // Return null instead of throwing - this is expected behavior
+        // The promise resolves successfully with null, preventing any error logging
+        // This prevents Next.js from logging the error in development mode
+        return null;
+      }
+      // Re-throw other errors (network errors, auth errors, etc.)
+      // These are real errors that should be logged
+      throw err;
+    });
+}
+
+export async function getTestSchedules(): Promise<TestSchedule[]> {
+  return apiFetch("/tests/schedules", { cache: "no-store" });
+}
+
+export async function createTestSchedule(params: {
+  detectionId?: string | null;
+  techniqueId?: string | null;
+  environment: "lab" | "dev" | "prod";
+  mode: TestRunMode;
+  scheduleType: TestScheduleType;
+  runAt?: string | null;
+  intervalMinutes?: number | null;
+  cronExpression?: string | null;
+}): Promise<TestSchedule> {
+  const body: any = {
+    environment: params.environment,
+    mode: params.mode,
+    schedule_type: params.scheduleType,
+  };
+
+  if (params.detectionId) {
+    body.detection_id = params.detectionId;
+  }
+  if (params.techniqueId) {
+    body.technique_id = params.techniqueId;
+  }
+  if (params.runAt) {
+    body.run_at = params.runAt;
+  }
+  if (params.intervalMinutes && params.intervalMinutes > 0) {
+    body.interval_seconds = params.intervalMinutes * 60;
+  }
+  if (params.cronExpression) {
+    body.cron_expression = params.cronExpression;
+  }
+
+  return apiFetch("/tests/schedules", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export async function deleteTestSchedule(scheduleId: number): Promise<void> {
+  return apiFetch(`/tests/schedules/${scheduleId}`, {
+    method: "DELETE",
+  });
+}
+
+export async function getMitreCoverage(): Promise<any[]> {
+  return [];
+}
+
+export async function getMitreTechniques(): Promise<MitreTechnique[]> {
+  return apiFetch("/mitre/techniques", { cache: "no-store" });
+}
+
+export interface Report {
+  id: number;
+  report_id: string;
+  title: string;
+  generated_at: string;
+  start_date: string;
+  end_date: string;
+  environments: string[];
+  overall_health_score: number | null;
+  total_detections: number;
+  total_tests: number;
+  file_path: string | null;
+  file_size: number | null;
+}
+
+export interface ReportCreate {
+  start_date: string;
+  end_date: string;
+  environments: string[];
+  title?: string;
+}
+
+export async function generateReport(reportData: ReportCreate): Promise<Report> {
+  return apiFetch("/reports/generate", {
+    method: "POST",
+    body: JSON.stringify(reportData),
+  });
+}
+
+export async function getReports(): Promise<Report[]> {
+  return apiFetch("/reports", { cache: "no-store" });
+}
+
+export async function downloadReport(reportId: string): Promise<Blob> {
+  const response = await fetch(`/api/reports/${reportId}/download`, {
+    credentials: "include",
+  });
+  if (!response.ok) throw new Error("Failed to download report");
+  return response.blob();
+}
+
+export async function deleteReport(reportId: string): Promise<void> {
+  return apiFetch(`/reports/${reportId}`, {
+    method: "DELETE",
+  });
+}
+
+// --- RBAC API ---
+
+export async function getMyRoles(): Promise<string[]> {
+  return apiFetch("/rbac/me/roles", { cache: "no-store" });
+}
+
+export async function getMyPermissions(): Promise<string[]> {
+  return apiFetch("/rbac/me/permissions", { cache: "no-store" });
+}
+
+export async function getUsers(): Promise<Array<{ id: number; email: string; is_admin: boolean; is_active: boolean; created_at: string }>> {
+  return apiFetch("/rbac/users", { cache: "no-store" });
+}
+
+export async function listRoles(): Promise<Array<{ id: number; name: string; description: string; is_system: boolean }>> {
+  return apiFetch("/rbac/roles", { cache: "no-store" });
+}
+
+export async function getUserRoles(userId: number): Promise<Array<{ id: number; role_id: number; role_name: string; assigned_at: string; expires_at: string | null }>> {
+  return apiFetch(`/rbac/users/${userId}/roles`, { cache: "no-store" });
+}
+
+export async function assignRole(userId: number, roleName: string, expiresAt?: string): Promise<{ id: number; user_id: number; role_name: string; assigned_at: string }> {
+  const body: any = { role_name: roleName };
+  if (expiresAt) {
+    body.expires_at = expiresAt;
+  }
+  return apiFetch(`/rbac/users/${userId}/roles`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export async function removeRole(userId: number, roleId: number): Promise<void> {
+  return apiFetch(`/rbac/users/${userId}/roles/${roleId}`, {
+    method: "DELETE",
+  });
+}
+
+export async function setUserPassword(
+  userId: number,
+  currentPassword: string,
+  password: string
+): Promise<{ message: string }> {
+  return apiFetch(`/rbac/users/${userId}/password`, {
+    method: "POST",
+    body: JSON.stringify({ current_password: currentPassword, password }),
+  });
+}
+
+// --- 2FA API ---
+
+export async function get2FASetup(): Promise<TwoFactorSetupResponse> {
+  return apiFetch("/auth/2fa/setup", { cache: "no-store" });
+}
+
+export async function complete2FASetup(token: string): Promise<{ message: string; backup_codes: string[] }> {
+  return apiFetch("/auth/2fa/setup", {
+    method: "POST",
+    body: JSON.stringify({ token }),
+  });
+}
+
+export async function verify2FAToken(token: string, twoFactorToken: string): Promise<{ verified: boolean; method: string; access_token?: string }> {
+  return apiFetch("/auth/2fa/verify", {
+    method: "POST",
+    body: JSON.stringify({ token, two_factor_token: twoFactorToken }),
+  });
+}
+
+export async function get2FAStatus(): Promise<TwoFactorStatusResponse> {
+  return apiFetch("/auth/2fa/status", { cache: "no-store" });
+}
+
+export async function disable2FA(password: string): Promise<{ message: string }> {
+  return apiFetch("/auth/2fa/disable", {
+    method: "POST",
+    body: JSON.stringify({ password }),
+  });
+}
+
+export async function regenerateBackupCodes(): Promise<{ backup_codes: string[]; message: string }> {
+  return apiFetch("/auth/2fa/regenerate-backup-codes", {
+    method: "POST",
+  });
+}
+
+// --- Test queue maintenance ---
+
+export async function resetActiveTests(): Promise<{ cleared: number }> {
+  return apiFetch("/tests/reset-active", {
+    method: "POST",
+  });
+}
+
+// --- Atomic catalog API ---
+
+export async function getAtomicTests(params?: {
+  technique_id?: string;
+  q?: string;
+  platform?: string;
+  limit?: number;
+  offset?: number;
+}): Promise<{ items: AtomicTestDefinition[]; total: number }> {
+  const query = new URLSearchParams(
+    Object.entries(params || {}).filter(([, v]) => v !== undefined && v !== null) as [
+      string,
+      string
+    ][]
+  ).toString();
+
+  try {
+    return await apiFetch(`/atomic/tests${query ? `?${query}` : ""}`, { cache: "no-store" });
+  } catch (err) {
+    logClientError("Atomic catalog endpoint unavailable", err);
+    return { items: [], total: 0 };
+  }
+}
+
+export async function getAtomicTest(id: string): Promise<AtomicTestDefinition> {
+  return apiFetch(`/atomic/tests/${id}`, { cache: "no-store" });
+}
+
+// --- Settings API Functions ---
+
+export async function getOrganizationSettings(): Promise<OrganizationSettings> {
+  return apiFetch("/settings/organization");
+}
+
+export async function updateOrganizationSettings(payload: Omit<OrganizationSettings, "id">): Promise<OrganizationSettings> {
+  return apiFetch("/settings/organization", {
+    method: "PUT",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function getSiemConnections(): Promise<SIEMConnection[]> {
+  return apiFetch("/settings/siem-connections");
+}
+
+export async function createSiemConnection(payload: Omit<SIEMConnection, "id" | "last_validated_at">): Promise<SIEMConnection> {
+  return apiFetch("/settings/siem-connections", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function updateSiemConnection(id: number, payload: Partial<Omit<SIEMConnection, "id" | "last_validated_at">>): Promise<SIEMConnection> {
+  return apiFetch(`/settings/siem-connections/${id}`, {
+    method: "PUT",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function deleteSiemConnection(id: number): Promise<void> {
+  return apiFetch(`/settings/siem-connections/${id}`, {
+    method: "DELETE",
+  });
+}
+
+export async function getEnvironmentRunners(): Promise<EnvironmentRunnerConfig[]> {
+  return apiFetch("/settings/environment-runners");
+}
+
+export async function createEnvironmentRunner(payload: Omit<EnvironmentRunnerConfig, "id">): Promise<EnvironmentRunnerConfig> {
+  return apiFetch("/settings/environment-runners", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function updateEnvironmentRunner(id: number, payload: Partial<Omit<EnvironmentRunnerConfig, "id">>): Promise<EnvironmentRunnerConfig> {
+  return apiFetch(`/settings/environment-runners/${id}`, {
+    method: "PUT",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function deleteEnvironmentRunner(id: number): Promise<void> {
+  return apiFetch(`/settings/environment-runners/${id}`, {
+    method: "DELETE",
+  });
+}
+
+export async function getTestingPolicySettings(): Promise<TestingPolicySettings> {
+  return apiFetch("/settings/testing-policy");
+}
+
+export async function updateTestingPolicySettings(payload: Omit<TestingPolicySettings, "id">): Promise<TestingPolicySettings> {
+  return apiFetch("/settings/testing-policy", {
+    method: "PUT",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function getDetectionScoringSettings(): Promise<DetectionScoringSettings> {
+  return apiFetch("/settings/detection-scoring");
+}
+
+export async function updateDetectionScoringSettings(payload: Omit<DetectionScoringSettings, "id">): Promise<DetectionScoringSettings> {
+  return apiFetch("/settings/detection-scoring", {
+    method: "PUT",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function getAIAssistantSettings(): Promise<AIAssistantSettings> {
+  return apiFetch("/settings/ai-assistant-settings");
+}
+
+export async function updateAIAssistantSettings(payload: Omit<AIAssistantSettings, "id">): Promise<AIAssistantSettings> {
+  return apiFetch("/settings/ai-assistant-settings", {
+    method: "PUT",
+    body: JSON.stringify(payload),
+  });
+}
+
+// --- Audit Log API ---
+
+export interface AuditEvent {
+  id: number;
+  user_id: number | null;
+  user_email: string | null;
+  action: string;
+  resource_type: string | null;
+  resource_id: string | null;
+  details: string | null;
+  created_at: string;
+}
+
+export interface AuditStats {
+  total_events: number;
+  period_days: number;
+  events_by_action: Record<string, number>;
+  events_by_resource: Record<string, number>;
+  top_users: Record<string, number>;
+}
+
+export async function getAuditEvents(params?: {
+  skip?: number;
+  limit?: number;
+  action?: string;
+  resource_type?: string;
+  user_id?: number;
+  start_date?: string;
+  end_date?: string;
+  search?: string;
+}): Promise<AuditEvent[]> {
+  const query = new URLSearchParams(
+    Object.entries(params || {}).filter(([, v]) => v !== undefined && v !== null) as [
+      string,
+      string
+    ][]
+  ).toString();
+  
+  return apiFetch(`/audit/events${query ? `?${query}` : ""}`, { cache: "no-store" });
+}
+
+export async function getAuditStats(days: number = 7): Promise<AuditStats> {
+  return apiFetch(`/audit/events/stats?days=${days}`, { cache: "no-store" });
+}
+
+export async function cleanupAuditEvents(days?: number): Promise<{ deleted: number; retention_days: number; cutoff: string }> {
+  const query = days ? `?days=${days}` : "";
+  return apiFetch(`/audit/cleanup${query}`, {
+    method: "POST",
+  });
+}
+
+
+
+

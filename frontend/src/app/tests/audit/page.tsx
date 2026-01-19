@@ -1,0 +1,312 @@
+"use client";
+
+import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { Clock, Search, Eye } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { PageContainer } from "@/components/layout/page-container";
+import { PageHeader } from "@/components/layout/page-header";
+import { LoadingState } from "@/components/ui/loading-state";
+import { ErrorState } from "@/components/ui/error-state";
+import { getTests, type TestWithDetectionTitle } from "@/lib/api";
+
+type ResultFilter = "all" | "PASS" | "FAIL" | "INCONCLUSIVE" | "PENDING" | "RUNNING" | "ERROR";
+type EnvFilter = "all" | "lab" | "dev" | "prod";
+type TimeFilter = "all" | "24h" | "7d" | "30d";
+
+function formatDuration(start?: string, end?: string) {
+  if (!start || !end) return "—";
+  const startMs = new Date(start).getTime();
+  const endMs = new Date(end).getTime();
+  if (Number.isNaN(startMs) || Number.isNaN(endMs) || endMs < startMs) return "—";
+  const totalSeconds = Math.round((endMs - startMs) / 1000);
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  const mm = String(minutes).padStart(2, "0");
+  const ss = String(seconds).padStart(2, "0");
+  return `${mm}:${ss}`;
+}
+
+function getResultBadgeClass(result?: string) {
+  switch ((result || "").toUpperCase()) {
+    case "PASS":
+      return "bg-emerald-100 text-emerald-700 border border-emerald-200";
+    case "FAIL":
+      return "bg-red-100 text-red-700 border border-red-200";
+    case "INCONCLUSIVE":
+      return "bg-amber-100 text-amber-700 border border-amber-200";
+    case "PENDING":
+      return "bg-blue-100 text-blue-700 border border-blue-200";
+    case "RUNNING":
+      return "bg-yellow-100 text-yellow-700 border border-yellow-200";
+    case "ERROR":
+      return "bg-red-200 text-red-800 border border-red-300";
+    default:
+      return "bg-slate-100 text-slate-700 border border-slate-200";
+  }
+}
+
+export default function TestsAuditPage() {
+  const router = useRouter();
+  const [tests, setTests] = useState<TestWithDetectionTitle[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [resultFilter, setResultFilter] = useState<ResultFilter>("all");
+  const [envFilter, setEnvFilter] = useState<EnvFilter>("all");
+  const [timeFilter, setTimeFilter] = useState<TimeFilter>("all");
+
+  const loadData = async () => {
+    try {
+      setError(null);
+      const data = await getTests();
+      setTests(data);
+    } catch (err: any) {
+      setError(err?.message || "Failed to load test executions.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadData();
+  }, []);
+
+  const filteredTests = useMemo(() => {
+    let filtered = [...tests];
+
+    if (searchQuery.trim()) {
+      const query = searchQuery.toLowerCase();
+      filtered = filtered.filter((t) =>
+        (t.detection_title || "").toLowerCase().includes(query) ||
+        (t.technique_id || "").toLowerCase().includes(query) ||
+        t.id.toString().includes(query)
+      );
+    }
+
+    if (resultFilter !== "all") {
+      filtered = filtered.filter((t) =>
+        (t.result || t.status || "").toUpperCase() === resultFilter
+      );
+    }
+
+    if (envFilter !== "all") {
+      filtered = filtered.filter((t) =>
+        (t.environment || "").toLowerCase() === envFilter
+      );
+    }
+
+    if (timeFilter !== "all") {
+      const now = Date.now();
+      const cutoff =
+        timeFilter === "24h"
+          ? now - 24 * 60 * 60 * 1000
+          : timeFilter === "7d"
+          ? now - 7 * 24 * 60 * 60 * 1000
+          : now - 30 * 24 * 60 * 60 * 1000;
+      filtered = filtered.filter((t) => {
+        const started = new Date(t.started_at).getTime();
+        return started >= cutoff;
+      });
+    }
+
+    return filtered.sort((a, b) => new Date(b.started_at).getTime() - new Date(a.started_at).getTime());
+  }, [tests, searchQuery, resultFilter, envFilter, timeFilter]);
+
+  if (loading) {
+    return (
+      <PageContainer>
+        <LoadingState message="Loading test executions..." size="lg" />
+      </PageContainer>
+    );
+  }
+
+  if (error) {
+    return (
+      <PageContainer>
+        <ErrorState message={error} onRetry={loadData} />
+      </PageContainer>
+    );
+  }
+
+  return (
+    <PageContainer maxWidth="full" className="space-y-6 pt-2 pb-10">
+      <div className="w-full pl-0.5 pr-0 sm:pr-0">
+        <PageHeader
+          title="Test Execution Audit"
+          subtitle="Trace every run with unified, searchable execution context"
+        />
+      </div>
+
+      <Card className="border-2 border-slate-200 bg-white shadow-md">
+        <CardContent className="pt-4 pb-4">
+          <div className="flex flex-col lg:flex-row gap-3">
+            <div className="flex-1 relative">
+              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-slate-500" />
+              <Input
+                placeholder="Search by detection, technique, or test id..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="pl-9 bg-white border-slate-300 text-slate-900 placeholder:text-slate-500"
+              />
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Select value={resultFilter} onValueChange={(v: ResultFilter) => setResultFilter(v)}>
+                <SelectTrigger className="h-10 w-[150px] border-slate-300 bg-white text-slate-900">
+                  <SelectValue placeholder="Result" />
+                </SelectTrigger>
+                <SelectContent className="bg-white border border-slate-200">
+                  <SelectItem value="all">All results</SelectItem>
+                  <SelectItem value="PASS">Pass</SelectItem>
+                  <SelectItem value="FAIL">Fail</SelectItem>
+                  <SelectItem value="INCONCLUSIVE">Inconclusive</SelectItem>
+                  <SelectItem value="PENDING">Pending</SelectItem>
+                  <SelectItem value="RUNNING">Running</SelectItem>
+                  <SelectItem value="ERROR">Error</SelectItem>
+                </SelectContent>
+              </Select>
+              <Select value={envFilter} onValueChange={(v: EnvFilter) => setEnvFilter(v)}>
+                <SelectTrigger className="h-10 w-[150px] border-slate-300 bg-white text-slate-900">
+                  <SelectValue placeholder="Environment" />
+                </SelectTrigger>
+                <SelectContent className="bg-white border border-slate-200">
+                  <SelectItem value="all">All environments</SelectItem>
+                  <SelectItem value="lab">Lab</SelectItem>
+                  <SelectItem value="dev">Dev</SelectItem>
+                  <SelectItem value="prod">Prod</SelectItem>
+                </SelectContent>
+              </Select>
+              <Select value={timeFilter} onValueChange={(v: TimeFilter) => setTimeFilter(v)}>
+                <SelectTrigger className="h-10 w-[140px] border-slate-300 bg-white text-slate-900">
+                  <SelectValue placeholder="Time range" />
+                </SelectTrigger>
+                <SelectContent className="bg-white border border-slate-200">
+                  <SelectItem value="all">All time</SelectItem>
+                  <SelectItem value="24h">Last 24h</SelectItem>
+                  <SelectItem value="7d">Last 7 days</SelectItem>
+                  <SelectItem value="30d">Last 30 days</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      {filteredTests.length === 0 ? (
+        <Card className="border-2 border-slate-200 bg-white shadow-md">
+          <CardContent className="pt-12 pb-12 text-center">
+            <p className="text-lg font-semibold text-slate-900 mb-2">No test executions found</p>
+            <p className="text-sm text-slate-600">Try adjusting your filters or run a new test.</p>
+          </CardContent>
+        </Card>
+      ) : (
+        <Card className="border-2 border-slate-200 bg-white shadow-md">
+          <CardContent className="pt-4 pb-4">
+            <div className="overflow-x-auto">
+              <table className="min-w-full text-left text-[12px] text-slate-700">
+                <thead className="border-b border-slate-200 text-[10px] uppercase tracking-wider text-slate-500">
+                  <tr>
+                    <th className="py-2.5 pr-4">Time</th>
+                    <th className="py-2.5 pr-4">Finished</th>
+                    <th className="py-2.5 pr-4">Duration</th>
+                    <th className="py-2.5 pr-4">Detection</th>
+                    <th className="py-2.5 pr-4">Technique</th>
+                    <th className="py-2.5 pr-4">Atomic</th>
+                    <th className="py-2.5 pr-4">Environment</th>
+                    <th className="py-2.5 pr-4">Result</th>
+                    <th className="py-2.5 pr-4">Status</th>
+                    <th className="py-2.5 pr-4">Score</th>
+                    <th className="py-2.5 pr-4">Test ID</th>
+                    <th className="py-2.5 pr-2 text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {filteredTests.map((test) => {
+                    const result = (test.result || test.status || "N/A").toUpperCase();
+                    return (
+                      <tr
+                        key={test.id}
+                        className="hover:bg-slate-50 cursor-pointer"
+                        onClick={(e) => {
+                          if ((e.target as HTMLElement).closest("a")) {
+                            return;
+                          }
+                          router.push(`/tests/${test.id}`);
+                        }}
+                        role="button"
+                        tabIndex={0}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" || e.key === " ") {
+                            e.preventDefault();
+                            router.push(`/tests/${test.id}`);
+                          }
+                        }}
+                      >
+                        <td className="py-3 pr-4 whitespace-nowrap text-slate-600">
+                          <div className="flex items-center gap-2">
+                            <Clock className="h-3 w-3 text-slate-400" />
+                            <span>{new Date(test.started_at).toLocaleString()}</span>
+                          </div>
+                        </td>
+                        <td className="py-3 pr-4 whitespace-nowrap text-slate-600">
+                          {test.finished_at ? new Date(test.finished_at).toLocaleString() : "—"}
+                        </td>
+                        <td className="py-3 pr-4 whitespace-nowrap text-slate-600">
+                          {formatDuration(test.started_at, test.finished_at)}
+                        </td>
+                        <td className="py-3 pr-4 max-w-[260px]">
+                          <div className="text-slate-900 font-medium truncate">
+                            {test.detection_title || "No detection"}
+                          </div>
+                          {test.detection_id && (
+                            <div className="text-[11px] text-slate-500 truncate">ID: {test.detection_id}</div>
+                          )}
+                        </td>
+                        <td className="py-3 pr-4 whitespace-nowrap font-mono text-slate-600">
+                          {test.technique_id || "—"}
+                        </td>
+                        <td className="py-3 pr-4 max-w-[220px]">
+                          <span className="text-[11px] text-slate-500 truncate block">
+                            {test.marker || "—"}
+                          </span>
+                        </td>
+                        <td className="py-3 pr-4 uppercase text-slate-600">
+                          {test.environment || "—"}
+                        </td>
+                        <td className="py-3 pr-4">
+                          <Badge className={cn("text-[10px] px-2 py-0.5", getResultBadgeClass(result))}>
+                            {result}
+                          </Badge>
+                        </td>
+                        <td className="py-3 pr-4 text-slate-600">{test.status || "—"}</td>
+                        <td className="py-3 pr-4 text-slate-600">
+                          {typeof test.score === "number" ? test.score : "—"}
+                        </td>
+                        <td className="py-3 pr-4 text-slate-600">#{test.id}</td>
+                        <td className="py-3 pr-2 text-right">
+                          <Link
+                            href={`/tests/${test.id}`}
+                            onClick={(e) => e.stopPropagation()}
+                            className="inline-flex items-center gap-1 text-[11px] text-sky-600 hover:text-sky-700 font-medium"
+                          >
+                            <Eye className="h-3 w-3" />
+                            View
+                          </Link>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+    </PageContainer>
+  );
+}

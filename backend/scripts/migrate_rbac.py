@@ -1,0 +1,379 @@
+"""
+Database migration script for RBAC implementation.
+
+This script:
+1. Creates RBAC tables (roles, permissions, role_permissions, user_roles)
+2. Adds criticality field to detections
+3. Seeds default roles and permissions
+4. Migrates existing users to roles
+"""
+import asyncio
+import sys
+from pathlib import Path
+
+# Add parent directory to path
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from sqlalchemy import text
+from app.db import async_sessionmaker, async_engine
+from app.models import (
+    Role, Permission, RolePermission, UserRole, User, Detection
+)
+from app.services.rbac import Role as RoleEnum, Permission as PermissionEnum
+
+
+async def create_tables():
+    """Create RBAC tables if they don't exist."""
+    async with async_engine.begin() as conn:
+        # Create roles table
+        await conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS roles (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name VARCHAR NOT NULL UNIQUE,
+                description TEXT,
+                is_system BOOLEAN DEFAULT 0,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        """))
+        
+        # Create permissions table
+        await conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS permissions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name VARCHAR NOT NULL UNIQUE,
+                category VARCHAR NOT NULL,
+                description TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        """))
+        
+        # Create role_permissions table
+        await conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS role_permissions (
+                role_id INTEGER NOT NULL,
+                permission_id INTEGER NOT NULL,
+                PRIMARY KEY (role_id, permission_id),
+                FOREIGN KEY (role_id) REFERENCES roles(id),
+                FOREIGN KEY (permission_id) REFERENCES permissions(id)
+            )
+        """))
+        
+        # Create user_roles table
+        await conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS user_roles (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                role_id INTEGER NOT NULL,
+                organization_id INTEGER NOT NULL,
+                assigned_by INTEGER,
+                assigned_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                expires_at DATETIME,
+                FOREIGN KEY (user_id) REFERENCES users(id),
+                FOREIGN KEY (role_id) REFERENCES roles(id),
+                FOREIGN KEY (organization_id) REFERENCES organizations(id),
+                FOREIGN KEY (assigned_by) REFERENCES users(id),
+                UNIQUE(user_id, role_id, organization_id)
+            )
+        """))
+        
+        # Add criticality column to detections if it doesn't exist
+        try:
+            await conn.execute(text("""
+                ALTER TABLE detections ADD COLUMN criticality VARCHAR DEFAULT 'MEDIUM'
+            """))
+        except Exception:
+            # Column might already exist
+            pass
+        
+        await conn.commit()
+    print("✅ RBAC tables created")
+
+
+async def seed_roles():
+    """Seed default system roles."""
+    async with async_sessionmaker() as session:
+        roles_data = [
+            {
+                "name": RoleEnum.ADMINISTRATOR.value,
+                "description": "Full platform access including user management and organization settings",
+                "is_system": True,
+            },
+            {
+                "name": RoleEnum.DETECTION_ENGINEER.value,
+                "description": "Build and deploy detections to non-production environments",
+                "is_system": True,
+            },
+            {
+                "name": RoleEnum.SECURITY_ANALYST.value,
+                "description": "Test and validate detections, view results from all environments",
+                "is_system": True,
+            },
+            {
+                "name": RoleEnum.VIEWER.value,
+                "description": "Read-only access for auditing and reporting",
+                "is_system": True,
+            },
+        ]
+        
+        for role_data in roles_data:
+            result = await session.execute(
+                text("SELECT id FROM roles WHERE name = :name"),
+                {"name": role_data["name"]}
+            )
+            existing = result.scalar_one_or_none()
+            
+            if not existing:
+                await session.execute(
+                    text("""
+                        INSERT INTO roles (name, description, is_system)
+                        VALUES (:name, :description, :is_system)
+                    """),
+                    role_data
+                )
+        
+        await session.commit()
+    print("✅ Default roles seeded")
+
+
+async def seed_permissions():
+    """Seed all permissions."""
+    async with async_sessionmaker() as session:
+        # Get permission categories
+        permissions_data = []
+        
+        # Detection permissions
+        detection_perms = [
+            ("detections:create", "detections", "Create new detections"),
+            ("detections:read", "detections", "View detections"),
+            ("detections:update", "detections", "Edit detections"),
+            ("detections:delete", "detections", "Delete detections"),
+            ("detections:deploy", "detections", "Deploy detections to SIEM"),
+            ("detections:approve", "detections", "Approve detections for production"),
+            ("detections:criticality:update", "detections", "Update detection criticality"),
+        ]
+        
+        # Test permissions
+        test_perms = [
+            ("tests:create", "tests", "Create test runs"),
+            ("tests:read", "tests", "View test results"),
+            ("tests:schedule", "tests", "Schedule recurring tests"),
+            ("tests:schedule:prod", "tests", "Schedule tests in production"),
+            ("tests:run:lab", "tests", "Run tests in LAB environment"),
+            ("tests:run:dev", "tests", "Run tests in DEV environment"),
+            ("tests:run:prod", "tests", "Run tests in PROD environment"),
+        ]
+        
+        # Settings permissions
+        settings_perms = [
+            ("settings:read", "settings", "View settings"),
+            ("settings:update", "settings", "Modify settings"),
+            ("settings:siem:manage", "settings", "Manage SIEM connections"),
+            ("settings:users:manage", "settings", "Manage users and roles"),
+            ("settings:organization:manage", "settings", "Manage organization settings"),
+            ("settings:runners:manage", "settings", "Manage environment runners"),
+        ]
+        
+        # AI permissions
+        ai_perms = [
+            ("assistant:use", "assistant", "Use Watchtower AI assistant"),
+            ("assistant:configure", "assistant", "Configure AI settings"),
+        ]
+        
+        # Lifecycle permissions
+        lifecycle_perms = [
+            ("lifecycle:advance", "lifecycle", "Advance detection lifecycle stages"),
+            ("lifecycle:approve", "lifecycle", "Approve lifecycle transitions"),
+            ("lifecycle:rollback", "lifecycle", "Rollback lifecycle stages"),
+        ]
+        
+        # Reporting permissions
+        report_perms = [
+            ("reports:view", "reports", "View reports"),
+            ("reports:export", "reports", "Export reports"),
+        ]
+        
+        all_perms = detection_perms + test_perms + settings_perms + ai_perms + lifecycle_perms + report_perms
+        
+        for perm_name, category, description in all_perms:
+            result = await session.execute(
+                text("SELECT id FROM permissions WHERE name = :name"),
+                {"name": perm_name}
+            )
+            existing = result.scalar_one_or_none()
+            
+            if not existing:
+                await session.execute(
+                    text("""
+                        INSERT INTO permissions (name, category, description)
+                        VALUES (:name, :category, :description)
+                    """),
+                    {"name": perm_name, "category": category, "description": description}
+                )
+        
+        await session.commit()
+    print("✅ Permissions seeded")
+
+
+async def map_role_permissions():
+    """Map permissions to roles based on RBAC service logic."""
+    async with async_sessionmaker() as session:
+        # Get role IDs
+        admin_result = await session.execute(
+            text("SELECT id FROM roles WHERE name = 'ADMINISTRATOR'")
+        )
+        admin_id = admin_result.scalar_one()
+        
+        engineer_result = await session.execute(
+            text("SELECT id FROM roles WHERE name = 'DETECTION_ENGINEER'")
+        )
+        engineer_id = engineer_result.scalar_one()
+        
+        analyst_result = await session.execute(
+            text("SELECT id FROM roles WHERE name = 'SECURITY_ANALYST'")
+        )
+        analyst_id = analyst_result.scalar_one()
+        
+        viewer_result = await session.execute(
+            text("SELECT id FROM roles WHERE name = 'VIEWER'")
+        )
+        viewer_id = viewer_result.scalar_one()
+        
+        # Get all permission IDs
+        perm_result = await session.execute(
+            text("SELECT id, name FROM permissions")
+        )
+        all_perms = {name: id for id, name in perm_result.all()}
+        
+        # Administrator: All permissions
+        for perm_name in all_perms.keys():
+            await session.execute(
+                text("""
+                    INSERT OR IGNORE INTO role_permissions (role_id, permission_id)
+                    VALUES (:role_id, :perm_id)
+                """),
+                {"role_id": admin_id, "perm_id": all_perms[perm_name]}
+            )
+        
+        # Detection Engineer permissions
+        engineer_perms = [
+            "detections:create", "detections:read", "detections:update", "detections:deploy",
+            "tests:create", "tests:read", "tests:schedule", "tests:run:lab", "tests:run:dev",
+            "assistant:use", "lifecycle:advance", "reports:view", "reports:export",
+        ]
+        for perm_name in engineer_perms:
+            if perm_name in all_perms:
+                await session.execute(
+                    text("""
+                        INSERT OR IGNORE INTO role_permissions (role_id, permission_id)
+                        VALUES (:role_id, :perm_id)
+                    """),
+                    {"role_id": engineer_id, "perm_id": all_perms[perm_name]}
+                )
+        
+        # Security Analyst permissions
+        analyst_perms = [
+            "detections:read",
+            "tests:create", "tests:read", "tests:run:lab",
+            "assistant:use", "reports:view",
+        ]
+        for perm_name in analyst_perms:
+            if perm_name in all_perms:
+                await session.execute(
+                    text("""
+                        INSERT OR IGNORE INTO role_permissions (role_id, permission_id)
+                        VALUES (:role_id, :perm_id)
+                    """),
+                    {"role_id": analyst_id, "perm_id": all_perms[perm_name]}
+                )
+        
+        # Viewer permissions
+        viewer_perms = [
+            "detections:read", "tests:read", "reports:view",
+        ]
+        for perm_name in viewer_perms:
+            if perm_name in all_perms:
+                await session.execute(
+                    text("""
+                        INSERT OR IGNORE INTO role_permissions (role_id, permission_id)
+                        VALUES (:role_id, :perm_id)
+                    """),
+                    {"role_id": viewer_id, "perm_id": all_perms[perm_name]}
+                )
+        
+        await session.commit()
+    print("✅ Role-permission mappings created")
+
+
+async def migrate_existing_users():
+    """Migrate existing users to roles based on is_admin flag."""
+    async with async_sessionmaker() as session:
+        # Get role IDs
+        admin_result = await session.execute(
+            text("SELECT id FROM roles WHERE name = 'ADMINISTRATOR'")
+        )
+        admin_id = admin_result.scalar_one()
+        
+        engineer_result = await session.execute(
+            text("SELECT id FROM roles WHERE name = 'DETECTION_ENGINEER'")
+        )
+        engineer_id = engineer_result.scalar_one()
+        
+        # Get all users
+        users_result = await session.execute(
+            text("SELECT id, organization_id, is_admin FROM users")
+        )
+        users = users_result.all()
+        
+        for user_id, org_id, is_admin in users:
+            # Check if user already has a role
+            existing_result = await session.execute(
+                text("""
+                    SELECT id FROM user_roles 
+                    WHERE user_id = :user_id AND organization_id = :org_id
+                """),
+                {"user_id": user_id, "org_id": org_id}
+            )
+            existing = existing_result.scalar_one_or_none()
+            
+            if not existing:
+                # Assign role based on is_admin
+                role_id = admin_id if is_admin else engineer_id
+                await session.execute(
+                    text("""
+                        INSERT INTO user_roles (user_id, role_id, organization_id)
+                        VALUES (:user_id, :role_id, :org_id)
+                    """),
+                    {"user_id": user_id, "role_id": role_id, "org_id": org_id}
+                )
+        
+        await session.commit()
+    print("✅ Existing users migrated to roles")
+
+
+async def main():
+    """Run all migration steps."""
+    print("🚀 Starting RBAC migration...")
+    
+    try:
+        await create_tables()
+        await seed_roles()
+        await seed_permissions()
+        await map_role_permissions()
+        await migrate_existing_users()
+        
+        print("\n✅ RBAC migration completed successfully!")
+        print("\nNext steps:")
+        print("1. Restart the backend server")
+        print("2. Test permission checks in API endpoints")
+        print("3. Update frontend to show/hide UI based on roles")
+        
+    except Exception as e:
+        print(f"\n❌ Migration failed: {e}")
+        import traceback
+        traceback.print_exc()
+        raise
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
+
