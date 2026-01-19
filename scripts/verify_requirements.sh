@@ -3,7 +3,10 @@
 
 set -euo pipefail
 
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
 status=0
+missing_tools=()
 
 echo "Checking required tooling..."
 
@@ -19,6 +22,8 @@ if command -v python3 >/dev/null 2>&1; then
   fi
 else
   echo "python3 not found."
+  echo "Download Python 3.11+: https://www.python.org/downloads/"
+  missing_tools+=("python3")
   status=1
 fi
 
@@ -33,6 +38,8 @@ if command -v node >/dev/null 2>&1; then
   fi
 else
   echo "node not found."
+  echo "Download Node.js 18+: https://nodejs.org/en/download/"
+  missing_tools+=("node")
   status=1
 fi
 
@@ -40,15 +47,24 @@ if command -v npm >/dev/null 2>&1; then
   echo "npm: $(npm -v)"
 else
   echo "npm not found."
+  echo "npm is installed with Node.js. Download: https://nodejs.org/en/download/"
+  missing_tools+=("npm")
   status=1
 fi
 
 if [ "$status" -ne 0 ]; then
-  echo "Missing or outdated dependencies. Install requirements and retry."
+  if [ "${#missing_tools[@]}" -gt 0 ]; then
+    echo "Missing tools: ${missing_tools[*]}"
+  fi
+  echo "Install the missing tools and rerun this script."
   exit "$status"
 fi
 
 echo "All required tools are available."
+
+echo "Installing Python dependencies..."
+python3 -m pip install --upgrade pip
+python3 -m pip install -r "${ROOT_DIR}/requirements.txt"
 
 if command -v safety >/dev/null 2>&1; then
   echo "Running Python dependency scan (safety)..."
