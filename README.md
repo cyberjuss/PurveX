@@ -18,6 +18,9 @@ This setup runs PurveX locally with a CLI-first flow:
 git clone <your-private-repo-url>
 cd PurveX
 
+chmod +x scripts/verify_requirements.sh
+./scripts/verify_requirements.sh
+
 chmod +x scripts/start_purvex.sh
 ./scripts/start_purvex.sh
 ```
