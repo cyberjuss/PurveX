@@ -9,7 +9,7 @@ This setup runs PurveX locally with a CLI-first flow:
 ## Requirements (Linux)
 
 - Python 3.11+
-- Node.js 18+
+- Node.js 20.9+
 - npm
 
 ## Quickstart
@@ -18,8 +18,8 @@ This setup runs PurveX locally with a CLI-first flow:
 git clone <your-private-repo-url>
 cd PurveX
 
-chmod +x scripts/verify_requirements.sh
-./scripts/verify_requirements.sh
+chmod +x scripts/setup_purvex.sh
+./scripts/setup_purvex.sh
 
 chmod +x scripts/start_purvex.sh
 ./scripts/start_purvex.sh
@@ -39,7 +39,7 @@ admin / admin
 
 - SQLite database lives in `purvex.db`.
 - Backend API runs on `http://127.0.0.1:8001`.
-- The script installs dependencies on first run.
+- Use `scripts/setup_purvex.sh` for one-time setup, then `scripts/start_purvex.sh` to run.
 
 ## Stop
 

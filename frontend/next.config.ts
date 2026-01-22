@@ -7,6 +7,10 @@ const nextConfig: NextConfig = {
     // Tree-shake large icon libraries and chart components
     optimizePackageImports: ['lucide-react', 'recharts'],
   },
+  turbopack: {
+    // Avoid workspace root ambiguity when multiple lockfiles exist.
+    root: process.cwd(),
+  },
   // Reduce logging for faster builds
   logging: {
     fetches: {

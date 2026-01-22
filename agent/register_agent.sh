@@ -18,6 +18,9 @@ set -e
 # Default values
 API_URL="${PURVEX_API_URL:-http://localhost:8000}"
 API_TOKEN="${PURVEX_API_TOKEN:-}"
+ADMIN_TOKEN="${PURVEX_ADMIN_TOKEN:-}"
+ADMIN_EMAIL="${PURVEX_ADMIN_EMAIL:-}"
+ADMIN_PASSWORD="${PURVEX_ADMIN_PASSWORD:-}"
 ENV="${PURVEX_ENV:-lab}"
 HOSTNAME="${PURVEX_HOSTNAME:-}"
 PORT="${PURVEX_PORT:-22}"
@@ -32,6 +35,18 @@ while [[ $# -gt 0 ]]; do
             ;;
         --token)
             API_TOKEN="$2"
+            shift 2
+            ;;
+        --admin-token)
+            ADMIN_TOKEN="$2"
+            shift 2
+            ;;
+        --admin-email)
+            ADMIN_EMAIL="$2"
+            shift 2
+            ;;
+        --admin-password)
+            ADMIN_PASSWORD="$2"
             shift 2
             ;;
         --env)
@@ -58,6 +73,9 @@ while [[ $# -gt 0 ]]; do
             echo "Options:"
             echo "  --api-url URL     PurveX API base URL (default: http://localhost:8000)"
             echo "  --token TOKEN     API authentication token (required)"
+            echo "  --admin-token TOKEN    Admin JWT to mint a registration token"
+            echo "  --admin-email EMAIL    Admin email for login to mint a registration token"
+            echo "  --admin-password PASS  Admin password for login to mint a registration token"
             echo "  --env ENV         Environment name: lab, dev, or prod (default: lab)"
             echo "  --hostname NAME   Custom hostname (auto-detected if not provided)"
             echo "  --port PORT       SSH port (default: 22)"
@@ -66,6 +84,9 @@ while [[ $# -gt 0 ]]; do
             echo "Environment variables:"
             echo "  PURVEX_API_URL    API base URL"
             echo "  PURVEX_API_TOKEN  API token"
+            echo "  PURVEX_ADMIN_TOKEN     Admin JWT to mint a registration token"
+            echo "  PURVEX_ADMIN_EMAIL     Admin email for login to mint a registration token"
+            echo "  PURVEX_ADMIN_PASSWORD  Admin password for login to mint a registration token"
             echo "  PURVEX_ENV        Environment name"
             echo "  PURVEX_HOSTNAME   Custom hostname"
             echo "  PURVEX_PORT       SSH port"
@@ -80,10 +101,63 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+# Check if curl is available
+if ! command -v curl >/dev/null 2>&1; then
+    echo "❌ ERROR: 'curl' is required but not installed."
+    echo "   Install it with: apt-get install curl (Debian/Ubuntu) or yum install curl (RHEL/CentOS)"
+    exit 1
+fi
+
+api_base="${API_URL%/}"
+
+if [ -z "$API_TOKEN" ]; then
+    if [ -z "$ADMIN_TOKEN" ] && [ -n "$ADMIN_EMAIL" ] && [ -n "$ADMIN_PASSWORD" ]; then
+        login_resp=$(curl -s -w "\n%{http_code}" \
+            -X POST \
+            -H "Content-Type: application/x-www-form-urlencoded" \
+            -d "username=${ADMIN_EMAIL}&password=${ADMIN_PASSWORD}" \
+            "${api_base}/auth/login")
+        login_code=$(echo "$login_resp" | tail -n1)
+        login_body=$(echo "$login_resp" | sed '$d')
+        if [ "$login_code" -ne 200 ]; then
+            echo "❌ ERROR: Failed to authenticate admin (HTTP $login_code)."
+            echo "   Response: $login_body"
+            exit 1
+        fi
+        ADMIN_TOKEN=$(python3 - <<'PY' <<<"$login_body"
+import json,sys
+data=json.load(sys.stdin)
+print(data.get("access_token",""))
+PY
+)
+    fi
+
+    if [ -n "$ADMIN_TOKEN" ]; then
+        token_resp=$(curl -s -w "\n%{http_code}" \
+            -X POST \
+            -H "Authorization: Bearer $ADMIN_TOKEN" \
+            -H "Content-Type: application/json" \
+            "${api_base}/settings/agent-registration-token")
+        token_code=$(echo "$token_resp" | tail -n1)
+        token_body=$(echo "$token_resp" | sed '$d')
+        if [ "$token_code" -ne 200 ]; then
+            echo "❌ ERROR: Failed to mint registration token (HTTP $token_code)."
+            echo "   Response: $token_body"
+            exit 1
+        fi
+        API_TOKEN=$(python3 - <<'PY' <<<"$token_body"
+import json,sys
+data=json.load(sys.stdin)
+print(data.get("token",""))
+PY
+)
+    fi
+fi
+
 # Validate required arguments
 if [ -z "$API_TOKEN" ]; then
     echo "❌ ERROR: API token is required."
-    echo "   Provide it via --token argument or PURVEX_API_TOKEN environment variable"
+    echo "   Provide it via --token or set admin creds to mint one."
     exit 1
 fi
 
@@ -146,15 +220,8 @@ echo "  Port: $PORT"
 echo "  Username: $USERNAME"
 echo ""
 
-# Check if curl is available
-if ! command -v curl >/dev/null 2>&1; then
-    echo "❌ ERROR: 'curl' is required but not installed."
-    echo "   Install it with: apt-get install curl (Debian/Ubuntu) or yum install curl (RHEL/CentOS)"
-    exit 1
-fi
-
 # Make API request
-URL="${API_URL%/}/api/settings/environment-runners"
+URL="${api_base}/api/settings/environment-runners"
 RESPONSE=$(curl -s -w "\n%{http_code}" \
     -X POST \
     -H "Authorization: Bearer $API_TOKEN" \
@@ -186,4 +253,3 @@ else
     echo "   Response: $BODY"
     exit 1
 fi
-

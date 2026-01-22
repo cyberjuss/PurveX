@@ -69,6 +69,42 @@ def get_os_type() -> str:
         return 'unknown'
 
 
+def get_registration_token(
+    api_url: str,
+    admin_token: Optional[str] = None,
+    admin_email: Optional[str] = None,
+    admin_password: Optional[str] = None,
+) -> Optional[str]:
+    if not admin_token and admin_email and admin_password:
+        login_url = f"{api_url.rstrip('/')}/auth/login"
+        resp = requests.post(
+            login_url,
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+            data={"username": admin_email, "password": admin_password},
+            timeout=30,
+        )
+        if resp.status_code != 200:
+            print(f"ERROR: Failed to authenticate admin (HTTP {resp.status_code}).")
+            print(resp.text)
+            return None
+        admin_token = resp.json().get("access_token")
+
+    if not admin_token:
+        return None
+
+    token_url = f"{api_url.rstrip('/')}/settings/agent-registration-token"
+    resp = requests.post(
+        token_url,
+        headers={"Authorization": f"Bearer {admin_token}"},
+        timeout=30,
+    )
+    if resp.status_code != 200:
+        print(f"ERROR: Failed to mint registration token (HTTP {resp.status_code}).")
+        print(resp.text)
+        return None
+    return resp.json().get("token")
+
+
 def register_agent(
     api_url: str,
     api_token: str,
@@ -185,6 +221,9 @@ Examples:
   # Using command-line arguments:
   python3 register_agent.py --api-url http://localhost:8000 --token YOUR_TOKEN --env lab
   
+  # Mint a one-time registration token automatically:
+  python3 register_agent.py --api-url http://localhost:8000 --admin-email admin --admin-password admin --env lab
+  
   # Using environment variables:
   export PURVEX_API_URL=http://localhost:8000
   export PURVEX_API_TOKEN=YOUR_TOKEN
@@ -206,6 +245,24 @@ Examples:
         '--token',
         default=os.getenv('PURVEX_API_TOKEN'),
         help='API authentication token (or set PURVEX_API_TOKEN env var)'
+    )
+
+    parser.add_argument(
+        '--admin-token',
+        default=os.getenv('PURVEX_ADMIN_TOKEN'),
+        help='Admin JWT to mint a registration token (or set PURVEX_ADMIN_TOKEN env var)'
+    )
+
+    parser.add_argument(
+        '--admin-email',
+        default=os.getenv('PURVEX_ADMIN_EMAIL'),
+        help='Admin email for login to mint a registration token (or set PURVEX_ADMIN_EMAIL env var)'
+    )
+
+    parser.add_argument(
+        '--admin-password',
+        default=os.getenv('PURVEX_ADMIN_PASSWORD'),
+        help='Admin password for login to mint a registration token (or set PURVEX_ADMIN_PASSWORD env var)'
     )
     
     parser.add_argument(
@@ -235,10 +292,19 @@ Examples:
     
     args = parser.parse_args()
     
+    api_token = args.token
+    if not api_token:
+        api_token = get_registration_token(
+            args.api_url,
+            admin_token=args.admin_token,
+            admin_email=args.admin_email,
+            admin_password=args.admin_password,
+        )
+
     # Validate required arguments
-    if not args.token:
+    if not api_token:
         print("❌ ERROR: API token is required.")
-        print("   Provide it via --token argument or PURVEX_API_TOKEN environment variable")
+        print("   Provide it via --token or set admin creds to mint one.")
         sys.exit(1)
     
     if not args.api_url:
@@ -249,7 +315,7 @@ Examples:
     # Register the agent
     register_agent(
         api_url=args.api_url,
-        api_token=args.token,
+        api_token=api_token,
         environment=args.env,
         hostname=args.hostname,
         port=args.port,
@@ -259,4 +325,3 @@ Examples:
 
 if __name__ == '__main__':
     main()
-

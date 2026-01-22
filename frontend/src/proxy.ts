@@ -8,7 +8,7 @@ const RATE_LIMIT_MAX = 100;
 // Store: ip -> { count, expires }
 const rateLimitStore: Map<string, { count: number; expires: number }> = new Map();
 
-export function middleware(request: NextRequest) {
+export default function proxy(request: NextRequest) {
   const isDev = process.env.NODE_ENV !== "production";
 
   // Basic rate limiting for API routes.

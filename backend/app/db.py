@@ -8,7 +8,11 @@ async_engine = create_async_engine(
 )
 
 async_sessionmaker = async_sessionmaker(
-    autocommit=False, autoflush=False, bind=async_engine, class_=AsyncSession
+    autocommit=False,
+    autoflush=False,
+    expire_on_commit=False,
+    bind=async_engine,
+    class_=AsyncSession,
 )
 
 Base = declarative_base()
