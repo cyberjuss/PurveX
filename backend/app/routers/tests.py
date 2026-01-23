@@ -158,6 +158,18 @@ async def run_test(
         # 2. Create Test row
         # Generate marker here to ensure it's available for the pipeline and consistent
         marker = generate_marker(test_run.environment)
+        initiated_by_username = getattr(current_user, "username", None) or (safe_user_email.split("@")[0] if safe_user_email else None)
+        initiated_by_role = None
+        if safe_user_id:
+            try:
+                from ..services.rbac import RBACService
+                rbac = RBACService(db)
+                roles = await rbac.get_user_roles(safe_user_id, org_id)
+                if roles:
+                    initiated_by_role = roles[0].value
+            except Exception:
+                initiated_by_role = None
+
         db_test = models.Test(
             organization_id=org_id,
             detection_id=test_run.detection_id,
@@ -165,6 +177,11 @@ async def run_test(
             environment=test_run.environment,
             status="pending",  # Will be set to "running" in pipeline
             marker=marker,
+            endpoint=test_run.endpoint,
+            initiated_by_user_id=safe_user_id,
+            initiated_by_email=safe_user_email,
+            initiated_by_username=initiated_by_username,
+            initiated_by_role=initiated_by_role,
             started_at=datetime.utcnow(),
         )
         db.add(db_test)

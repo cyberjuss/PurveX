@@ -34,7 +34,7 @@ function getApiUrl(): string {
   if (typeof window !== "undefined") {
     return `${window.location.protocol}//${window.location.hostname}:${process.env.NEXT_PUBLIC_API_PORT || "8001"}`;
   }
-  return "http://localhost:8000";
+  return "http://127.0.0.1:8001";
 }
 
 // Helper function to get agent script content
@@ -47,16 +47,28 @@ function getAgentScript(type: "bash" | "powershell" | "python", apiUrl: string):
 set -e
 
 API_URL="${apiUrl}"
-API_TOKEN="YOUR_TOKEN_HERE"
+API_TOKEN=""
 ENV="lab"
 HOSTNAME=""
 PORT="22"
 USERNAME="${"${USER:-purvex}"}"
 
+read_prompt() {
+    local __var="$1"
+    local __prompt="$2"
+    local __value=""
+    if [ -r /dev/tty ]; then
+        IFS= read -r -p "$__prompt" __value < /dev/tty || true
+    else
+        IFS= read -r -p "$__prompt" __value || true
+    fi
+    eval "$__var=\"\$__value\""
+}
+
 while [[ $# -gt 0 ]]; do
     case $1 in
+        --api-url=*) API_URL="\${1#*=}"; shift 1 ;;
         --api-url) API_URL="$2"; shift 2 ;;
-        --token) API_TOKEN="$2"; shift 2 ;;
         --env) ENV="$2"; shift 2 ;;
         --hostname) HOSTNAME="$2"; shift 2 ;;
         --port) PORT="$2"; shift 2 ;;
@@ -65,9 +77,33 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+if ! command -v curl >/dev/null 2>&1; then
+    echo "❌ ERROR: 'curl' is required but not installed."
+    echo "   Install it with: apt-get install curl (Debian/Ubuntu) or yum install curl (RHEL/CentOS)"
+    exit 1
+fi
+
+api_base="\${API_URL%/}"
+
+if [ -z "$API_TOKEN" ]; then
+    read_prompt input_api "PurveX API URL [\${API_URL}]: "
+    if [ -n "$input_api" ]; then
+        API_URL="$input_api"
+        api_base="\${API_URL%/}"
+    fi
+    read_prompt input_env "Environment [lab/dev/prod] (\${ENV}): "
+    if [ -n "$input_env" ]; then
+        ENV="$input_env"
+    fi
+    while [ -z "$API_TOKEN" ]; do
+        read_prompt API_TOKEN "Registration token: "
+        API_TOKEN="$(printf "%s" "$API_TOKEN" | tr -d '\r')"
+    done
+fi
+
 if [ -z "$API_TOKEN" ] || [ "$API_TOKEN" = "YOUR_TOKEN_HERE" ]; then
-    echo "❌ ERROR: API token is required."
-    echo "   Provide it via --token argument or set API_TOKEN variable"
+    echo "ERROR: Registration token is required."
+    echo "   Please paste the token when prompted."
     exit 1
 fi
 
@@ -94,6 +130,10 @@ REGISTRATION_DATA=$(cat <<EOF
   "hostname": "$HOSTNAME",
   "port": $PORT,
   "username": "$USERNAME",
+  "os": "$(uname -s 2>/dev/null || echo "Unknown")",
+  "ip_address": "$LOCAL_IP",
+  "agent_version": "v1.0.0",
+  "status": "online",
   "auth_method": "key",
   "allowed_test_types": "[\\"Atomic only\\"]",
   "max_concurrent_tests": 1,
@@ -110,13 +150,7 @@ echo "  IP Address: $LOCAL_IP"
 echo "  Environment: $ENV"
 echo ""
 
-if ! command -v curl >/dev/null 2>&1; then
-    echo "❌ ERROR: 'curl' is required but not installed."
-    echo "   Install it with: apt-get install curl (Debian/Ubuntu) or yum install curl (RHEL/CentOS)"
-    exit 1
-fi
-
-URL="${apiUrl}/api/settings/environment-runners"
+URL="\${api_base}/settings/environment-runners"
 RESPONSE=$(curl -s -w "\\n%{http_code}" -X POST -H "Authorization: Bearer $API_TOKEN" -H "Content-Type: application/json" -d "$REGISTRATION_DATA" "$URL" 2>&1)
 
 HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
@@ -128,6 +162,55 @@ if [ "$HTTP_CODE" -eq 201 ] || [ "$HTTP_CODE" -eq 200 ]; then
     if [ -n "$RUNNER_ID" ]; then
         echo "   Runner ID: $RUNNER_ID"
     fi
+    if [ -n "$RUNNER_ID" ]; then
+        OS_NAME=$(uname -s 2>/dev/null || echo "Unknown")
+        HB_PAYLOAD=$(cat <<EOF
+{
+  "os": "$OS_NAME",
+  "ip_address": "$LOCAL_IP",
+  "agent_version": "v1.0.0",
+  "status": "online"
+}
+EOF
+)
+        curl -s -X POST -H "Authorization: Bearer $API_TOKEN" -H "Content-Type: application/json" \
+          -d "$HB_PAYLOAD" "\${api_base}/settings/environment-runners/\${RUNNER_ID}/heartbeat" >/dev/null 2>&1 || true
+        if command -v systemctl >/dev/null 2>&1; then
+            HB_SCRIPT="/usr/local/bin/purvex-agent-heartbeat.sh"
+            HB_UNIT="/etc/systemd/system/purvex-agent-heartbeat.service"
+            sudo tee "$HB_SCRIPT" >/dev/null <<EOF
+#!/bin/bash
+API_URL="\${API_URL}"
+API_TOKEN="\${API_TOKEN}"
+RUNNER_ID="\${RUNNER_ID}"
+while true; do
+  OS_NAME=\$(uname -s 2>/dev/null || echo "Unknown")
+  LOCAL_IP=\$(hostname -I 2>/dev/null | awk '{print $1}' || echo "127.0.0.1")
+  curl -s -X POST -H "Authorization: Bearer \${API_TOKEN}" -H "Content-Type: application/json" \\
+    -d "{\"os\":\"\${OS_NAME}\",\"ip_address\":\"\${LOCAL_IP}\",\"agent_version\":\"v1.0.0\",\"status\":\"online\"}" \\
+    "\${API_URL%/}/settings/environment-runners/\${RUNNER_ID}/heartbeat" >/dev/null 2>&1 || true
+  sleep 60
+done
+EOF
+            sudo chmod +x "$HB_SCRIPT"
+            sudo tee "$HB_UNIT" >/dev/null <<EOF
+[Unit]
+Description=PurveX Agent Heartbeat
+After=network-online.target
+
+[Service]
+Type=simple
+ExecStart=$HB_SCRIPT
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+EOF
+            sudo systemctl daemon-reload
+            sudo systemctl enable --now purvex-agent-heartbeat.service >/dev/null 2>&1 || true
+        fi
+    fi
 elif [ "$HTTP_CODE" -eq 403 ]; then
     echo "❌ ERROR: Access denied. Check your API token and ensure you have admin privileges."
     exit 1
@@ -135,6 +218,71 @@ elif [ "$HTTP_CODE" -eq 409 ]; then
     echo "⚠️  WARNING: A runner with this hostname already exists."
     exit 1
 else
+    if [ "$HTTP_CODE" -eq 404 ]; then
+        URL="\${api_base}/api/settings/environment-runners"
+        RESPONSE=$(curl -s -w "\\n%{http_code}" -X POST -H "Authorization: Bearer $API_TOKEN" -H "Content-Type: application/json" -d "$REGISTRATION_DATA" "$URL" 2>&1)
+
+        HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+        BODY=$(echo "$RESPONSE" | sed '$d')
+
+        if [ "$HTTP_CODE" -eq 201 ] || [ "$HTTP_CODE" -eq 200 ]; then
+            echo "✅ Successfully registered with PurveX!"
+            RUNNER_ID=$(echo "$BODY" | grep -o '"id":[0-9]*' | grep -o '[0-9]*' | head -1)
+            if [ -n "$RUNNER_ID" ]; then
+                echo "   Runner ID: $RUNNER_ID"
+            fi
+            if [ -n "$RUNNER_ID" ]; then
+                OS_NAME=$(uname -s 2>/dev/null || echo "Unknown")
+                HB_PAYLOAD=$(cat <<EOF
+{
+  "os": "$OS_NAME",
+  "ip_address": "$LOCAL_IP",
+  "agent_version": "v1.0.0",
+  "status": "online"
+}
+EOF
+)
+                curl -s -X POST -H "Authorization: Bearer $API_TOKEN" -H "Content-Type: application/json" \
+                  -d "$HB_PAYLOAD" "\${api_base}/settings/environment-runners/\${RUNNER_ID}/heartbeat" >/dev/null 2>&1 || true
+                if command -v systemctl >/dev/null 2>&1; then
+                    HB_SCRIPT="/usr/local/bin/purvex-agent-heartbeat.sh"
+                    HB_UNIT="/etc/systemd/system/purvex-agent-heartbeat.service"
+                    sudo tee "$HB_SCRIPT" >/dev/null <<EOF
+#!/bin/bash
+API_URL="\${API_URL}"
+API_TOKEN="\${API_TOKEN}"
+RUNNER_ID="\${RUNNER_ID}"
+while true; do
+  OS_NAME=\$(uname -s 2>/dev/null || echo "Unknown")
+  LOCAL_IP=\$(hostname -I 2>/dev/null | awk '{print $1}' || echo "127.0.0.1")
+  curl -s -X POST -H "Authorization: Bearer \${API_TOKEN}" -H "Content-Type: application/json" \\
+    -d "{\"os\":\"\${OS_NAME}\",\"ip_address\":\"\${LOCAL_IP}\",\"agent_version\":\"v1.0.0\",\"status\":\"online\"}" \\
+    "\${API_URL%/}/settings/environment-runners/\${RUNNER_ID}/heartbeat" >/dev/null 2>&1 || true
+  sleep 60
+done
+EOF
+                    sudo chmod +x "$HB_SCRIPT"
+                    sudo tee "$HB_UNIT" >/dev/null <<EOF
+[Unit]
+Description=PurveX Agent Heartbeat
+After=network-online.target
+
+[Service]
+Type=simple
+ExecStart=$HB_SCRIPT
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+EOF
+                    sudo systemctl daemon-reload
+                    sudo systemctl enable --now purvex-agent-heartbeat.service >/dev/null 2>&1 || true
+                fi
+            fi
+            exit 0
+        fi
+    fi
     echo "❌ ERROR: HTTP $HTTP_CODE"
     echo "   Response: $BODY"
     exit 1
@@ -146,6 +294,10 @@ fi`;
 param(
     [string]$ApiUrl = "${apiUrl}",
     [string]$Token = "YOUR_TOKEN_HERE",
+    [string]$AdminToken = "",
+    [string]$AdminUsername = "",
+    [string]$AdminEmail = "",
+    [string]$AdminPassword = "",
     [string]$Env = "lab",
     [string]$Hostname = $env:COMPUTERNAME,
     [int]$Port = 22,
@@ -153,8 +305,44 @@ param(
 )
 
 if ([string]::IsNullOrEmpty($Token) -or $Token -eq "YOUR_TOKEN_HERE") {
+    if ([string]::IsNullOrEmpty($AdminToken) -and [string]::IsNullOrEmpty($AdminUsername) -and [string]::IsNullOrEmpty($AdminEmail) -and [string]::IsNullOrEmpty($AdminPassword)) {
+        $inputApi = Read-Host "PurveX API URL [$ApiUrl]"
+        if (-not [string]::IsNullOrEmpty($inputApi)) {
+            $ApiUrl = $inputApi
+        }
+        $AdminUsername = Read-Host "Admin username"
+        $securePass = Read-Host "Admin password" -AsSecureString
+        $AdminPassword = [Runtime.InteropServices.Marshal]::PtrToStringAuto([Runtime.InteropServices.Marshal]::SecureStringToBSTR($securePass))
+    }
+
+    $adminUser = if (-not [string]::IsNullOrEmpty($AdminUsername)) { $AdminUsername } else { $AdminEmail }
+    if ([string]::IsNullOrEmpty($AdminToken) -and -not [string]::IsNullOrEmpty($adminUser) -and -not [string]::IsNullOrEmpty($AdminPassword)) {
+        $loginUrl = "$($ApiUrl.TrimEnd('/'))/auth/login"
+        $loginBody = "username=$adminUser&password=$AdminPassword"
+        try {
+            $loginResp = Invoke-RestMethod -Uri $loginUrl -Method Post -Body $loginBody -ContentType "application/x-www-form-urlencoded" -ErrorAction Stop
+            $AdminToken = $loginResp.access_token
+        } catch {
+            Write-Host "❌ ERROR: Failed to authenticate admin." -ForegroundColor Red
+            exit 1
+        }
+    }
+
+    if (-not [string]::IsNullOrEmpty($AdminToken)) {
+        $tokenUrl = "$($ApiUrl.TrimEnd('/'))/settings/agent-registration-token"
+        try {
+            $tokenResp = Invoke-RestMethod -Uri $tokenUrl -Method Post -Headers @{ Authorization = "Bearer $AdminToken" } -ErrorAction Stop
+            $Token = $tokenResp.token
+        } catch {
+            Write-Host "❌ ERROR: Failed to mint registration token." -ForegroundColor Red
+            exit 1
+        }
+    }
+}
+
+if ([string]::IsNullOrEmpty($Token) -or $Token -eq "YOUR_TOKEN_HERE") {
     Write-Host "❌ ERROR: API token is required." -ForegroundColor Red
-    Write-Host "   Provide it via -Token parameter" -ForegroundColor Yellow
+    Write-Host "   Provide it via -Token or set admin creds to mint one." -ForegroundColor Yellow
     exit 1
 }
 
@@ -174,6 +362,10 @@ $RegistrationData = @{
     hostname = $Hostname
     port = $Port
     username = $Username
+    os = (Get-CimInstance Win32_OperatingSystem).Caption
+    ip_address = $LocalIP
+    agent_version = "v1.0.0"
+    status = "online"
     auth_method = "key"
     allowed_test_types = '["Atomic only"]'
     max_concurrent_tests = 1
@@ -188,7 +380,7 @@ Write-Host "  IP Address: $LocalIP" -ForegroundColor White
 Write-Host "  Environment: $Env" -ForegroundColor White
 Write-Host ""
 
-$Url = "$($ApiUrl.TrimEnd('/'))/api/settings/environment-runners"
+$Url = "$($ApiUrl.TrimEnd('/'))/settings/environment-runners"
 $Headers = @{
     "Authorization" = "Bearer $Token"
     "Content-Type" = "application/json"
@@ -200,10 +392,83 @@ try {
     Write-Host "   Runner ID: $($Response.id)" -ForegroundColor White
     Write-Host "   Environment: $($Response.environment_name)" -ForegroundColor White
     Write-Host "   Hostname: $($Response.hostname)" -ForegroundColor White
+    if ($Response.id) {
+        $hbBody = @{
+            os = (Get-CimInstance Win32_OperatingSystem).Caption
+            ip_address = $LocalIP
+            agent_version = "v1.0.0"
+            status = "online"
+        } | ConvertTo-Json
+        $hbUrl = "$($ApiUrl.TrimEnd('/'))/settings/environment-runners/$($Response.id)/heartbeat"
+        Invoke-RestMethod -Uri $hbUrl -Method Post -Headers $Headers -Body $hbBody -ContentType "application/json" -ErrorAction SilentlyContinue | Out-Null
+        $taskScript = Join-Path $env:ProgramData "PurveX\\purvex-heartbeat.ps1"
+        New-Item -ItemType Directory -Path (Split-Path $taskScript) -Force | Out-Null
+        @"
+\$ApiUrl = "$ApiUrl"
+\$Token = "$Token"
+\$RunnerId = "$($Response.id)"
+while (\$true) {
+  \$os = (Get-CimInstance Win32_OperatingSystem).Caption
+  \$ip = (Get-NetIPAddress -AddressFamily IPv4 | Where-Object { \$_.IPAddress -notlike "127.*" -and \$_.IPAddress -notlike "169.254.*" } | Select-Object -First 1).IPAddress
+  \$body = @{ os = \$os; ip_address = \$ip; agent_version = "v1.0.0"; status = "online" } | ConvertTo-Json
+  try {
+    Invoke-RestMethod -Uri "\$((\$ApiUrl.TrimEnd('/')))/settings/environment-runners/\$RunnerId/heartbeat" -Method Post -Headers @{ Authorization = "Bearer \$Token" } -Body \$body -ContentType "application/json" -ErrorAction SilentlyContinue | Out-Null
+  } catch {}
+  Start-Sleep -Seconds 60
+}
+"@ | Set-Content -Path $taskScript -Encoding UTF8
+        $action = New-ScheduledTaskAction -Execute 'PowerShell.exe' -Argument ('-NoProfile -ExecutionPolicy Bypass -File "' + $taskScript + '"')
+        $trigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) -RepetitionInterval (New-TimeSpan -Minutes 1) -RepetitionDuration (New-TimeSpan -Days 3650)
+        Register-ScheduledTask -TaskName "PurveX Agent Heartbeat" -Action $action -Trigger $trigger -Force | Out-Null
+    }
 }
 catch {
     $StatusCode = $_.Exception.Response.StatusCode.value__
     $ErrorBody = $_.ErrorDetails.Message
+    if ($StatusCode -eq 404) {
+        try {
+            $Url = "$($ApiUrl.TrimEnd('/'))/api/settings/environment-runners"
+            $Response = Invoke-RestMethod -Uri $Url -Method Post -Headers $Headers -Body $RegistrationData -ContentType "application/json" -ErrorAction Stop
+            Write-Host "✅ Successfully registered with PurveX!" -ForegroundColor Green
+            Write-Host "   Runner ID: $($Response.id)" -ForegroundColor White
+            Write-Host "   Environment: $($Response.environment_name)" -ForegroundColor White
+            Write-Host "   Hostname: $($Response.hostname)" -ForegroundColor White
+            if ($Response.id) {
+                $hbBody = @{
+                    os = (Get-CimInstance Win32_OperatingSystem).Caption
+                    ip_address = $LocalIP
+                    agent_version = "v1.0.0"
+                    status = "online"
+                } | ConvertTo-Json
+                $hbUrl = "$($ApiUrl.TrimEnd('/'))/settings/environment-runners/$($Response.id)/heartbeat"
+                Invoke-RestMethod -Uri $hbUrl -Method Post -Headers $Headers -Body $hbBody -ContentType "application/json" -ErrorAction SilentlyContinue | Out-Null
+                $taskScript = Join-Path $env:ProgramData "PurveX\\purvex-heartbeat.ps1"
+                New-Item -ItemType Directory -Path (Split-Path $taskScript) -Force | Out-Null
+                @"
+\$ApiUrl = "$ApiUrl"
+\$Token = "$Token"
+\$RunnerId = "$($Response.id)"
+while (\$true) {
+  \$os = (Get-CimInstance Win32_OperatingSystem).Caption
+  \$ip = (Get-NetIPAddress -AddressFamily IPv4 | Where-Object { \$_.IPAddress -notlike "127.*" -and \$_.IPAddress -notlike "169.254.*" } | Select-Object -First 1).IPAddress
+  \$body = @{ os = \$os; ip_address = \$ip; agent_version = "v1.0.0"; status = "online" } | ConvertTo-Json
+  try {
+    Invoke-RestMethod -Uri "\$((\$ApiUrl.TrimEnd('/')))/settings/environment-runners/\$RunnerId/heartbeat" -Method Post -Headers @{ Authorization = "Bearer \$Token" } -Body \$body -ContentType "application/json" -ErrorAction SilentlyContinue | Out-Null
+  } catch {}
+  Start-Sleep -Seconds 60
+}
+"@ | Set-Content -Path $taskScript -Encoding UTF8
+                $action = New-ScheduledTaskAction -Execute 'PowerShell.exe' -Argument ('-NoProfile -ExecutionPolicy Bypass -File "' + $taskScript + '"')
+                $trigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) -RepetitionInterval (New-TimeSpan -Minutes 1) -RepetitionDuration (New-TimeSpan -Days 3650)
+                Register-ScheduledTask -TaskName "PurveX Agent Heartbeat" -Action $action -Trigger $trigger -Force | Out-Null
+            }
+            exit 0
+        }
+        catch {
+            $StatusCode = $_.Exception.Response.StatusCode.value__
+            $ErrorBody = $_.ErrorDetails.Message
+        }
+    }
     if ($StatusCode -eq 403) {
         Write-Host "❌ ERROR: Access denied. Check your API token and ensure you have admin privileges." -ForegroundColor Red
     }
@@ -230,6 +495,8 @@ import sys
 import socket
 import argparse
 from typing import Optional
+from getpass import getpass
+from getpass import getpass
 
 try:
     import requests
@@ -267,6 +534,10 @@ def register_agent(api_url: str, api_token: str, environment: str, hostname: Opt
         "hostname": hostname,
         "port": port,
         "username": username,
+        "os": os.uname().sysname if hasattr(os, "uname") else "Unknown",
+        "ip_address": get_local_ip(),
+        "agent_version": "v1.0.0",
+        "status": "online",
         "auth_method": "key",
         "allowed_test_types": '["Atomic only"]',
         "max_concurrent_tests": 1,
@@ -274,27 +545,85 @@ def register_agent(api_url: str, api_token: str, environment: str, hostname: Opt
         "alert_offline_minutes": 5
     }
     
-    url = f"{api_url.rstrip('/')}/api/settings/environment-runners"
+    url = f"{api_url.rstrip('/')}/settings/environment-runners"
     headers = {
         "Authorization": f"Bearer {api_token}",
         "Content-Type": "application/json"
     }
     
-    print(f"Connecting to PurveX at: {api_url}")
-    print(f"Registering agent:")
-    print(f"  Hostname: {hostname}")
+    print("PurveX Agent Registration")
+    print("-" * 40)
+    print(f"API URL     : {api_url}")
+    print("Agent Info  :")
+    print(f"  Hostname  : {hostname}")
     print(f"  IP Address: {get_local_ip()}")
     print(f"  Environment: {environment}")
     print()
     
     try:
         response = requests.post(url, json=registration_data, headers=headers, timeout=30)
+        if response.status_code == 404:
+            url = f"{api_url.rstrip('/')}/api/settings/environment-runners"
+            response = requests.post(url, json=registration_data, headers=headers, timeout=30)
         response.raise_for_status()
         result = response.json()
-        print("✅ Successfully registered with PurveX!")
-        print(f"   Runner ID: {result.get('id')}")
-        print(f"   Environment: {result.get('environment_name')}")
-        print(f"   Hostname: {result.get('hostname')}")
+        print("Status      : Registered")
+        print(f"Runner ID   : {result.get('id')}")
+        print(f"Environment : {result.get('environment_name')}")
+        print(f"Hostname    : {result.get('hostname')}")
+        if result.get("id"):
+            hb_url = f"{api_url.rstrip('/')}/settings/environment-runners/{result.get('id')}/heartbeat"
+            hb_payload = {
+                "os": os.uname().sysname if hasattr(os, "uname") else "Unknown",
+                "ip_address": get_local_ip(),
+                "agent_version": "v1.0.0",
+                "status": "online",
+            }
+            try:
+                requests.post(hb_url, json=hb_payload, headers=headers, timeout=10)
+            except Exception:
+                pass
+            if os.name != "nt":
+                service_path = "/usr/local/bin/purvex-agent-heartbeat.sh"
+                unit_path = "/etc/systemd/system/purvex-agent-heartbeat.service"
+                script = f"""#!/bin/bash
+API_URL="{api_url}"
+API_TOKEN="{api_token}"
+RUNNER_ID="{result.get('id')}"
+while true; do
+  OS_NAME=$(uname -s 2>/dev/null || echo "Unknown")
+  LOCAL_IP=$(hostname -I 2>/dev/null | awk '{{print $1}}' || echo "127.0.0.1")
+  curl -s -X POST -H "Authorization: Bearer $API_TOKEN" -H "Content-Type: application/json" \\
+    -d "{{\\"os\\":\\"$OS_NAME\\",\\"ip_address\\":\\"$LOCAL_IP\\",\\"agent_version\\":\\"v1.0.0\\",\\"status\\":\\"online\\"}}" \\
+    "{api_url.rstrip('/')}/settings/environment-runners/{result.get('id')}/heartbeat" >/dev/null 2>&1 || true
+  sleep 60
+done
+"""
+                unit = f"""[Unit]
+Description=PurveX Agent Heartbeat
+After=network-online.target
+
+[Service]
+Type=simple
+ExecStart={service_path}
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+"""
+                try:
+                    with open("/tmp/purvex-agent-heartbeat.sh", "w", encoding="utf-8") as f:
+                        f.write(script)
+                    with open("/tmp/purvex-agent-heartbeat.service", "w", encoding="utf-8") as f:
+                        f.write(unit)
+                    os.system(f"sudo mv /tmp/purvex-agent-heartbeat.sh {service_path}")
+                    os.system(f"sudo mv /tmp/purvex-agent-heartbeat.service {unit_path}")
+                    os.system(f"sudo chmod +x {service_path}")
+                    os.system("sudo systemctl daemon-reload")
+                    os.system("sudo systemctl enable --now purvex-agent-heartbeat.service")
+                except Exception:
+                    pass
         return result
     except requests.exceptions.HTTPError as e:
         if e.response.status_code == 403:
@@ -314,7 +643,7 @@ def register_agent(api_url: str, api_token: str, environment: str, hostname: Opt
 def main():
     parser = argparse.ArgumentParser(description="Register this machine as a PurveX test runner agent")
     parser.add_argument('--api-url', default=os.getenv('PURVEX_API_URL', '${apiUrl}'), help='PurveX API base URL')
-    parser.add_argument('--token', default=os.getenv('PURVEX_API_TOKEN'), help='API authentication token (required)')
+    parser.add_argument('--token', default=os.getenv('PURVEX_API_TOKEN'), help='Registration token (required)')
     parser.add_argument('--env', default=os.getenv('PURVEX_ENV', 'lab'), help='Environment name: lab, dev, or prod')
     parser.add_argument('--hostname', default=None, help='Custom hostname (auto-detected if not provided)')
     parser.add_argument('--port', type=int, default=22, help='SSH port (default: 22)')
@@ -322,12 +651,22 @@ def main():
     
     args = parser.parse_args()
     
-    if not args.token:
-        print("❌ ERROR: API token is required.")
-        print("   Provide it via --token argument or PURVEX_API_TOKEN environment variable")
+    api_token = args.token
+    if not api_token:
+        input_api = input(f"PurveX API URL [{args.api_url}]: ").strip()
+        if input_api:
+            args.api_url = input_api
+        input_env = input(f"Environment [lab/dev/prod] ({args.env}): ").strip()
+        if input_env:
+            args.env = input_env
+        api_token = getpass("Registration token: ")
+
+    if not api_token:
+        print("❌ ERROR: Registration token is required.")
+        print("   Provide it via --token or set PURVEX_API_TOKEN.")
         sys.exit(1)
     
-    register_agent(api_url=args.api_url, api_token=args.token, environment=args.env, hostname=args.hostname, port=args.port, username=args.username)
+    register_agent(api_url=args.api_url, api_token=api_token, environment=args.env, hostname=args.hostname, port=args.port, username=args.username)
 
 if __name__ == '__main__':
     main()`;
@@ -356,6 +695,7 @@ export default function TestRunnerSettingsPage() {
   const [connectionType, setConnectionType] = useState<"agent" | "ssh">("agent");
   const [selectedScript, setSelectedScript] = useState<"bash" | "powershell" | "python">("bash");
   const [copied, setCopied] = useState(false);
+  const [tokenCopied, setTokenCopied] = useState(false);
   const [userToken, setUserToken] = useState<string | null>(null);
   const [tokenLoading, setTokenLoading] = useState(false);
   const [currentStep, setCurrentStep] = useState<number>(1);
@@ -426,10 +766,36 @@ export default function TestRunnerSettingsPage() {
           body: JSON.stringify(formData),
         });
       } else {
-        await apiFetch("/settings/environment-runners", {
+        const created = await apiFetch("/settings/environment-runners", {
           method: "POST",
           body: JSON.stringify(formData),
         });
+        if (typeof window !== "undefined" && created?.id) {
+          const storedIds: number[] = JSON.parse(
+            window.localStorage.getItem("purvex_platform_runner_ids") || "[]"
+          );
+          const cutoff = Date.now() - 24 * 60 * 60 * 1000;
+          const storedNotifications = JSON.parse(
+            window.localStorage.getItem("purvex_platform_notifications") || "[]"
+          ).filter((item: any) => new Date(item.timestamp).getTime() >= cutoff);
+          const notification = {
+            id: `platform-runner-${created.id}-${Date.now()}`,
+            type: "platform",
+            title: "New runner registered",
+            description: `${created.hostname || "Runner"} · ${(created.environment_name || "unknown").toUpperCase()}`,
+            timestamp: new Date().toISOString(),
+            status: "success",
+            actionUrl: "/settings/test-runner",
+            metadata: {
+              environment: created.environment_name,
+            },
+          };
+          const mergedNotifications = [notification, ...storedNotifications].slice(0, 50);
+          const mergedIds = Array.from(new Set([...storedIds, created.id]));
+          window.localStorage.setItem("purvex_platform_notifications", JSON.stringify(mergedNotifications));
+          window.localStorage.setItem("purvex_platform_runner_ids", JSON.stringify(mergedIds));
+          window.dispatchEvent(new Event("purvex:platform-notification"));
+        }
       }
       setFormData({
         environment_name: "",
@@ -862,10 +1228,17 @@ export default function TestRunnerSettingsPage() {
                             <CheckCircle2 className="h-4 w-4 text-emerald-500" />
                             Token pre-configured • Ready to download
                           </p>
+                          {selectedScript === "bash" && (
+                            <p className="text-xs text-slate-500">
+                              Note: browsers can’t set execute permissions. After download, run{" "}
+                              <span className="font-mono">chmod +x register_agent.sh</span>.
+                            </p>
+                          )}
                         </div>
                         <button
+                          type="button"
                           onClick={() => {
-                            if (!userToken && tokenLoading) {
+                            if (tokenLoading) {
                               toast({
                                 type: "warning",
                                 title: "Token still generating",
@@ -873,48 +1246,56 @@ export default function TestRunnerSettingsPage() {
                               });
                               return;
                             }
-                            if (!userToken) {
-                              toast({
-                                type: "error",
-                                title: "Token not available",
-                                description: "Unable to download script without a registration token. Please refresh the page.",
-                                action: {
-                                  label: "Retry",
-                                  onClick: () => window.location.reload(),
-                                },
-                              });
-                              return;
-                            }
                             try {
                               const apiUrl = getApiUrl();
                               let script = getAgentScript(selectedScript, apiUrl);
-                        
-                              if (selectedScript === "bash") {
-                                script = script.replace(/YOUR_TOKEN_HERE/g, userToken);
-                                script = script.replace(/API_TOKEN="YOUR_TOKEN_HERE"/g, `API_TOKEN="${userToken}"`);
-                              } else if (selectedScript === "powershell") {
-                                script = script.replace(/YOUR_TOKEN_HERE/g, userToken);
-                                script = script.replace(/\$Token = "YOUR_TOKEN_HERE"/g, `$Token = "${userToken}"`);
+
+                              if (userToken) {
+                                if (selectedScript === "bash") {
+                                  script = script.replace(/YOUR_TOKEN_HERE/g, userToken);
+                                  script = script.replace(/API_TOKEN="YOUR_TOKEN_HERE"/g, `API_TOKEN="${userToken}"`);
+                                } else if (selectedScript === "powershell") {
+                                  script = script.replace(/YOUR_TOKEN_HERE/g, userToken);
+                                  script = script.replace(/\$Token = "YOUR_TOKEN_HERE"/g, `$Token = "${userToken}"`);
+                                } else {
+                                  script = script.replace(/YOUR_TOKEN_HERE/g, userToken);
+                                  script = script.replace(/--token YOUR_TOKEN_HERE/g, `--token ${userToken}`);
+                                }
                               } else {
-                                script = script.replace(/YOUR_TOKEN_HERE/g, userToken);
-                                script = script.replace(/--token YOUR_TOKEN_HERE/g, `--token ${userToken}`);
+                                toast({
+                                  type: "warning",
+                                  title: "Token not available",
+                                  description: "Downloaded script without a token. Add your token before running.",
+                                });
                               }
-                        
+
                               const blob = new Blob([script], { type: "text/plain" });
-                              const url = URL.createObjectURL(blob);
-                              const a = document.createElement("a");
-                              a.href = url;
                               const filename = selectedScript === "bash" ? "register_agent.sh" : selectedScript === "powershell" ? "register_agent.ps1" : "register_agent.py";
-                              a.download = filename;
-                              document.body.appendChild(a);
-                              a.click();
-                              document.body.removeChild(a);
-                              URL.revokeObjectURL(url);
-                        
+                              if (typeof window !== "undefined" && (window.navigator as any)?.msSaveOrOpenBlob) {
+                                (window.navigator as any).msSaveOrOpenBlob(blob, filename);
+                              } else if (typeof window !== "undefined") {
+                                const url = URL.createObjectURL(blob);
+                                const a = document.createElement("a");
+                                a.href = url;
+                                a.download = filename;
+                                a.rel = "noopener";
+                                a.style.display = "none";
+                                document.body.appendChild(a);
+                                requestAnimationFrame(() => {
+                                  a.click();
+                                  document.body.removeChild(a);
+                                  setTimeout(() => URL.revokeObjectURL(url), 1500);
+                                  // No fallback navigation: avoid opening the script in a new tab.
+                                });
+                              }
+
                               toast({
                                 type: "success",
                                 title: "Script downloaded",
-                                description: `${filename} has been downloaded with your registration token pre-configured.`,
+                                description:
+                                  selectedScript === "bash"
+                                    ? `${filename} downloaded. Run: chmod +x ${filename}`
+                                    : `${filename} has been downloaded with your registration token pre-configured.`,
                               });
                               setCurrentStep(4);
                             } catch (err) {
@@ -928,9 +1309,45 @@ export default function TestRunnerSettingsPage() {
                           className="h-10 w-10 rounded-lg bg-slate-100 border border-slate-200 text-slate-600 hover:bg-sky-50 hover:border-sky-200 hover:text-sky-600 cursor-pointer transition-all duration-300 shadow-sm hover:scale-105 flex items-center justify-center flex-shrink-0 focus:outline-none focus:ring-2 focus:ring-sky-500/50"
                           title={`Download ${selectedScript === "bash" ? "register_agent.sh" : selectedScript === "powershell" ? "register_agent.ps1" : "register_agent.py"}`}
                           aria-label={`Download ${selectedScript === "bash" ? "Bash" : selectedScript === "powershell" ? "PowerShell" : "Python"} registration script`}
-                          disabled={tokenLoading || !userToken}
+                          disabled={tokenLoading}
                         >
-                          <Download className={cn("h-4 w-4", (tokenLoading || !userToken) && "opacity-50")} />
+                          <Download className={cn("h-4 w-4", tokenLoading && "opacity-50")} />
+                        </button>
+                      </div>
+                    </div>
+                    <div className="mt-4 p-4 rounded-xl border border-slate-200 bg-white shadow-sm">
+                      <div className="flex items-center justify-between gap-4">
+                        <div className="space-y-1 min-w-0">
+                          <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">Registration Token</p>
+                          <div className="flex items-center gap-2">
+                            <code className="text-sm font-mono text-slate-900 break-all">
+                              {tokenLoading && !userToken && "Generating token..."}
+                              {!tokenLoading && !userToken && "Token unavailable. Refresh to retry."}
+                              {userToken}
+                            </code>
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          aria-label="Copy registration token"
+                          title="Copy registration token"
+                          className="inline-flex h-9 w-9 items-center justify-center rounded-lg bg-slate-100 border border-slate-200 text-slate-600 hover:bg-indigo-600 hover:border-indigo-500 hover:text-white cursor-pointer transition-all duration-200 shadow-sm hover:scale-105 flex-shrink-0 disabled:opacity-50 disabled:cursor-not-allowed"
+                          onClick={() => {
+                            if (!userToken || typeof navigator === "undefined" || !navigator.clipboard) {
+                              return;
+                            }
+                            navigator.clipboard.writeText(userToken).then(() => {
+                              setTokenCopied(true);
+                              setTimeout(() => setTokenCopied(false), 2000);
+                            }).catch(() => {});
+                          }}
+                          disabled={!userToken || tokenLoading}
+                        >
+                          {tokenCopied ? (
+                            <CheckCircle2 className="h-5 w-5 text-emerald-500" />
+                          ) : (
+                            <CopyIcon className="h-5 w-5" />
+                          )}
                         </button>
                       </div>
                     </div>
@@ -953,41 +1370,15 @@ export default function TestRunnerSettingsPage() {
                   </div>
                 </div>
                   <div className="ml-9">
-                  <div className="relative group">
-                    <div className="relative bg-white border-2 border-slate-200 rounded-xl overflow-hidden shadow-sm">
-                      <div className="p-4">
-                        <textarea
-                          readOnly
-                          className="w-full h-20 bg-transparent text-sm font-mono text-slate-900 resize-none focus:outline-none rounded-lg leading-relaxed"
-                          aria-label="Registration command"
-                          tabIndex={0}
-                          value={(() => {
-                            const apiUrl = getApiUrl();
-                            if (userToken) {
-                              if (selectedScript === "bash") {
-                                return `# Just run the script - token is already included!\nchmod +x register_agent.sh\n./register_agent.sh`;
-                              } else if (selectedScript === "powershell") {
-                                return `# Just run the script - token is already included!\n.\\register_agent.ps1`;
-                              } else {
-                                return `# Just run the script - token is already included!\npython3 register_agent.py --env lab`;
-                              }
-                            } else {
-                              if (selectedScript === "bash") {
-                                return `# From a directory containing the downloaded register_agent.sh script\nPURVEX_AGENT_TOKEN=YOUR_TOKEN_HERE bash register_agent.sh --api-url ${apiUrl}`;
-                              } else if (selectedScript === "powershell") {
-                                return `# From a directory containing the downloaded register_agent.ps1 script\n$env:PURVEX_API_TOKEN="YOUR_TOKEN_HERE"; .\\register_agent.ps1 -ApiUrl \"${apiUrl}\"`;
-                              } else {
-                                return `# From a directory containing the downloaded register_agent.py script\npython3 register_agent.py --api-url ${apiUrl} --token YOUR_TOKEN_HERE --env lab`;
-                              }
-                            }
-                          })()}
-                        />
+                    <div className="flex items-center justify-between gap-4 bg-white border-2 border-slate-200 rounded-xl p-4 shadow-sm">
+                      <div className="space-y-1">
+                        <p className="text-sm font-medium text-slate-900">Command ready</p>
+                        <p className="text-xs text-slate-600">Copy and run it on your test runner.</p>
                       </div>
-                      <button
+                      <Button
                         type="button"
-                        aria-label="Copy command"
-                        title="Copy command"
-                        className="absolute top-4 right-4 inline-flex h-9 w-9 items-center justify-center rounded-lg bg-slate-100 border border-slate-200 text-slate-600 hover:bg-indigo-600 hover:border-indigo-500 hover:text-white cursor-pointer transition-all duration-200 shadow-sm hover:scale-105"
+                        variant="default"
+                        size="sm"
                         onClick={() => {
                           const apiUrl = getApiUrl();
                           let command = "";
@@ -1017,14 +1408,19 @@ export default function TestRunnerSettingsPage() {
                         }}
                       >
                         {copied ? (
-                          <CheckCircle2 className="h-5 w-5 text-emerald-500" />
+                          <>
+                            <CheckCircle2 className="h-4 w-4 mr-2" />
+                            Copied
+                          </>
                         ) : (
-                          <CopyIcon className="h-5 w-5" />
+                          <>
+                            <CopyIcon className="h-4 w-4 mr-2" />
+                            Copy command
+                          </>
                         )}
-                      </button>
+                      </Button>
                     </div>
                   </div>
-                </div>
 
                 {/* Advanced Section */}
                 <div className="pt-4 border-t border-slate-200">

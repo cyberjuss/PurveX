@@ -21,6 +21,7 @@ import {
   getMitreTechniques,
   type MitreTechnique,
   getAtomicTests,
+  getEnvironmentRunners,
 } from "@/lib/api";
 import { usePermissions } from "@/hooks/usePermissions";
 import { Permission } from "@/lib/permissions";
@@ -436,6 +437,7 @@ function RunTestPageContent() {
   const [error, setError] = useState<string | null>(null);
   const [testType, setTestType] = useState<UiTestType | null>(null);
   const [targetHost, setTargetHost] = useState<string>("");
+  const [runnerTargets, setRunnerTargets] = useState<string[]>([]);
   const [detectionSearch, setDetectionSearch] = useState<string>("");
   const [lastRunType, setLastRunType] = useState<UiTestType | null>(null);
   const [labOs, setLabOs] = useState<"windows" | "linux" | "both">("windows");
@@ -596,6 +598,28 @@ function RunTestPageContent() {
     }
   }, [testType, selectedDetection, mitreTechniques.length]);
 
+  useEffect(() => {
+    let cancelled = false;
+    async function loadRunners() {
+      try {
+        const runners = await getEnvironmentRunners();
+        if (cancelled) return;
+        if (Array.isArray(runners)) {
+          const hosts = runners
+            .map((runner: any) => runner.hostname)
+            .filter((hostname: any) => typeof hostname === "string" && hostname.trim().length > 0);
+          setRunnerTargets(Array.from(new Set(hosts)));
+        }
+      } catch {
+        // Ignore runner load errors for now.
+      }
+    }
+    loadRunners();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   // Whenever the high-level run hook reports an error, surface it in the main banner.
   useEffect(() => {
     if (runError) {
@@ -699,6 +723,7 @@ function RunTestPageContent() {
           environment: "lab",
           mode: uiToBackendMode[testType],
           labOs,
+          endpoint: targetHost.trim() || null,
         });
         router.push(`/lab?testId=${created.id}`);
       } catch (err: any) {
@@ -736,6 +761,7 @@ function RunTestPageContent() {
         techniqueId: techniqueIdToUse,
         environment,
         mode: uiToBackendMode[testType],
+        endpoint: targetHost.trim() || null,
       },
       {
         onStart: (created) => {
@@ -1530,14 +1556,34 @@ function RunTestPageContent() {
                       <Settings className="h-4 w-4 text-slate-500" />
                       Target Host
                     </Label>
-                    <Input
-                      id="target-host"
-                      value={targetHost}
-                      onChange={(e) => setTargetHost(e.target.value)}
-                      placeholder="e.g. win-lab-01 or 10.0.0.5"
-                      className="h-11 bg-white border-slate-200 text-slate-900 placeholder:text-slate-500"
-                      disabled={isRunning || !canSelectTargetHost}
-                    />
+                    {runnerTargets.length > 0 ? (
+                      <Select
+                        value={targetHost}
+                        onValueChange={(value) => setTargetHost(value)}
+                        disabled={isRunning || !canSelectTargetHost}
+                      >
+                        <SelectTrigger
+                          id="target-host"
+                          className="w-full h-11 bg-white border-slate-200 text-slate-900"
+                        >
+                          <SelectValue placeholder="Select a runner" />
+                        </SelectTrigger>
+                        <SelectContent className="bg-white border-slate-200">
+                          {runnerTargets.map((host) => (
+                            <SelectItem key={host} value={host}>{host}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    ) : (
+                      <Input
+                        id="target-host"
+                        value={targetHost}
+                        onChange={(e) => setTargetHost(e.target.value)}
+                        placeholder="e.g. win-lab-01 or 10.0.0.5"
+                        className="h-11 bg-white border-slate-200 text-slate-900 placeholder:text-slate-500"
+                        disabled={isRunning || !canSelectTargetHost}
+                      />
+                    )}
                     <p className="text-xs text-slate-600 leading-relaxed">
                       The specific host where the attack will run. Telemetry and detections will be tied to this host.
                     </p>

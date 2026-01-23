@@ -83,6 +83,25 @@ async def execute_scheduled_test(schedule: models.TestSchedule, session: AsyncSe
     from .atomic_runner import generate_marker
     marker = generate_marker(schedule.environment)
     
+    initiated_email = None
+    initiated_username = None
+    initiated_role = None
+    if schedule.created_by_user_id:
+        try:
+            result = await session.execute(
+                select(models.User.email, models.User.username).where(models.User.id == schedule.created_by_user_id)
+            )
+            row = result.first()
+            if row:
+                initiated_email, initiated_username = row
+            from ..services.rbac import RBACService
+            rbac = RBACService(session)
+            roles = await rbac.get_user_roles(schedule.created_by_user_id, org_id)
+            if roles:
+                initiated_role = roles[0].value
+        except Exception:
+            initiated_email = None
+
     db_test = models.Test(
         organization_id=org_id,
         detection_id=schedule.detection_id,
@@ -90,6 +109,10 @@ async def execute_scheduled_test(schedule: models.TestSchedule, session: AsyncSe
         environment=schedule.environment,
         status="pending",
         marker=marker,
+        initiated_by_user_id=schedule.created_by_user_id,
+        initiated_by_email=initiated_email,
+        initiated_by_username=initiated_username,
+        initiated_by_role=initiated_role,
         started_at=datetime.utcnow(),
     )
     session.add(db_test)

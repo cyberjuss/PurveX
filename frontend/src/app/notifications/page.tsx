@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { getTests, getDetections, TestWithDetectionTitle, Detection } from "@/lib/api";
+import { getTests, getDetections, getEnvironmentRunners, TestWithDetectionTitle, Detection } from "@/lib/api";
 import { 
   Clock, 
   Activity, 
@@ -47,9 +47,15 @@ interface UnifiedNotification {
   };
 }
 
+const PLATFORM_NOTIFICATIONS_KEY = "purvex_platform_notifications";
+const PLATFORM_RUNNER_SEEN_KEY = "purvex_platform_runner_ids";
+
+type StoredNotification = Omit<UnifiedNotification, "timestamp"> & { timestamp: string };
+
 export default function NotificationsPage() {
   const [tests, setTests] = useState<TestWithDetectionTitle[]>([]);
   const [detections, setDetections] = useState<Detection[]>([]);
+  const [platformNotifications, setPlatformNotifications] = useState<UnifiedNotification[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [category, setCategory] = useState<NotificationCategory>("all");
@@ -60,12 +66,48 @@ export default function NotificationsPage() {
       try {
       setRefreshing(true);
         setError(null);
-        const [recentTests, recentDetections] = await Promise.all([
+        const [recentTests, recentDetections, runners] = await Promise.all([
           getTests().catch(() => []),
           getDetections().catch(() => []),
+          getEnvironmentRunners().catch(() => []),
         ]);
       setTests(recentTests.slice(0, 20));
       setDetections(recentDetections.slice(0, 10));
+      if (typeof window !== "undefined") {
+        const storedIds: number[] = JSON.parse(
+          window.localStorage.getItem(PLATFORM_RUNNER_SEEN_KEY) || "[]"
+        );
+        const newRunners = (runners || []).filter((runner: any) => runner?.id && !storedIds.includes(runner.id));
+        const cutoff = Date.now() - 24 * 60 * 60 * 1000;
+        const storedNotifications: StoredNotification[] = JSON.parse(
+          window.localStorage.getItem(PLATFORM_NOTIFICATIONS_KEY) || "[]"
+        ).filter((item: StoredNotification) => new Date(item.timestamp).getTime() >= cutoff);
+        const newNotifications: StoredNotification[] = newRunners.map((runner: any) => ({
+          id: `platform-runner-${runner.id}-${Date.now()}`,
+          type: "platform",
+          title: "New runner registered",
+          description: `${runner.hostname || "Runner"} · ${(runner.environment_name || "unknown").toUpperCase()}`,
+          timestamp: new Date().toISOString(),
+          status: "success",
+          actionUrl: "/settings/test-runner",
+          metadata: {
+            environment: runner.environment_name,
+          },
+        }));
+
+        const mergedNotifications = [...newNotifications, ...storedNotifications].slice(0, 50);
+        const mergedIds = Array.from(new Set([...storedIds, ...newRunners.map((runner: any) => runner.id)]));
+
+        window.localStorage.setItem(PLATFORM_NOTIFICATIONS_KEY, JSON.stringify(mergedNotifications));
+        window.localStorage.setItem(PLATFORM_RUNNER_SEEN_KEY, JSON.stringify(mergedIds));
+
+        setPlatformNotifications(
+          mergedNotifications.map((item) => ({
+            ...item,
+            timestamp: new Date(item.timestamp),
+          }))
+        );
+      }
       } catch (err: any) {
         setError(err.message || "Unable to load notifications.");
       } finally {
@@ -75,11 +117,21 @@ export default function NotificationsPage() {
   };
 
   useEffect(() => {
+    let handler: (() => void) | null = null;
     // Visiting the notifications page marks test notifications as read.
     if (typeof window !== "undefined") {
       window.localStorage.removeItem("purvex_unread_test_notification");
+      handler = () => {
+        loadData();
+      };
+      window.addEventListener("purvex:platform-notification", handler);
     }
     loadData();
+    return () => {
+      if (handler && typeof window !== "undefined") {
+        window.removeEventListener("purvex:platform-notification", handler);
+      }
+    };
   }, []);
 
   // Transform data into unified notifications
@@ -129,13 +181,18 @@ export default function NotificationsPage() {
       });
     });
 
+    platformNotifications.forEach((notification) => {
+      items.push(notification);
+    });
+
     // Sort by timestamp (newest first)
     return items.sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
-  }, [tests, detections]);
+  }, [tests, detections, platformNotifications]);
 
   // Filter by category
   const filteredNotifications = useMemo(() => {
     if (category === "all") return notifications;
+    if (category === "platform") return notifications.filter((n) => n.type === "platform");
     return notifications.filter((n) => n.type === (category.slice(0, -1) as NotificationType));
   }, [notifications, category]);
 

@@ -16,11 +16,6 @@ from ..services.ai_assistant import analyze_detection
 logger = logging.getLogger(__name__)
 
 
-async def get_db_session():
-    async with async_sessionmaker() as session:
-        yield session
-
-
 def generate_marker(environment: str) -> str:
     """Generate a unique marker for atomic tests, tagged by environment."""
     return f"purvex_{environment}_{secrets.token_hex(4)}"
@@ -90,143 +85,143 @@ async def execute_test_pipeline(test_id: int, expected_org_id: int):
     SECURITY: Requires expected_org_id to prevent cross-tenant access.
     The test must belong to the specified organization.
     """
-    async for db_session in get_db_session(): # Use async for to get the session
-        db = db_session
-        break # We only need one session
-
-    try:
-        # 1. Load Test + Detection from DB with org_id check for tenant isolation.
-        result = await db.execute(
-            select(models.Test)
-            .filter(models.Test.id == test_id)
-            .filter(models.Test.organization_id == expected_org_id)
-        )
-        test = result.scalar_one_or_none()
-        if not test:
-            logger.error(
-                f"Test with ID {test_id} not found or does not belong to org {expected_org_id}."
+    async with async_sessionmaker() as db:
+        try:
+            # 1. Load Test + Detection from DB with org_id check for tenant isolation.
+            result = await db.execute(
+                select(models.Test)
+                .filter(models.Test.id == test_id)
+                .filter(models.Test.organization_id == expected_org_id)
             )
-            return
-
-        detection = None
-        if test.detection_id:
-            result = await db.execute(select(models.Detection).filter(models.Detection.id == test.detection_id))
-            detection = result.scalar_one_or_none()
-            if not detection:
-                logger.error(f"Detection with ID {test.detection_id} not found.")
-                # For scenario‑only tests we allow detection_id to be null; if it was
-                # explicitly set but cannot be loaded we treat this as a hard error.
+            test = result.scalar_one_or_none()
+            if not test:
+                logger.error(
+                    f"Test with ID {test_id} not found or does not belong to org {expected_org_id}."
+                )
                 return
 
-        # 2. Set status="running", started_at=now
-        test.status = "running"
-        test.started_at = datetime.utcnow()
-        db.add(test)
-        await db.commit()
-        await db.refresh(test)
-        logger.info(f"Test {test_id} status set to 'running'.")
+            detection = None
+            if test.detection_id:
+                result = await db.execute(select(models.Detection).filter(models.Detection.id == test.detection_id))
+                detection = result.scalar_one_or_none()
+                if not detection:
+                    logger.error(f"Detection with ID {test.detection_id} not found.")
+                    # For scenario‑only tests we allow detection_id to be null; if it was
+                    # explicitly set but cannot be loaded we treat this as a hard error.
+                    return
 
-        # 3. Generate marker if not already set (should be set by router now)
-        if not test.marker:
-            test.marker = generate_marker(test.environment)
+            # 2. Set status="running", started_at=now
+            test.status = "running"
+            test.started_at = datetime.utcnow()
             db.add(test)
             await db.commit()
             await db.refresh(test)
-            logger.info(f"Test {test_id} marker generated: {test.marker}")
+            logger.info(f"Test {test_id} status set to 'running'.")
 
-        # 4. Run the atomic test (stubbed) and capture the command string.
-        technique_id = detection.technique_id if detection is not None else (test.technique_id or "UNKNOWN")
-        command_str = await anyio.to_thread.run_sync(run_atomic_test, technique_id, test.marker)
-        logger.info("Atomic test command for %s: %s", test_id, command_str)
+            # 3. Generate marker if not already set (should be set by router now)
+            if not test.marker:
+                test.marker = generate_marker(test.environment)
+                db.add(test)
+                await db.commit()
+                await db.refresh(test)
+                logger.info(f"Test {test_id} marker generated: {test.marker}")
 
-        # 5. Sleep a short delay (e.g., 30–60s) to simulate execution + log ingestion.
-        await asyncio.sleep(10)
+            # 4. Run the atomic test (stubbed) and capture the command string.
+            technique_id = detection.technique_id if detection is not None else (test.technique_id or "UNKNOWN")
+            command_str = await anyio.to_thread.run_sync(run_atomic_test, technique_id, test.marker)
+            logger.info("Atomic test command for %s: %s", test_id, command_str)
 
-        # 6. Validate detection in the SIEM (telemetry + detection logic check).
-        if detection is not None:
-            result_status, score, sample_events = await anyio.to_thread.run_sync(
-                validate_detection_for_test,
-                test,
-                detection,
-            )
-        else:
-            result_status, score, sample_events = await anyio.to_thread.run_sync(
-                validate_telemetry_for_test,
-                test,
-            )
-        logger.info(f"Test {test_id} validation result: {result_status}, Score: {score}")
+            # 5. Sleep a short delay (e.g., 30–60s) to simulate execution + log ingestion.
+            await asyncio.sleep(10)
 
-        # 7. Update Test: result, score, finished_at, status
-        test.result = result_status
-        test.score = score
-        test.finished_at = datetime.utcnow()
-        test.status = "completed"
-        db.add(test)
-        await db.commit()
-        await db.refresh(test)
-        logger.info("Test %s status set to 'completed'.", test_id)
+            # 6. Validate detection in the SIEM (telemetry + detection logic check).
+            if detection is not None:
+                result_status, score, sample_events = await anyio.to_thread.run_sync(
+                    validate_detection_for_test,
+                    test,
+                    detection,
+                )
+            else:
+                result_status, score, sample_events = await anyio.to_thread.run_sync(
+                    validate_telemetry_for_test,
+                    test,
+                )
+            logger.info(f"Test {test_id} validation result: {result_status}, Score: {score}")
 
-        # 8. Update detection lifecycle fields based on this test outcome.
-        if detection is not None:
-            detection.last_tested_at = test.finished_at
-            if result_status == "PASS":
-                if not detection.last_pass_at or test.finished_at > detection.last_pass_at:
-                    detection.last_pass_at = test.finished_at
-                # PASS implies the alert fired for this marker in the SIEM.
-                if not detection.last_alert_at or test.finished_at > detection.last_alert_at:
-                    detection.last_alert_at = test.finished_at
-                # Simple rule: high‑scoring PASS → mark as ACTIVE.
-                if (score or 0) >= 80:
-                    detection.status = "ACTIVE"
-            elif result_status == "FAIL":
-                if not detection.last_fail_at or test.finished_at > detection.last_fail_at:
-                    detection.last_fail_at = test.finished_at
-                detection.status = "NEEDS_IMPROVEMENT"
-            # INCONCLUSIVE keeps status as‑is but still updates last_tested_at above.
-
-            db.add(detection)
-            await db.commit()
-            await db.refresh(detection)
-            logger.info("Detection %s lifecycle updated from test %s.", detection.id, test_id)
-
-        # 9a. Apply simple data retention for old tests and SIEM samples.
-        try:
-            org_id = detection.organization_id if detection is not None else test.organization_id
-            if org_id is not None:
-                await _purge_old_test_data(db, org_id)
-        except Exception as retention_err:  # pragma: no cover - defensive safety
-            logger.warning("Error applying test data retention: %s", retention_err)
-
-        # 10. Call analyze_detection (AI assistant) to enrich the test artifact.
-        ai_result = await anyio.to_thread.run_sync(
-            analyze_detection, test, detection, sample_events
-        )
-        logger.info("Test %s AI analysis completed.", test_id)
-
-        # 11. Create a TestArtifact with command, sample events, and AI output.
-        # CRITICAL: Set organization_id from test to enforce tenant isolation.
-        artifact = models.TestArtifact(
-            organization_id=test.organization_id,
-            test_id=test.id,
-            atomic_command=command_str,
-            siem_sample_events=json.dumps(sample_events) if sample_events else "[]",
-            ai_explanation=ai_result.get("ai_explanation"),
-            ai_suggested_rule=ai_result.get("ai_suggested_rule"),
-            ai_root_cause_category=ai_result.get("ai_root_cause_category"),
-            ai_confidence_score=ai_result.get("ai_confidence_score"),
-        )
-        db.add(artifact)
-        await db.commit()
-        await db.refresh(artifact)
-        logger.info("Test artifact for %s created.", test_id)
-
-    except Exception as e:
-        logger.error("Error in test pipeline for test ID %s: %s", test_id, e)
-        if "test" in locals() and test is not None:
-            test.status = "error"
+            # 7. Update Test: result, score, finished_at, status
+            test.result = result_status
+            test.score = score
             test.finished_at = datetime.utcnow()
+            test.status = "completed"
             db.add(test)
             await db.commit()
             await db.refresh(test)
-        else:
-            logger.error("Could not update test status for ID %s because test was not loaded.", test_id)
+            logger.info("Test %s status set to 'completed'.", test_id)
+
+            # 8. Update detection lifecycle fields based on this test outcome.
+            if detection is not None:
+                detection.last_tested_at = test.finished_at
+                if result_status == "PASS":
+                    if not detection.last_pass_at or test.finished_at > detection.last_pass_at:
+                        detection.last_pass_at = test.finished_at
+                    # PASS implies the alert fired for this marker in the SIEM.
+                    if not detection.last_alert_at or test.finished_at > detection.last_alert_at:
+                        detection.last_alert_at = test.finished_at
+                    # Simple rule: high‑scoring PASS → mark as ACTIVE.
+                    if (score or 0) >= 80:
+                        detection.status = "ACTIVE"
+                elif result_status == "FAIL":
+                    if not detection.last_fail_at or test.finished_at > detection.last_fail_at:
+                        detection.last_fail_at = test.finished_at
+                    detection.status = "NEEDS_IMPROVEMENT"
+                # INCONCLUSIVE keeps status as‑is but still updates last_tested_at above.
+
+                db.add(detection)
+                await db.commit()
+                await db.refresh(detection)
+                logger.info("Detection %s lifecycle updated from test %s.", detection.id, test_id)
+
+            # 9a. Apply simple data retention for old tests and SIEM samples.
+            try:
+                org_id = detection.organization_id if detection is not None else test.organization_id
+                if org_id is not None:
+                    await _purge_old_test_data(db, org_id)
+            except Exception as retention_err:  # pragma: no cover - defensive safety
+                logger.warning("Error applying test data retention: %s", retention_err)
+
+            # 10. Call analyze_detection (AI assistant) to enrich the test artifact.
+            if detection is not None:
+                ai_result = await anyio.to_thread.run_sync(
+                    analyze_detection, test, detection, sample_events
+                )
+                logger.info("Test %s AI analysis completed.", test_id)
+            else:
+                ai_result = {}
+
+            # 11. Create a TestArtifact with command, sample events, and AI output.
+            # CRITICAL: Set organization_id from test to enforce tenant isolation.
+            artifact = models.TestArtifact(
+                organization_id=test.organization_id,
+                test_id=test.id,
+                atomic_command=command_str,
+                siem_sample_events=json.dumps(sample_events) if sample_events else "[]",
+                ai_explanation=ai_result.get("ai_explanation"),
+                ai_suggested_rule=ai_result.get("ai_suggested_rule"),
+                ai_root_cause_category=ai_result.get("ai_root_cause_category"),
+                ai_confidence_score=ai_result.get("ai_confidence_score"),
+            )
+            db.add(artifact)
+            await db.commit()
+            await db.refresh(artifact)
+            logger.info("Test artifact for %s created.", test_id)
+
+        except Exception as e:
+            logger.error("Error in test pipeline for test ID %s: %s", test_id, e)
+            if "test" in locals() and test is not None:
+                test.status = "error"
+                test.finished_at = datetime.utcnow()
+                db.add(test)
+                await db.commit()
+                await db.refresh(test)
+            else:
+                logger.error("Could not update test status for ID %s because test was not loaded.", test_id)

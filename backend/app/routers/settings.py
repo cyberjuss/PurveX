@@ -1,6 +1,7 @@
 from typing import List, Optional, Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from datetime import datetime
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy import func # for default timestamps
@@ -409,7 +410,12 @@ async def list_environment_runners(
     db: DBSession,
     current_user: CurrentUser,
 ):
-    result = await db.execute(select(models.EnvironmentRunnerConfig))
+    org_id = require_org_id(current_user)
+    result = await db.execute(
+        select(models.EnvironmentRunnerConfig).where(
+            models.EnvironmentRunnerConfig.organization_id == org_id
+        )
+    )
     return result.scalars().all()
 
 @router.post("/environment-runners", response_model=schemas.EnvironmentRunnerConfig, status_code=status.HTTP_201_CREATED)
@@ -425,8 +431,10 @@ async def create_environment_runner(
     # SECURITY: Sanitize all input fields
     from ..utils.sanitize_inputs import sanitize_model_inputs
     sanitized_data = sanitize_model_inputs(runner_create)
+    sanitized_data.pop("organization_id", None)
     
-    db_runner = models.EnvironmentRunnerConfig(**sanitized_data)
+    org_id = require_org_id(current_user)
+    db_runner = models.EnvironmentRunnerConfig(organization_id=org_id, **sanitized_data)
     db.add(db_runner)
     await db.commit()
     await db.refresh(db_runner)
@@ -518,6 +526,38 @@ async def update_environment_runner(
         )
         await session.commit()
 
+    return runner_config
+
+@router.post("/environment-runners/{runner_id}/heartbeat", response_model=schemas.EnvironmentRunnerConfig)
+async def update_environment_runner_heartbeat(
+    runner_id: int,
+    heartbeat: schemas.EnvironmentRunnerHeartbeat,
+    db: DBSession,
+    current_user: CurrentUser,
+):
+    if runner_id <= 0:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid environment runner ID")
+
+    org_id = require_org_id(current_user)
+    result = await db.execute(
+        select(models.EnvironmentRunnerConfig)
+        .filter(models.EnvironmentRunnerConfig.id == runner_id)
+        .filter(models.EnvironmentRunnerConfig.organization_id == org_id)
+    )
+    runner_config = result.scalar_one_or_none()
+    if not runner_config:
+        raise HTTPException(status_code=404, detail="Environment Runner Config not found")
+
+    update_data = heartbeat.model_dump(exclude_unset=True)
+    if "status" not in update_data:
+        update_data["status"] = "online"
+    update_data["last_check_in"] = datetime.utcnow()
+
+    for key, value in update_data.items():
+        setattr(runner_config, key, value)
+
+    await db.commit()
+    await db.refresh(runner_config)
     return runner_config
 
 @router.delete("/environment-runners/{runner_id}", status_code=status.HTTP_204_NO_CONTENT)

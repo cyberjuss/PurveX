@@ -25,6 +25,7 @@ class User(Base):
     __tablename__ = "users"
 
     id = Column(Integer, primary_key=True, index=True)
+    username = Column(String, unique=True, index=True, nullable=True)
     email = Column(String, unique=True, index=True, nullable=False)
     hashed_password = Column(String, nullable=False)
     is_active = Column(Boolean, default=True)
@@ -110,6 +111,11 @@ class Test(Base):
     technique_id = Column(String, nullable=False)
     marker = Column(String, nullable=True)
     environment = Column(String, nullable=False)  # "lab", "dev", "prod"
+    endpoint = Column(String, nullable=True)
+    initiated_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    initiated_by_email = Column(String, nullable=True)
+    initiated_by_username = Column(String, nullable=True)
+    initiated_by_role = Column(String, nullable=True)
     status = Column(String, nullable=False)  # "pending", "running", "completed", "failed", "qa"
     result = Column(String, nullable=True)  # "pass", "fail", "inconclusive"
     score = Column(Integer, nullable=True)
@@ -267,6 +273,11 @@ class EnvironmentRunnerConfig(Base):
     max_concurrent_tests = Column(Integer, default=1)
     heartbeat_interval_seconds = Column(Integer, default=60)
     alert_offline_minutes = Column(Integer, default=5)
+    os = Column(String, nullable=True)
+    ip_address = Column(String, nullable=True)
+    agent_version = Column(String, nullable=True)
+    last_check_in = Column(DateTime(timezone=True), nullable=True)
+    status = Column(String, nullable=True)
 
 
 class TestingPolicy(Base):

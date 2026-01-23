@@ -33,7 +33,6 @@ import {
   Clock,
   ShieldCheck,
 } from "lucide-react";
-import { SimpleBreadcrumbs } from "@/components/layout/simple-breadcrumbs";
 
 function formatDate(value?: string) {
   if (!value) return "N/A";
@@ -47,19 +46,19 @@ function formatDate(value?: string) {
 function getResultBadgeClass(result?: string) {
   switch (result) {
     case "PASS":
-      return "bg-emerald-500/15 text-emerald-300 border border-emerald-500/40";
+      return "bg-emerald-100 text-emerald-700 border border-emerald-200";
     case "FAIL":
-      return "bg-red-500/15 text-red-300 border border-red-500/40";
+      return "bg-red-100 text-red-700 border border-red-200";
     case "INCONCLUSIVE":
-      return "bg-orange-500/15 text-orange-300 border border-orange-500/40";
+      return "bg-orange-100 text-orange-700 border border-orange-200";
     case "PENDING":
-      return "bg-blue-500/15 text-blue-300 border border-blue-500/40";
+      return "bg-blue-100 text-blue-700 border border-blue-200";
     case "RUNNING":
-      return "bg-yellow-500/15 text-yellow-300 border border-yellow-500/40";
+      return "bg-yellow-100 text-yellow-700 border border-yellow-200";
     case "ERROR":
-      return "bg-red-700/15 text-red-500 border border-red-700/40";
+      return "bg-red-100 text-red-700 border border-red-200";
     default:
-      return "bg-slate-700/40 text-slate-200 border border-slate-600/60";
+      return "bg-slate-100 text-slate-700 border border-slate-200";
   }
 }
 
@@ -86,6 +85,13 @@ function parseSampleEvents(artifact?: TestArtifact): unknown[] {
   } catch {
     return [];
   }
+}
+
+function getTargetHostFromCommand(command?: string | null): string | null {
+  if (!command) return null;
+  const match = command.match(/-ComputerName\s+([^\s"]+|"[^"]+")/i);
+  if (!match) return null;
+  return match[1].replace(/^"|"$/g, "");
 }
 
 export default function TestDetailPage() {
@@ -162,19 +168,10 @@ export default function TestDetailPage() {
 
   return (
     <div className="p-6 space-y-6">
-      {/* Breadcrumb Navigation */}
-      <SimpleBreadcrumbs
-        items={[
-          { label: "Tests", href: "/tests" },
-          { label: `Test #${data.id}` },
-        ]}
-        variant="dark"
-      />
-
       <div className="flex items-center justify-between gap-3">
           <div>
-            <h1 className="text-2xl font-semibold text-slate-100">Test #{data.id}</h1>
-            <p className="text-xs text-slate-400">
+            <h1 className="text-2xl font-semibold text-slate-900">Test #{data.id}</h1>
+            <p className="text-xs text-slate-600">
               {detection?.title || "No Detection"} | {data.technique_id || "Unknown"} | {data.environment.toUpperCase()}
             </p>
         </div>
@@ -229,6 +226,12 @@ export default function TestDetailPage() {
               <div className="mt-1 text-slate-200">{data.environment.toUpperCase()}</div>
             </div>
             <div>
+              <div className="text-xs text-slate-400 uppercase tracking-[0.2em]">Endpoint</div>
+              <div className="mt-1 text-slate-200">
+                {data.endpoint || getTargetHostFromCommand(artifact?.atomic_command) || "—"}
+              </div>
+            </div>
+            <div>
               <div className="text-xs text-slate-400 uppercase tracking-[0.2em]">Started</div>
               <div className="mt-1 flex items-center gap-1 text-slate-200">
                 <Clock className="h-3 w-3 text-slate-400" />
@@ -274,7 +277,7 @@ export default function TestDetailPage() {
         </CardHeader>
         <CardContent className="space-y-4 text-sm">
           {testEvents.length === 0 ? (
-            <div className="rounded-lg border border-slate-800 bg-slate-950/60 px-3 py-3 text-xs text-slate-400">
+            <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-3 text-xs text-slate-600">
               No events were captured for this test run.
             </div>
           ) : (
@@ -436,7 +439,7 @@ export default function TestDetailPage() {
             <div className="text-xs text-slate-400 uppercase tracking-[0.2em] mb-1">
               Atomic Command
             </div>
-            <pre className="max-h-32 overflow-auto rounded-lg bg-slate-950/70 p-3 text-xs text-slate-100 border border-slate-800">
+            <pre className="max-h-32 overflow-auto rounded-lg bg-slate-50 p-3 text-xs text-slate-700 border border-slate-200">
 {artifact?.atomic_command || "Not recorded (pipeline stubbed or not yet run)."}
             </pre>
           </div>
@@ -454,11 +457,11 @@ export default function TestDetailPage() {
               </span>
             </div>
             {sampleEvents.length === 0 ? (
-              <div className="rounded-lg border border-slate-800 bg-slate-950/60 px-3 py-2 text-xs text-slate-400">
+              <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
                 No sample events were captured for this test run.
               </div>
             ) : (
-              <pre className="max-h-64 overflow-auto rounded-lg bg-slate-950/70 p-3 text-xs text-slate-100 border border-slate-800">
+              <pre className="max-h-64 overflow-auto rounded-lg bg-slate-50 p-3 text-xs text-slate-700 border border-slate-200">
 {JSON.stringify(sampleEvents, null, 2)}
               </pre>
             )}
@@ -483,8 +486,8 @@ export default function TestDetailPage() {
         </CardHeader>
         <CardContent className="space-y-4 text-sm">
           {!artifact?.ai_explanation && !artifact?.ai_suggested_rule ? (
-            <div className="flex items-center gap-2 rounded-lg border border-slate-800 bg-slate-950/60 px-3 py-2 text-xs text-slate-400">
-              <AlertTriangle className="h-4 w-4 text-amber-400" />
+            <div className="flex items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
+              <AlertTriangle className="h-4 w-4 text-amber-500" />
               <span>
                 AI analysis is not yet available for this run. Ensure the local Ollama service is
                 running with the Llama 3.1 model and re-run the test.
@@ -496,19 +499,19 @@ export default function TestDetailPage() {
                 <div className="text-xs text-slate-400 uppercase tracking-[0.2em] mb-1">
                   AI Summary
                 </div>
-                <div className="rounded-lg border border-slate-800 bg-slate-950/60 px-3 py-2 text-xs leading-relaxed text-slate-100 whitespace-pre-wrap">
+                <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs leading-relaxed text-slate-700 whitespace-pre-wrap">
                   {artifact?.ai_explanation}
                 </div>
               </div>
 
-              <Separator className="border-slate-800" />
+              <Separator className="border-slate-200" />
 
               <div className="grid gap-4 md:grid-cols-2">
                 <div>
                   <div className="text-xs text-slate-400 uppercase tracking-[0.2em] mb-1">
                     Query / Rule Suggestion
                   </div>
-                  <pre className="max-h-40 overflow-auto rounded-lg bg-slate-950/70 p-3 text-xs text-slate-100 border border-slate-800">
+                  <pre className="max-h-40 overflow-auto rounded-lg bg-slate-50 p-3 text-xs text-slate-700 border border-slate-200">
 {artifact?.ai_suggested_rule || "No explicit rule suggestion was generated."}
                   </pre>
                 </div>
@@ -517,8 +520,8 @@ export default function TestDetailPage() {
                     <div className="text-xs text-slate-400 uppercase tracking-[0.2em] mb-1">
                       Root Cause Category
                     </div>
-                    <div className="flex items-center gap-2 text-slate-200">
-                      <Badge className="bg-slate-700/40 text-slate-100 border border-slate-500/60">
+                    <div className="flex items-center gap-2 text-slate-700">
+                      <Badge className="bg-slate-100 text-slate-700 border border-slate-200">
                         {artifact?.ai_root_cause_category || "OTHER"}
                       </Badge>
                     </div>
@@ -527,7 +530,7 @@ export default function TestDetailPage() {
                     <div className="text-xs text-slate-400 uppercase tracking-[0.2em] mb-1">
                       AI Confidence
                     </div>
-                    <div className="text-slate-200">
+                    <div className="text-slate-700">
                       {typeof artifact?.ai_confidence_score === "number"
                         ? `${artifact.ai_confidence_score}/100`
                         : "N/A"}
@@ -599,4 +602,3 @@ export default function TestDetailPage() {
     </div>
   );
 }
-

@@ -14,6 +14,7 @@ import { PageHeader } from "@/components/layout/page-header";
 import { LoadingState } from "@/components/ui/loading-state";
 import { ErrorState } from "@/components/ui/error-state";
 import { getTests, type TestWithDetectionTitle } from "@/lib/api";
+import { cn } from "@/lib/utils";
 
 type ResultFilter = "all" | "PASS" | "FAIL" | "INCONCLUSIVE" | "PENDING" | "RUNNING" | "ERROR";
 type EnvFilter = "all" | "lab" | "dev" | "prod";
@@ -214,6 +215,7 @@ export default function TestsAuditPage() {
                     <th className="py-2.5 pr-4">Time</th>
                     <th className="py-2.5 pr-4">Finished</th>
                     <th className="py-2.5 pr-4">Duration</th>
+                    <th className="py-2.5 pr-4">User</th>
                     <th className="py-2.5 pr-4">Detection</th>
                     <th className="py-2.5 pr-4">Technique</th>
                     <th className="py-2.5 pr-4">Atomic</th>
@@ -258,6 +260,14 @@ export default function TestsAuditPage() {
                         </td>
                         <td className="py-3 pr-4 whitespace-nowrap text-slate-600">
                           {formatDuration(test.started_at, test.finished_at)}
+                        </td>
+                        <td className="py-3 pr-4 max-w-[200px]">
+                          <div className="text-slate-900 truncate">
+                            {test.initiated_by_username || "Unknown user"}
+                          </div>
+                          <div className="text-[11px] text-slate-500 truncate">
+                            {test.initiated_by_role || "Unknown role"}
+                          </div>
                         </td>
                         <td className="py-3 pr-4 max-w-[260px]">
                           <div className="text-slate-900 font-medium truncate">

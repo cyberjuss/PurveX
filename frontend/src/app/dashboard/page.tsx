@@ -170,7 +170,9 @@ export default function DashboardPage() {
       setSystemHealth({
         siemConnected: siemConnections.filter((s: any) => s.status === "connected" || s.status === "active").length,
         siemTotal: siemConnections.length,
-        runnersActive: runners.filter((r: any) => r.status === "active" || r.enabled).length,
+        runnersActive: runners.filter((r: any) =>
+          r.status === "active" || r.enabled === true || (r.status === undefined && r.enabled === undefined)
+        ).length,
         runnersTotal: runners.length,
       });
     } catch (err: any) {
@@ -737,7 +739,9 @@ export default function DashboardPage() {
                                 {/* Status */}
                                 <div>
                                   <p className="text-sm font-semibold text-slate-700">
-                                    {systemHealth.runnersActive} of {systemHealth.runnersTotal || 1} active
+                                    {runnersFullyConfigured
+                                      ? `${systemHealth.runnersActive} of ${systemHealth.runnersTotal || 1} completed`
+                                      : `${systemHealth.runnersActive} of ${systemHealth.runnersTotal || 1} active`}
                                   </p>
                                 </div>
                                 

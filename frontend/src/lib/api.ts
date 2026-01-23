@@ -417,7 +417,7 @@ export async function apiFetch(path: string, options: RequestInit = {}) {
         return res.json();
       } catch (err) {
         lastNetworkError = err;
-        break;
+        continue;
       }
     }
   }
@@ -923,7 +923,4 @@ export async function cleanupAuditEvents(days?: number): Promise<{ deleted: numb
     method: "POST",
   });
 }
-
-
-
 

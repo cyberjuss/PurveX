@@ -11,7 +11,7 @@ from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
-from sqlalchemy import select
+from sqlalchemy import select, text, inspect
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from .middleware.security import SecurityHeadersMiddleware, RateLimitMiddleware, RequestLoggingMiddleware
 from .middleware.csrf import CSRFProtectionMiddleware
@@ -81,6 +81,40 @@ async def create_db_and_tables():
         # Create tables using SQLAlchemy metadata
         async with async_engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
+            # Ensure new columns exist in legacy databases (lightweight migration).
+            def ensure_tests_endpoint(sync_conn):
+                inspector = inspect(sync_conn)
+                columns = {col["name"] for col in inspector.get_columns("tests")}
+                if "endpoint" not in columns:
+                    sync_conn.execute(text("ALTER TABLE tests ADD COLUMN endpoint VARCHAR(255)"))
+                if "initiated_by_user_id" not in columns:
+                    sync_conn.execute(text("ALTER TABLE tests ADD COLUMN initiated_by_user_id INTEGER"))
+                if "initiated_by_email" not in columns:
+                    sync_conn.execute(text("ALTER TABLE tests ADD COLUMN initiated_by_email VARCHAR(255)"))
+                if "initiated_by_username" not in columns:
+                    sync_conn.execute(text("ALTER TABLE tests ADD COLUMN initiated_by_username VARCHAR(100)"))
+                if "initiated_by_role" not in columns:
+                    sync_conn.execute(text("ALTER TABLE tests ADD COLUMN initiated_by_role VARCHAR(100)"))
+                user_columns = {col["name"] for col in inspector.get_columns("users")}
+                if "username" not in user_columns:
+                    sync_conn.execute(text("ALTER TABLE users ADD COLUMN username VARCHAR(100)"))
+                runner_columns = {col["name"] for col in inspector.get_columns("environment_runner_configs")}
+                if "os" not in runner_columns:
+                    sync_conn.execute(text("ALTER TABLE environment_runner_configs ADD COLUMN os VARCHAR(255)"))
+                if "ip_address" not in runner_columns:
+                    sync_conn.execute(text("ALTER TABLE environment_runner_configs ADD COLUMN ip_address VARCHAR(255)"))
+                if "agent_version" not in runner_columns:
+                    sync_conn.execute(text("ALTER TABLE environment_runner_configs ADD COLUMN agent_version VARCHAR(255)"))
+                if "last_check_in" not in runner_columns:
+                    sync_conn.execute(text("ALTER TABLE environment_runner_configs ADD COLUMN last_check_in DATETIME"))
+                if "status" not in runner_columns:
+                    sync_conn.execute(text("ALTER TABLE environment_runner_configs ADD COLUMN status VARCHAR(100)"))
+                # Backfill runner org_id for legacy rows
+                sync_conn.execute(text(
+                    "UPDATE environment_runner_configs SET organization_id = (SELECT id FROM organizations LIMIT 1) "
+                    "WHERE organization_id IS NULL"
+                ))
+            await conn.run_sync(ensure_tests_endpoint)
         
         # Automatically run RBAC migration on startup
         # Temporarily disabled to debug startup hang
@@ -172,6 +206,7 @@ async def create_db_and_tables():
                 admin = result.scalars().first()
                 if admin is None:
                     admin = models.User(
+                        username="admin",
                         email=settings.DEFAULT_ADMIN_EMAIL,
                         hashed_password=hash_password(settings.DEFAULT_ADMIN_PASSWORD),
                         is_admin=True,

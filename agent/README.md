@@ -11,7 +11,7 @@ Simple scripts to register a sandbox or lab computer as a PurveX test runner. Th
 pip install requests
 
 # Run registration
-python3 register_agent.py --api-url http://your-purvex-server:8000 --token YOUR_API_TOKEN --env lab
+python3 register_agent.py --api-url http://your-purvex-server:8001 --token YOUR_TOKEN --env lab
 ```
 
 ### Bash (Linux/Unix)
@@ -19,14 +19,14 @@ python3 register_agent.py --api-url http://your-purvex-server:8000 --token YOUR_
 ```bash
 # Make executable and run
 chmod +x register_agent.sh
-./register_agent.sh --api-url http://your-purvex-server:8000 --token YOUR_API_TOKEN --env lab
+./register_agent.sh --api-url http://your-purvex-server:8001 --token YOUR_TOKEN --env lab
 ```
 
 ### PowerShell (Windows)
 
 ```powershell
 # Run registration
-.\register_agent.ps1 -ApiUrl "http://your-purvex-server:8000" -Token "YOUR_API_TOKEN" -Env "lab"
+.\register_agent.ps1 -ApiUrl "http://your-purvex-server:8001" -Token "YOUR_TOKEN" -Env "lab"
 ```
 
 ## Features
@@ -34,6 +34,7 @@ chmod +x register_agent.sh
 - ✅ **Auto-detection**: Automatically detects hostname, IP address, and OS type
 - ✅ **Simple**: Just copy, paste, and run
 - ✅ **Flexible**: Supports command-line arguments or environment variables
+- ✅ **One-time friendly**: Prompts for a registration token if not provided
 - ✅ **Cross-platform**: Python (all platforms), Bash (Linux/Unix), PowerShell (Windows)
 
 ## Usage
@@ -43,8 +44,9 @@ chmod +x register_agent.sh
 **Python:**
 ```bash
 python3 register_agent.py \
-  --api-url http://localhost:8000 \
-  --token your-api-token-here \
+  --api-url http://127.0.0.1:8001 \
+  --admin-username admin \
+  --admin-password admin \
   --env lab \
   --hostname my-lab-machine \
   --port 22 \
@@ -54,8 +56,9 @@ python3 register_agent.py \
 **Bash:**
 ```bash
 ./register_agent.sh \
-  --api-url http://localhost:8000 \
-  --token your-api-token-here \
+  --api-url http://127.0.0.1:8001 \
+  --admin-username admin \
+  --admin-password admin \
   --env lab \
   --hostname my-lab-machine \
   --port 22 \
@@ -65,8 +68,9 @@ python3 register_agent.py \
 **PowerShell:**
 ```powershell
 .\register_agent.ps1 `
-  -ApiUrl "http://localhost:8000" `
-  -Token "your-api-token-here" `
+  -ApiUrl "http://127.0.0.1:8001" `
+  -AdminUsername "admin" `
+  -AdminPassword "admin" `
   -Env "lab" `
   -Hostname "my-lab-machine" `
   -Port 22 `
@@ -77,8 +81,8 @@ python3 register_agent.py \
 
 **Python/Bash:**
 ```bash
-export PURVEX_API_URL=http://localhost:8000
-export PURVEX_API_TOKEN=your-api-token-here
+export PURVEX_API_URL=http://127.0.0.1:8001
+export PURVEX_API_TOKEN=YOUR_TOKEN
 export PURVEX_ENV=lab
 export PURVEX_HOSTNAME=my-lab-machine
 export PURVEX_PORT=22
@@ -91,8 +95,8 @@ python3 register_agent.py
 
 **PowerShell:**
 ```powershell
-$env:PURVEX_API_URL = "http://localhost:8000"
-$env:PURVEX_API_TOKEN = "your-api-token-here"
+$env:PURVEX_API_URL = "http://127.0.0.1:8001"
+$env:PURVEX_API_TOKEN = "YOUR_TOKEN"
 $env:PURVEX_ENV = "lab"
 $env:PURVEX_HOSTNAME = "my-lab-machine"
 $env:PURVEX_PORT = "22"
@@ -105,8 +109,9 @@ $env:PURVEX_USERNAME = "purvex"
 
 | Parameter | Environment Variable | Description | Default |
 |-----------|---------------------|-------------|---------|
-| `--api-url` / `-ApiUrl` | `PURVEX_API_URL` | PurveX API base URL | `http://localhost:8000` |
-| `--token` / `-Token` | `PURVEX_API_TOKEN` | API authentication token (required) | None |
+| `--api-url` / `-ApiUrl` | `PURVEX_API_URL` | PurveX API base URL | `http://127.0.0.1:8001` |
+| `--token` / `-Token` | `PURVEX_API_TOKEN` | Registration token (required) | None |
+| `--admin-password` / `-AdminPassword` | `PURVEX_ADMIN_PASSWORD` | Admin password to mint a registration token | None |
 | `--env` / `-Env` | `PURVEX_ENV` | Environment name (lab, dev, prod) | `lab` |
 | `--hostname` / `-Hostname` | `PURVEX_HOSTNAME` | Custom hostname | Auto-detected |
 | `--port` / `-Port` | `PURVEX_PORT` | SSH port | `22` |
@@ -114,7 +119,7 @@ $env:PURVEX_USERNAME = "purvex"
 
 ## Getting an API Token
 
-You need an API token with admin privileges to register agents. This token can be obtained from:
+You need a one-time registration token. You can obtain it from:
 
 1. The PurveX web interface (Settings → API Tokens)
 2. Your PurveX administrator
@@ -186,4 +191,3 @@ After registration:
 2. You can configure SSH keys for authentication
 3. The runner will be available for test execution
 4. Monitor the runner status in the PurveX dashboard
-

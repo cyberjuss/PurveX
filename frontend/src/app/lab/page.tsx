@@ -2,6 +2,7 @@
 
 import React, { useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
+import Link from "next/link";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -26,7 +27,7 @@ function getApiUrl(): string {
   if (typeof window !== "undefined") {
     return `${window.location.protocol}//${window.location.hostname}:${process.env.NEXT_PUBLIC_API_PORT || "8001"}`;
   }
-  return "http://localhost:8000";
+  return "http://127.0.0.1:8001";
 }
 
 // Helper function to get agent script content
@@ -39,16 +40,32 @@ function getAgentScript(type: "bash" | "powershell" | "python", apiUrl: string):
 set -e
 
 API_URL="${apiUrl}"
-API_TOKEN="YOUR_TOKEN_HERE"
+API_TOKEN=""
+ADMIN_TOKEN=""
+ADMIN_USERNAME=""
+ADMIN_EMAIL=""
+ADMIN_PASSWORD=""
 ENV="lab"
 HOSTNAME=""
 PORT="22"
 USERNAME="${"${USER:-purvex}"}"
 
+read_prompt() {
+    local __var="$1"
+    local __prompt="$2"
+    local __value=""
+    if [ -r /dev/tty ]; then
+        IFS= read -r -p "$__prompt" __value < /dev/tty || true
+    else
+        IFS= read -r -p "$__prompt" __value || true
+    fi
+    eval "$__var=\"\$__value\""
+}
+
 while [[ $# -gt 0 ]]; do
     case $1 in
+        --api-url=*) API_URL="\${1#*=}"; shift 1 ;;
         --api-url) API_URL="$2"; shift 2 ;;
-        --token) API_TOKEN="$2"; shift 2 ;;
         --env) ENV="$2"; shift 2 ;;
         --hostname) HOSTNAME="$2"; shift 2 ;;
         --port) PORT="$2"; shift 2 ;;
@@ -57,9 +74,33 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+if ! command -v curl >/dev/null 2>&1; then
+    echo "❌ ERROR: 'curl' is required but not installed."
+    echo "   Install it with: apt-get install curl (Debian/Ubuntu) or yum install curl (RHEL/CentOS)"
+    exit 1
+fi
+
+api_base="\${API_URL%/}"
+
+if [ -z "$API_TOKEN" ]; then
+    read_prompt input_api "PurveX API URL [\${API_URL}]: "
+    if [ -n "$input_api" ]; then
+        API_URL="$input_api"
+        api_base="\${API_URL%/}"
+    fi
+    read_prompt input_env "Environment [lab/dev/prod] (\${ENV}): "
+    if [ -n "$input_env" ]; then
+        ENV="$input_env"
+    fi
+    while [ -z "$API_TOKEN" ]; do
+        read_prompt API_TOKEN "Registration token: "
+        API_TOKEN="$(printf "%s" "$API_TOKEN" | tr -d '\r')"
+    done
+fi
+
 if [ -z "$API_TOKEN" ] || [ "$API_TOKEN" = "YOUR_TOKEN_HERE" ]; then
-    echo "❌ ERROR: API token is required."
-    echo "   Provide it via --token argument or set API_TOKEN variable"
+    echo "ERROR: Registration token is required."
+    echo "   Please paste the token when prompted."
     exit 1
 fi
 
@@ -86,6 +127,10 @@ REGISTRATION_DATA=$(cat <<EOF
   "hostname": "$HOSTNAME",
   "port": $PORT,
   "username": "$USERNAME",
+  "os": "$(uname -s 2>/dev/null || echo "Unknown")",
+  "ip_address": "$LOCAL_IP",
+  "agent_version": "v1.0.0",
+  "status": "online",
   "auth_method": "key",
   "allowed_test_types": "[\\"Atomic only\\"]",
   "max_concurrent_tests": 1,
@@ -102,13 +147,7 @@ echo "  IP Address: $LOCAL_IP"
 echo "  Environment: $ENV"
 echo ""
 
-if ! command -v curl >/dev/null 2>&1; then
-    echo "❌ ERROR: 'curl' is required but not installed."
-    echo "   Install it with: apt-get install curl (Debian/Ubuntu) or yum install curl (RHEL/CentOS)"
-    exit 1
-fi
-
-URL="${apiUrl}/api/settings/environment-runners"
+URL="\${api_base}/settings/environment-runners"
 RESPONSE=$(curl -s -w "\\n%{http_code}" -X POST -H "Authorization: Bearer $API_TOKEN" -H "Content-Type: application/json" -d "$REGISTRATION_DATA" "$URL" 2>&1)
 
 HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
@@ -120,6 +159,55 @@ if [ "$HTTP_CODE" -eq 201 ] || [ "$HTTP_CODE" -eq 200 ]; then
     if [ -n "$RUNNER_ID" ]; then
         echo "   Runner ID: $RUNNER_ID"
     fi
+    if [ -n "$RUNNER_ID" ]; then
+        OS_NAME=$(uname -s 2>/dev/null || echo "Unknown")
+        HB_PAYLOAD=$(cat <<EOF
+{
+  "os": "$OS_NAME",
+  "ip_address": "$LOCAL_IP",
+  "agent_version": "v1.0.0",
+  "status": "online"
+}
+EOF
+)
+        curl -s -X POST -H "Authorization: Bearer $API_TOKEN" -H "Content-Type: application/json" \
+          -d "$HB_PAYLOAD" "\${api_base}/settings/environment-runners/\${RUNNER_ID}/heartbeat" >/dev/null 2>&1 || true
+        if command -v systemctl >/dev/null 2>&1; then
+            HB_SCRIPT="/usr/local/bin/purvex-agent-heartbeat.sh"
+            HB_UNIT="/etc/systemd/system/purvex-agent-heartbeat.service"
+            sudo tee "$HB_SCRIPT" >/dev/null <<EOF
+#!/bin/bash
+API_URL="\${API_URL}"
+API_TOKEN="\${API_TOKEN}"
+RUNNER_ID="\${RUNNER_ID}"
+while true; do
+  OS_NAME=\$(uname -s 2>/dev/null || echo "Unknown")
+  LOCAL_IP=\$(hostname -I 2>/dev/null | awk '{print $1}' || echo "127.0.0.1")
+  curl -s -X POST -H "Authorization: Bearer \${API_TOKEN}" -H "Content-Type: application/json" \\
+    -d "{\"os\":\"\${OS_NAME}\",\"ip_address\":\"\${LOCAL_IP}\",\"agent_version\":\"v1.0.0\",\"status\":\"online\"}" \\
+    "\${API_URL%/}/settings/environment-runners/\${RUNNER_ID}/heartbeat" >/dev/null 2>&1 || true
+  sleep 60
+done
+EOF
+            sudo chmod +x "$HB_SCRIPT"
+            sudo tee "$HB_UNIT" >/dev/null <<EOF
+[Unit]
+Description=PurveX Agent Heartbeat
+After=network-online.target
+
+[Service]
+Type=simple
+ExecStart=$HB_SCRIPT
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+EOF
+            sudo systemctl daemon-reload
+            sudo systemctl enable --now purvex-agent-heartbeat.service >/dev/null 2>&1 || true
+        fi
+    fi
 elif [ "$HTTP_CODE" -eq 403 ]; then
     echo "❌ ERROR: Access denied. Check your API token and ensure you have admin privileges."
     exit 1
@@ -127,6 +215,71 @@ elif [ "$HTTP_CODE" -eq 409 ]; then
     echo "⚠️  WARNING: A runner with this hostname already exists."
     exit 1
 else
+    if [ "$HTTP_CODE" -eq 404 ]; then
+        URL="\${api_base}/api/settings/environment-runners"
+        RESPONSE=$(curl -s -w "\\n%{http_code}" -X POST -H "Authorization: Bearer $API_TOKEN" -H "Content-Type: application/json" -d "$REGISTRATION_DATA" "$URL" 2>&1)
+
+        HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+        BODY=$(echo "$RESPONSE" | sed '$d')
+
+        if [ "$HTTP_CODE" -eq 201 ] || [ "$HTTP_CODE" -eq 200 ]; then
+            echo "✅ Successfully registered with PurveX!"
+            RUNNER_ID=$(echo "$BODY" | grep -o '"id":[0-9]*' | grep -o '[0-9]*' | head -1)
+            if [ -n "$RUNNER_ID" ]; then
+                echo "   Runner ID: $RUNNER_ID"
+            fi
+            if [ -n "$RUNNER_ID" ]; then
+                OS_NAME=$(uname -s 2>/dev/null || echo "Unknown")
+                HB_PAYLOAD=$(cat <<EOF
+{
+  "os": "$OS_NAME",
+  "ip_address": "$LOCAL_IP",
+  "agent_version": "v1.0.0",
+  "status": "online"
+}
+EOF
+)
+                curl -s -X POST -H "Authorization: Bearer $API_TOKEN" -H "Content-Type: application/json" \
+                  -d "$HB_PAYLOAD" "\${api_base}/settings/environment-runners/\${RUNNER_ID}/heartbeat" >/dev/null 2>&1 || true
+                if command -v systemctl >/dev/null 2>&1; then
+                    HB_SCRIPT="/usr/local/bin/purvex-agent-heartbeat.sh"
+                    HB_UNIT="/etc/systemd/system/purvex-agent-heartbeat.service"
+                    sudo tee "$HB_SCRIPT" >/dev/null <<EOF
+#!/bin/bash
+API_URL="\${API_URL}"
+API_TOKEN="\${API_TOKEN}"
+RUNNER_ID="\${RUNNER_ID}"
+while true; do
+  OS_NAME=\$(uname -s 2>/dev/null || echo "Unknown")
+  LOCAL_IP=\$(hostname -I 2>/dev/null | awk '{print $1}' || echo "127.0.0.1")
+  curl -s -X POST -H "Authorization: Bearer \${API_TOKEN}" -H "Content-Type: application/json" \\
+    -d "{\"os\":\"\${OS_NAME}\",\"ip_address\":\"\${LOCAL_IP}\",\"agent_version\":\"v1.0.0\",\"status\":\"online\"}" \\
+    "\${API_URL%/}/settings/environment-runners/\${RUNNER_ID}/heartbeat" >/dev/null 2>&1 || true
+  sleep 60
+done
+EOF
+                    sudo chmod +x "$HB_SCRIPT"
+                    sudo tee "$HB_UNIT" >/dev/null <<EOF
+[Unit]
+Description=PurveX Agent Heartbeat
+After=network-online.target
+
+[Service]
+Type=simple
+ExecStart=$HB_SCRIPT
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+EOF
+                    sudo systemctl daemon-reload
+                    sudo systemctl enable --now purvex-agent-heartbeat.service >/dev/null 2>&1 || true
+                fi
+            fi
+            exit 0
+        fi
+    fi
     echo "❌ ERROR: HTTP $HTTP_CODE"
     echo "   Response: $BODY"
     exit 1
@@ -145,8 +298,20 @@ param(
 )
 
 if ([string]::IsNullOrEmpty($Token) -or $Token -eq "YOUR_TOKEN_HERE") {
-    Write-Host "❌ ERROR: API token is required." -ForegroundColor Red
-    Write-Host "   Provide it via -Token parameter" -ForegroundColor Yellow
+    $inputApi = Read-Host "PurveX API URL [$ApiUrl]"
+    if (-not [string]::IsNullOrEmpty($inputApi)) {
+        $ApiUrl = $inputApi
+    }
+    $inputEnv = Read-Host "Environment [lab/dev/prod] ($Env)"
+    if (-not [string]::IsNullOrEmpty($inputEnv)) {
+        $Env = $inputEnv
+    }
+    $Token = Read-Host "Registration token"
+}
+
+if ([string]::IsNullOrEmpty($Token) -or $Token -eq "YOUR_TOKEN_HERE") {
+    Write-Host "❌ ERROR: Registration token is required." -ForegroundColor Red
+    Write-Host "   Provide it via -Token or set PURVEX_API_TOKEN." -ForegroundColor Yellow
     exit 1
 }
 
@@ -166,6 +331,10 @@ $RegistrationData = @{
     hostname = $Hostname
     port = $Port
     username = $Username
+    os = (Get-CimInstance Win32_OperatingSystem).Caption
+    ip_address = $LocalIP
+    agent_version = "v1.0.0"
+    status = "online"
     auth_method = "key"
     allowed_test_types = '["Atomic only"]'
     max_concurrent_tests = 1
@@ -180,7 +349,7 @@ Write-Host "  IP Address: $LocalIP" -ForegroundColor White
 Write-Host "  Environment: $Env" -ForegroundColor White
 Write-Host ""
 
-$Url = "$($ApiUrl.TrimEnd('/'))/api/settings/environment-runners"
+$Url = "$($ApiUrl.TrimEnd('/'))/settings/environment-runners"
 $Headers = @{
     "Authorization" = "Bearer $Token"
     "Content-Type" = "application/json"
@@ -192,10 +361,83 @@ try {
     Write-Host "   Runner ID: $($Response.id)" -ForegroundColor White
     Write-Host "   Environment: $($Response.environment_name)" -ForegroundColor White
     Write-Host "   Hostname: $($Response.hostname)" -ForegroundColor White
+    if ($Response.id) {
+        $hbBody = @{
+            os = (Get-CimInstance Win32_OperatingSystem).Caption
+            ip_address = $LocalIP
+            agent_version = "v1.0.0"
+            status = "online"
+        } | ConvertTo-Json
+        $hbUrl = "$($ApiUrl.TrimEnd('/'))/settings/environment-runners/$($Response.id)/heartbeat"
+        Invoke-RestMethod -Uri $hbUrl -Method Post -Headers $Headers -Body $hbBody -ContentType "application/json" -ErrorAction SilentlyContinue | Out-Null
+        $taskScript = Join-Path $env:ProgramData "PurveX\\purvex-heartbeat.ps1"
+        New-Item -ItemType Directory -Path (Split-Path $taskScript) -Force | Out-Null
+        @"
+\$ApiUrl = "$ApiUrl"
+\$Token = "$Token"
+\$RunnerId = "$($Response.id)"
+while (\$true) {
+  \$os = (Get-CimInstance Win32_OperatingSystem).Caption
+  \$ip = (Get-NetIPAddress -AddressFamily IPv4 | Where-Object { \$_.IPAddress -notlike "127.*" -and \$_.IPAddress -notlike "169.254.*" } | Select-Object -First 1).IPAddress
+  \$body = @{ os = \$os; ip_address = \$ip; agent_version = "v1.0.0"; status = "online" } | ConvertTo-Json
+  try {
+    Invoke-RestMethod -Uri "\$((\$ApiUrl.TrimEnd('/')))/settings/environment-runners/\$RunnerId/heartbeat" -Method Post -Headers @{ Authorization = "Bearer \$Token" } -Body \$body -ContentType "application/json" -ErrorAction SilentlyContinue | Out-Null
+  } catch {}
+  Start-Sleep -Seconds 60
+}
+"@ | Set-Content -Path $taskScript -Encoding UTF8
+        $action = New-ScheduledTaskAction -Execute 'PowerShell.exe' -Argument ('-NoProfile -ExecutionPolicy Bypass -File "' + $taskScript + '"')
+        $trigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) -RepetitionInterval (New-TimeSpan -Minutes 1) -RepetitionDuration (New-TimeSpan -Days 3650)
+        Register-ScheduledTask -TaskName "PurveX Agent Heartbeat" -Action $action -Trigger $trigger -Force | Out-Null
+    }
 }
 catch {
     $StatusCode = $_.Exception.Response.StatusCode.value__
     $ErrorBody = $_.ErrorDetails.Message
+    if ($StatusCode -eq 404) {
+        try {
+            $Url = "$($ApiUrl.TrimEnd('/'))/api/settings/environment-runners"
+            $Response = Invoke-RestMethod -Uri $Url -Method Post -Headers $Headers -Body $RegistrationData -ContentType "application/json" -ErrorAction Stop
+            Write-Host "✅ Successfully registered with PurveX!" -ForegroundColor Green
+            Write-Host "   Runner ID: $($Response.id)" -ForegroundColor White
+            Write-Host "   Environment: $($Response.environment_name)" -ForegroundColor White
+            Write-Host "   Hostname: $($Response.hostname)" -ForegroundColor White
+            if ($Response.id) {
+                $hbBody = @{
+                    os = (Get-CimInstance Win32_OperatingSystem).Caption
+                    ip_address = $LocalIP
+                    agent_version = "v1.0.0"
+                    status = "online"
+                } | ConvertTo-Json
+                $hbUrl = "$($ApiUrl.TrimEnd('/'))/settings/environment-runners/$($Response.id)/heartbeat"
+                Invoke-RestMethod -Uri $hbUrl -Method Post -Headers $Headers -Body $hbBody -ContentType "application/json" -ErrorAction SilentlyContinue | Out-Null
+                $taskScript = Join-Path $env:ProgramData "PurveX\\purvex-heartbeat.ps1"
+                New-Item -ItemType Directory -Path (Split-Path $taskScript) -Force | Out-Null
+                @"
+\$ApiUrl = "$ApiUrl"
+\$Token = "$Token"
+\$RunnerId = "$($Response.id)"
+while (\$true) {
+  \$os = (Get-CimInstance Win32_OperatingSystem).Caption
+  \$ip = (Get-NetIPAddress -AddressFamily IPv4 | Where-Object { \$_.IPAddress -notlike "127.*" -and \$_.IPAddress -notlike "169.254.*" } | Select-Object -First 1).IPAddress
+  \$body = @{ os = \$os; ip_address = \$ip; agent_version = "v1.0.0"; status = "online" } | ConvertTo-Json
+  try {
+    Invoke-RestMethod -Uri "\$((\$ApiUrl.TrimEnd('/')))/settings/environment-runners/\$RunnerId/heartbeat" -Method Post -Headers @{ Authorization = "Bearer \$Token" } -Body \$body -ContentType "application/json" -ErrorAction SilentlyContinue | Out-Null
+  } catch {}
+  Start-Sleep -Seconds 60
+}
+"@ | Set-Content -Path $taskScript -Encoding UTF8
+                $action = New-ScheduledTaskAction -Execute 'PowerShell.exe' -Argument ('-NoProfile -ExecutionPolicy Bypass -File "' + $taskScript + '"')
+                $trigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) -RepetitionInterval (New-TimeSpan -Minutes 1) -RepetitionDuration (New-TimeSpan -Days 3650)
+                Register-ScheduledTask -TaskName "PurveX Agent Heartbeat" -Action $action -Trigger $trigger -Force | Out-Null
+            }
+            exit 0
+        }
+        catch {
+            $StatusCode = $_.Exception.Response.StatusCode.value__
+            $ErrorBody = $_.ErrorDetails.Message
+        }
+    }
     if ($StatusCode -eq 403) {
         Write-Host "❌ ERROR: Access denied. Check your API token and ensure you have admin privileges." -ForegroundColor Red
     }
@@ -222,6 +464,7 @@ import sys
 import socket
 import argparse
 from typing import Optional
+from getpass import getpass
 
 try:
     import requests
@@ -259,6 +502,10 @@ def register_agent(api_url: str, api_token: str, environment: str, hostname: Opt
         "hostname": hostname,
         "port": port,
         "username": username,
+        "os": os.uname().sysname if hasattr(os, "uname") else "Unknown",
+        "ip_address": get_local_ip(),
+        "agent_version": "v1.0.0",
+        "status": "online",
         "auth_method": "key",
         "allowed_test_types": '["Atomic only"]',
         "max_concurrent_tests": 1,
@@ -266,27 +513,85 @@ def register_agent(api_url: str, api_token: str, environment: str, hostname: Opt
         "alert_offline_minutes": 5
     }
     
-    url = f"{api_url.rstrip('/')}/api/settings/environment-runners"
+    url = f"{api_url.rstrip('/')}/settings/environment-runners"
     headers = {
         "Authorization": f"Bearer {api_token}",
         "Content-Type": "application/json"
     }
     
-    print(f"Connecting to PurveX at: {api_url}")
-    print(f"Registering agent:")
-    print(f"  Hostname: {hostname}")
+    print("PurveX Agent Registration")
+    print("-" * 40)
+    print(f"API URL     : {api_url}")
+    print("Agent Info  :")
+    print(f"  Hostname  : {hostname}")
     print(f"  IP Address: {get_local_ip()}")
     print(f"  Environment: {environment}")
     print()
     
     try:
         response = requests.post(url, json=registration_data, headers=headers, timeout=30)
+        if response.status_code == 404:
+            url = f"{api_url.rstrip('/')}/api/settings/environment-runners"
+            response = requests.post(url, json=registration_data, headers=headers, timeout=30)
         response.raise_for_status()
         result = response.json()
-        print("✅ Successfully registered with PurveX!")
-        print(f"   Runner ID: {result.get('id')}")
-        print(f"   Environment: {result.get('environment_name')}")
-        print(f"   Hostname: {result.get('hostname')}")
+        print("Status      : Registered")
+        print(f"Runner ID   : {result.get('id')}")
+        print(f"Environment : {result.get('environment_name')}")
+        print(f"Hostname    : {result.get('hostname')}")
+        if result.get("id"):
+            hb_url = f"{api_url.rstrip('/')}/settings/environment-runners/{result.get('id')}/heartbeat"
+            hb_payload = {
+                "os": os.uname().sysname if hasattr(os, "uname") else "Unknown",
+                "ip_address": get_local_ip(),
+                "agent_version": "v1.0.0",
+                "status": "online",
+            }
+            try:
+                requests.post(hb_url, json=hb_payload, headers=headers, timeout=10)
+            except Exception:
+                pass
+            if os.name != "nt":
+                service_path = "/usr/local/bin/purvex-agent-heartbeat.sh"
+                unit_path = "/etc/systemd/system/purvex-agent-heartbeat.service"
+                script = f"""#!/bin/bash
+API_URL="{api_url}"
+API_TOKEN="{api_token}"
+RUNNER_ID="{result.get('id')}"
+while true; do
+  OS_NAME=$(uname -s 2>/dev/null || echo "Unknown")
+  LOCAL_IP=$(hostname -I 2>/dev/null | awk '{{print $1}}' || echo "127.0.0.1")
+  curl -s -X POST -H "Authorization: Bearer $API_TOKEN" -H "Content-Type: application/json" \\
+    -d "{{\\"os\\":\\"$OS_NAME\\",\\"ip_address\\":\\"$LOCAL_IP\\",\\"agent_version\\":\\"v1.0.0\\",\\"status\\":\\"online\\"}}" \\
+    "{api_url.rstrip('/')}/settings/environment-runners/{result.get('id')}/heartbeat" >/dev/null 2>&1 || true
+  sleep 60
+done
+"""
+                unit = f"""[Unit]
+Description=PurveX Agent Heartbeat
+After=network-online.target
+
+[Service]
+Type=simple
+ExecStart={service_path}
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+"""
+                try:
+                    with open("/tmp/purvex-agent-heartbeat.sh", "w", encoding="utf-8") as f:
+                        f.write(script)
+                    with open("/tmp/purvex-agent-heartbeat.service", "w", encoding="utf-8") as f:
+                        f.write(unit)
+                    os.system(f"sudo mv /tmp/purvex-agent-heartbeat.sh {service_path}")
+                    os.system(f"sudo mv /tmp/purvex-agent-heartbeat.service {unit_path}")
+                    os.system(f"sudo chmod +x {service_path}")
+                    os.system("sudo systemctl daemon-reload")
+                    os.system("sudo systemctl enable --now purvex-agent-heartbeat.service")
+                except Exception:
+                    pass
         return result
     except requests.exceptions.HTTPError as e:
         if e.response.status_code == 403:
@@ -306,7 +611,7 @@ def register_agent(api_url: str, api_token: str, environment: str, hostname: Opt
 def main():
     parser = argparse.ArgumentParser(description="Register this machine as a PurveX test runner agent")
     parser.add_argument('--api-url', default=os.getenv('PURVEX_API_URL', '${apiUrl}'), help='PurveX API base URL')
-    parser.add_argument('--token', default=os.getenv('PURVEX_API_TOKEN'), help='API authentication token (required)')
+    parser.add_argument('--token', default=os.getenv('PURVEX_API_TOKEN'), help='Registration token (required)')
     parser.add_argument('--env', default=os.getenv('PURVEX_ENV', 'lab'), help='Environment name: lab, dev, or prod')
     parser.add_argument('--hostname', default=None, help='Custom hostname (auto-detected if not provided)')
     parser.add_argument('--port', type=int, default=22, help='SSH port (default: 22)')
@@ -314,12 +619,22 @@ def main():
     
     args = parser.parse_args()
     
-    if not args.token:
-        print("❌ ERROR: API token is required.")
-        print("   Provide it via --token argument or PURVEX_API_TOKEN environment variable")
+    api_token = args.token
+    if not api_token:
+        input_api = input(f"PurveX API URL [{args.api_url}]: ").strip()
+        if input_api:
+            args.api_url = input_api
+        input_env = input(f"Environment [lab/dev/prod] ({args.env}): ").strip()
+        if input_env:
+            args.env = input_env
+        api_token = getpass("Registration token: ")
+
+    if not api_token:
+        print("❌ ERROR: Registration token is required.")
+        print("   Provide it via --token or set PURVEX_API_TOKEN.")
         sys.exit(1)
     
-    register_agent(api_url=args.api_url, api_token=args.token, environment=args.env, hostname=args.hostname, port=args.port, username=args.username)
+    register_agent(api_url=args.api_url, api_token=api_token, environment=args.env, hostname=args.hostname, port=args.port, username=args.username)
 
 if __name__ == '__main__':
     main()`;
@@ -335,6 +650,7 @@ function LabPageContent() {
   const [tokenLoading, setTokenLoading] = useState(false);
   const [endpoints, setEndpoints] = useState<any[]>([]);
   const [endpointsLoading, setEndpointsLoading] = useState(false);
+  const [deleteEndpoint, setDeleteEndpoint] = useState<{ id: number; name: string } | null>(null);
   const [expandedRows, setExpandedRows] = useState<Set<number>>(new Set());
   const [showRegisterDialog, setShowRegisterDialog] = useState(false);
   const searchParams = useSearchParams();
@@ -402,80 +718,64 @@ function LabPageContent() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  const handleDeleteEndpoint = async (endpointId: number) => {
+    try {
+      await apiFetch(`/settings/environment-runners/${endpointId}`, {
+        method: "DELETE",
+      });
+      setEndpoints((prev) => prev.filter((endpoint) => endpoint.id !== endpointId));
+    } catch (err) {
+      console.error("Failed to delete endpoint:", err);
+    }
+  };
+
   // Fetch environment runners/endpoints
   useEffect(() => {
-    // Set mock data immediately for demo purposes
-    const mockEndpoints = [
-      {
-        id: 1,
-        hostname: "win-lab-01",
-        os: "Windows 11",
-        ipAddress: "10.0.0.5",
-        status: "online",
-        lastCheckIn: "2m ago",
-        lastTestRun: "Atomic T1059.001",
-        agentVersion: "v1.0.3",
-        tags: ["workstation"],
-        environment: "lab",
-        runnerType: "SSH",
-      },
-      {
-        id: 2,
-        hostname: "ubuntu-honeypot",
-        os: "Linux",
-        ipAddress: "10.0.0.12",
-        status: "degraded",
-        lastCheckIn: "15m ago",
-        lastTestRun: "Telemetry Check",
-        agentVersion: "v1.0.2",
-        tags: ["honeypot"],
-        environment: "lab",
-        runnerType: "SSH",
-      },
-      {
-        id: 3,
-        hostname: "dc01.lab",
-        os: "Windows Server",
-        ipAddress: "10.0.0.2",
-        status: "idle",
-        lastCheckIn: "1h ago",
-        lastTestRun: "T1110 Password Spray",
-        agentVersion: "v1.0.3",
-        tags: ["domain-controller"],
-        environment: "lab",
-        runnerType: "SSH",
-      },
-    ];
-    setEndpoints(mockEndpoints);
-    
     async function fetchEndpoints() {
       try {
         setEndpointsLoading(true);
         const runners = await apiFetch("/settings/environment-runners", {
           cache: "no-store",
         });
-        // Transform runners to endpoint format with enhanced data
+        const tests = await apiFetch("/tests/?limit=100", { cache: "no-store" }).catch(() => []);
+        const latestByEndpoint = new Map<string, any>();
+        if (Array.isArray(tests)) {
+          tests.forEach((test: any) => {
+            if (!test.endpoint) return;
+            const existing = latestByEndpoint.get(test.endpoint);
+            if (!existing || new Date(test.started_at).getTime() > new Date(existing.started_at).getTime()) {
+              latestByEndpoint.set(test.endpoint, test);
+            }
+          });
+        }
+        // Transform runners to endpoint format using only real data
         if (runners && Array.isArray(runners) && runners.length > 0) {
-          const transformedEndpoints = runners.map((runner: any, index: number) => ({
+          const transformedEndpoints = runners.map((runner: any) => ({
             id: runner.id,
             hostname: runner.hostname || `endpoint-${runner.id}`,
-            os: runner.runner_type === "SSH" ? (index % 2 === 0 ? "Linux" : "Windows Server") : "Linux",
-            ipAddress: `10.0.0.${10 + index}`,
-            status: index === 0 ? "online" : index === 1 ? "degraded" : "idle",
-            lastCheckIn: index === 0 ? "2m ago" : index === 1 ? "15m ago" : "1h ago",
-            lastTestRun: index === 0 ? "Atomic T1059.001" : index === 1 ? "Telemetry Check" : "T1110 Password Spray",
-            agentVersion: `v1.0.${3 - (index % 3)}`,
-            tags: index === 0 ? ["workstation"] : index === 1 ? ["honeypot"] : ["domain-controller"],
+            os: runner.os || "—",
+            ipAddress: runner.ip_address || "—",
+            status: runner.status || (runner.last_check_in ? "online" : "unknown"),
+            lastCheckIn: runner.last_check_in ? new Date(runner.last_check_in).toLocaleString() : "—",
+            lastTestRun: (() => {
+              const latest = latestByEndpoint.get(runner.hostname);
+              if (!latest) return "—";
+              return latest.technique_id || "—";
+            })(),
+            agentVersion: runner.agent_version || "—",
+            tags: [],
             environment: runner.environment_name || "lab",
             runnerType: runner.runner_type,
             port: runner.port,
             username: runner.username,
           }));
           setEndpoints(transformedEndpoints);
+        } else {
+          setEndpoints([]);
         }
       } catch (err) {
         console.error("Failed to fetch endpoints:", err);
-        // Keep mock data on error
+        setEndpoints([]);
       } finally {
         setEndpointsLoading(false);
       }
@@ -521,15 +821,16 @@ function LabPageContent() {
                     </CardDescription>
                   </div>
                 </div>
-                <Button
-                  variant="default"
-                  size="sm"
-                  onClick={() => setShowRegisterDialog(true)}
-                  className="h-10 px-5 rounded-full bg-white hover:bg-slate-50 text-slate-900 border border-slate-200 shadow-sm text-xs font-semibold tracking-wide"
-                >
-                  <ServerCog className="h-4 w-4 mr-2" />
-                  Install Agent
-                </Button>
+                <Link href="/settings/test-runner">
+                  <Button
+                    variant="default"
+                    size="sm"
+                    className="h-10 px-5 rounded-full bg-white hover:bg-slate-50 text-slate-900 border border-slate-200 shadow-sm text-xs font-semibold tracking-wide"
+                  >
+                    <ServerCog className="h-4 w-4 mr-2" />
+                    Install Agent
+                  </Button>
+                </Link>
               </div>
             </CardHeader>
             <CardContent className="pt-6 pb-6 px-6">
@@ -557,6 +858,7 @@ function LabPageContent() {
                         <th className="text-left py-3 px-3 min-w-[150px] font-semibold uppercase tracking-wider">Last Test</th>
                         <th className="text-left py-3 px-3 min-w-[110px] font-semibold uppercase tracking-wider">Version</th>
                         <th className="text-left py-3 px-3 min-w-[120px] font-semibold uppercase tracking-wider">Tags</th>
+                        <th className="text-right py-3 px-3 min-w-[60px] font-semibold uppercase tracking-wider">Remove</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100 text-sm text-slate-700">
@@ -622,6 +924,7 @@ function LabPageContent() {
                                   endpoint.status === "online" && "bg-emerald-50 text-emerald-700 border-emerald-200",
                                   endpoint.status === "degraded" && "bg-amber-50 text-amber-700 border-amber-200",
                                   endpoint.status === "idle" && "bg-blue-50 text-blue-700 border-blue-200",
+                                  endpoint.status === "unknown" && "bg-slate-100 text-slate-600 border-slate-200",
                                   "inline-flex items-center gap-2 border text-xs px-2.5 py-1 rounded-full"
                                 )}
                               >
@@ -631,24 +934,25 @@ function LabPageContent() {
                                     endpoint.status === "online" && "bg-emerald-500",
                                     endpoint.status === "degraded" && "bg-amber-500",
                                     endpoint.status === "idle" && "bg-blue-500",
+                                    endpoint.status === "unknown" && "bg-slate-400",
                                     endpoint.status !== "online" &&
                                       endpoint.status !== "degraded" &&
                                       endpoint.status !== "idle" &&
                                       "bg-slate-400"
                                   )}
                                 />
-                                <span className="font-semibold capitalize">{endpoint.status}</span>
+                                <span className="font-semibold capitalize">{endpoint.status === "unknown" ? "Unknown" : endpoint.status}</span>
                               </Badge>
                             </td>
                             <td className="py-3 px-3">
-                              <span className="text-slate-900">{endpoint.lastCheckIn}</span>
+                              <span className="text-slate-900">{endpoint.lastCheckIn || "—"}</span>
                             </td>
                             <td className="py-3 px-3">
-                              <span className="text-slate-900 truncate block">{endpoint.lastTestRun}</span>
+                              <span className="text-slate-900 truncate block">{endpoint.lastTestRun || "—"}</span>
                             </td>
                             <td className="py-3 px-3">
                               <Badge className="bg-slate-100 text-slate-800 border border-slate-200 text-xs px-2.5 py-1 rounded-full font-semibold">
-                                {endpoint.agentVersion}
+                                {endpoint.agentVersion || "—"}
                               </Badge>
                             </td>
                             <td className="py-3 px-3">
@@ -664,12 +968,29 @@ function LabPageContent() {
                                 {endpoint.tags.length > 2 && (
                                   <span className="text-xs text-slate-500 font-semibold">+{endpoint.tags.length - 2}</span>
                                 )}
+                                {endpoint.tags.length === 0 && (
+                                  <span className="text-xs text-slate-500 font-semibold">—</span>
+                                )}
                               </div>
+                            </td>
+                            <td className="py-3 px-3 text-right">
+                              <button
+                                type="button"
+                                aria-label={`Remove ${endpoint.hostname}`}
+                                title="Remove endpoint"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setDeleteEndpoint({ id: endpoint.id, name: endpoint.hostname });
+                                }}
+                                className="h-8 w-8 inline-flex items-center justify-center rounded-full border border-slate-200 text-slate-500 hover:text-red-600 hover:border-red-200 hover:bg-red-50 transition-colors"
+                              >
+                                ×
+                              </button>
                             </td>
                           </tr>
                           {expandedRows.has(endpoint.id) && (
                             <tr className="bg-slate-50 animate-in fade-in slide-in-from-top-2 duration-300">
-                              <td colSpan={9} className="py-4 px-4">
+                              <td colSpan={10} className="py-4 px-4">
                                 <div className="grid md:grid-cols-2 gap-5">
                                   {/* Telemetry Health */}
                                   <div className="p-4 rounded-lg bg-white border border-slate-200">
@@ -680,19 +1001,19 @@ function LabPageContent() {
                                     <div className="space-y-2">
                                       <div className="flex items-center justify-between py-1.5">
                                         <span className="text-xs text-slate-600">SIEM Connectivity</span>
-                                        <Badge className="bg-emerald-100 text-emerald-700 border-emerald-300 text-xs px-2 py-1 h-5">
-                                          Healthy
+                                        <Badge className="bg-slate-100 text-slate-600 border-slate-200 text-xs px-2 py-1 h-5">
+                                          —
                                         </Badge>
                                       </div>
                                       <div className="flex items-center justify-between py-1.5">
                                         <span className="text-xs text-slate-600">Event Collection</span>
-                                        <Badge className="bg-emerald-100 text-emerald-700 border-emerald-300 text-xs px-2 py-1 h-5">
-                                          Active
+                                        <Badge className="bg-slate-100 text-slate-600 border-slate-200 text-xs px-2 py-1 h-5">
+                                          —
                                         </Badge>
                                       </div>
                                       <div className="flex items-center justify-between py-1.5">
                                         <span className="text-xs text-slate-600">Last Event</span>
-                                        <span className="text-xs text-slate-900 font-mono">2m ago</span>
+                                        <span className="text-xs text-slate-900 font-mono">—</span>
                                       </div>
                                     </div>
                                   </div>
@@ -706,16 +1027,16 @@ function LabPageContent() {
                                     <div className="space-y-2">
                                       <div className="flex items-center justify-between py-1.5">
                                         <span className="text-xs text-slate-600">Detections Active</span>
-                                        <span className="text-xs text-slate-900 font-semibold">12</span>
+                                        <span className="text-xs text-slate-900 font-semibold">—</span>
                                       </div>
                                       <div className="flex items-center justify-between py-1.5">
                                         <span className="text-xs text-slate-600">Last Detection</span>
-                                        <span className="text-xs text-slate-900 font-mono">T1059.001</span>
+                                        <span className="text-xs text-slate-900 font-mono">—</span>
                                       </div>
                                       <div className="flex items-center justify-between py-1.5">
                                         <span className="text-xs text-slate-600">Coverage Score</span>
-                                        <Badge className="bg-sky-100 text-sky-700 border-sky-300 text-xs px-2 py-1 h-5">
-                                          87%
+                                        <Badge className="bg-slate-100 text-slate-600 border-slate-200 text-xs px-2 py-1 h-5">
+                                          —
                                         </Badge>
                                       </div>
                                     </div>
@@ -728,23 +1049,14 @@ function LabPageContent() {
                                       <h4 className="text-sm font-semibold text-slate-900">Recent Test Runs</h4>
                                     </div>
                                     <div className="space-y-2">
-                                      <div className="p-2 rounded bg-slate-50 border border-slate-200 hover:bg-slate-100 transition-colors">
+                                      <div className="p-2 rounded bg-slate-50 border border-slate-200">
                                         <div className="flex items-center justify-between mb-1.5">
-                                          <span className="text-xs font-medium text-slate-900 truncate">Atomic T1059.001</span>
-                                          <Badge className="bg-emerald-100 text-emerald-700 border-emerald-300 text-xs px-2 py-1 h-5">
-                                            Pass
+                                          <span className="text-xs font-medium text-slate-900 truncate">No recent test data</span>
+                                          <Badge className="bg-slate-100 text-slate-600 border-slate-200 text-xs px-2 py-1 h-5">
+                                            —
                                           </Badge>
                                         </div>
-                                        <p className="text-[10px] text-slate-600">2m ago • Score: 85</p>
-                                      </div>
-                                      <div className="p-2 rounded bg-slate-50 border border-slate-200 hover:bg-slate-100 transition-colors">
-                                        <div className="flex items-center justify-between mb-1.5">
-                                          <span className="text-xs font-medium text-slate-900 truncate">T1110 Password Spray</span>
-                                          <Badge className="bg-emerald-100 text-emerald-700 border-emerald-300 text-xs px-2 py-1 h-5">
-                                            Pass
-                                          </Badge>
-                                        </div>
-                                        <p className="text-[10px] text-slate-600">1h ago • Score: 92</p>
+                                        <p className="text-[10px] text-slate-600">—</p>
                                       </div>
                                     </div>
                                   </div>
@@ -759,19 +1071,16 @@ function LabPageContent() {
                                       <div className="flex items-center justify-between py-1.5">
                                         <span className="text-xs text-slate-600">Environment</span>
                                         <Badge className="bg-purple-100 text-purple-700 border-purple-300 text-xs px-2 py-1 h-5">
-                                          {endpoint.environment}
+                                          {endpoint.environment || "—"}
                                         </Badge>
                                       </div>
                                       <div className="flex items-center justify-between py-1.5">
                                         <span className="text-xs text-slate-600">Runner Type</span>
-                                        <span className="text-xs text-slate-900 font-mono">{endpoint.runnerType || "SSH"}</span>
+                                        <span className="text-xs text-slate-900 font-mono">{endpoint.runnerType || "—"}</span>
                                       </div>
                                       <div className="flex items-center justify-between py-1.5">
                                         <span className="text-xs text-slate-600">Drift Status</span>
-                                        <div className="flex items-center gap-1.5">
-                                          <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />
-                                          <span className="text-xs text-emerald-700">No drift</span>
-                                        </div>
+                                        <span className="text-xs text-slate-600">—</span>
                                       </div>
                                     </div>
                                   </div>
@@ -844,6 +1153,12 @@ function LabPageContent() {
                     </button>
                   </div>
                 </div>
+                {selectedScript === "bash" && (
+                  <p className="text-xs text-slate-500">
+                    Note: browsers can’t set execute permissions. After download, run{" "}
+                    <span className="font-mono">chmod +x register_agent.sh</span>.
+                  </p>
+                )}
                 <div className="flex items-center justify-end gap-3 pt-2">
                   <Button
                     variant="outline"
@@ -895,15 +1210,22 @@ function LabPageContent() {
                         a.href = url;
                         const filename = selectedScript === "bash" ? "register_agent.sh" : selectedScript === "powershell" ? "register_agent.ps1" : "register_agent.py";
                         a.download = filename;
+                        a.rel = "noopener";
+                        a.style.display = "none";
                         document.body.appendChild(a);
-                        a.click();
-                        document.body.removeChild(a);
-                        URL.revokeObjectURL(url);
+                        requestAnimationFrame(() => {
+                          a.click();
+                          document.body.removeChild(a);
+                          setTimeout(() => URL.revokeObjectURL(url), 1500);
+                        });
 
                         toast({
                           type: "success",
                           title: "Script downloaded",
-                          description: `${filename} has been downloaded with your registration token pre-configured.`,
+                          description:
+                            selectedScript === "bash"
+                              ? `${filename} downloaded. Run: chmod +x ${filename}`
+                              : `${filename} has been downloaded with your registration token pre-configured.`,
                         });
                         setShowRegisterDialog(false);
                       } catch (err: any) {
@@ -921,6 +1243,37 @@ function LabPageContent() {
                     Download Script
                   </Button>
                 </div>
+              </div>
+            </DialogContent>
+          </Dialog>
+
+          <Dialog open={!!deleteEndpoint} onOpenChange={(open) => !open && setDeleteEndpoint(null)}>
+            <DialogContent className="sm:max-w-[420px] bg-white border border-slate-200 rounded-2xl">
+              <DialogHeader>
+                <DialogTitle className="text-lg font-semibold text-slate-900">
+                  Remove endpoint
+                </DialogTitle>
+                <DialogDescription className="text-sm text-slate-600 mt-2">
+                  This will remove <span className="font-semibold text-slate-900">{deleteEndpoint?.name}</span> from your lab. This cannot be undone.
+                </DialogDescription>
+              </DialogHeader>
+              <div className="flex items-center justify-end gap-2 pt-2">
+                <Button
+                  variant="outline"
+                  onClick={() => setDeleteEndpoint(null)}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  className="bg-red-600 hover:bg-red-700 text-white"
+                  onClick={() => {
+                    if (!deleteEndpoint) return;
+                    handleDeleteEndpoint(deleteEndpoint.id);
+                    setDeleteEndpoint(null);
+                  }}
+                >
+                  Remove
+                </Button>
               </div>
             </DialogContent>
           </Dialog>

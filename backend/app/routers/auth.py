@@ -70,7 +70,9 @@ async def register_admin(user_in: schemas.UserCreate, db: DBSession):
 
     # SECURITY: Do not allow creating admin users via this endpoint.
     # Admin users should only be created by existing admins.
+    username = user_in.username or user_in.email.split("@")[0]
     user = models.User(
+        username=username,
         email=user_in.email,
         hashed_password=hash_password(user_in.password),
         is_admin=False,  # Changed: Do not allow admin creation via registration

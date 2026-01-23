@@ -20,6 +20,7 @@ import {
   Target,
 } from "lucide-react";
 import { PageContainer } from "@/components/layout/page-container";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import {
   getOrganizationSettings,
   getSiemConnections,
@@ -54,10 +55,13 @@ export default function SettingsPage() {
   const [loading, setLoading] = useState(true);
   const [siemCount, setSiemCount] = useState<number | null>(null);
   const [runnerCount, setRunnerCount] = useState<number | null>(null);
+  const [runnerList, setRunnerList] = useState<any[]>([]);
+  const [runnerPage, setRunnerPage] = useState(0);
   const [hasPolicy, setHasPolicy] = useState(false);
   const [hasAiAssistant, setHasAiAssistant] = useState(false);
   const [orgName, setOrgName] = useState<string | null>(null);
   const [activeCategory, setActiveCategory] = useState<"all" | "core" | "advanced" | "management">("all");
+  const [runnerDialogOpen, setRunnerDialogOpen] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -88,6 +92,7 @@ export default function SettingsPage() {
         }
         if (runners.status === "fulfilled") {
           setRunnerCount(runners.value.length);
+          setRunnerList(runners.value);
         }
         if (policy.status === "fulfilled") {
           setHasPolicy(true);
@@ -111,6 +116,10 @@ export default function SettingsPage() {
 
   const siemConfigured = (siemCount ?? 0) > 0;
   const runnersConfigured = (runnerCount ?? 0) > 0;
+  const runnersPerPage = 3;
+  const runnerTotalPages = Math.max(1, Math.ceil(runnerList.length / runnersPerPage));
+  const runnerPageStart = runnerPage * runnersPerPage;
+  const runnerPageItems = runnerList.slice(runnerPageStart, runnerPageStart + runnersPerPage);
   const domainsTotal = 5;
   const domainsConfigured =
     (orgName ? 1 : 0) +
@@ -338,19 +347,16 @@ export default function SettingsPage() {
                       ? "amber"
                       : "slate";
 
-                  return (
-                    <Link
-                      key={item.id}
-                      href={item.href}
-                      data-tour={`settings-${item.id}`}
-                      className={cn(
-                        "group relative p-6 rounded-2xl transition-all duration-300",
-                        "hover:scale-[1.02] hover:shadow-lg border border-slate-200",
-                        isActive
-                          ? "bg-white shadow-md"
-                          : "bg-white hover:shadow-md"
-                      )}
-                    >
+                  const cardClasses = cn(
+                    "group relative p-6 rounded-2xl transition-all duration-300",
+                    "hover:scale-[1.02] hover:shadow-lg border border-slate-200",
+                    isActive
+                      ? "bg-white shadow-md"
+                      : "bg-white hover:shadow-md"
+                  );
+
+                  const cardBody = (
+                    <>
                       {/* Status Indicator Bar */}
                       {item.status && (
                         <div className={cn(
@@ -425,6 +431,26 @@ export default function SettingsPage() {
                           isActive ? "text-sky-600" : "text-slate-400 group-hover:text-slate-600"
                         )} />
                       </div>
+                    </>
+                  );
+
+                  if (item.id === "test-runner") {
+                    return (
+                      <button
+                        key={item.id}
+                        type="button"
+                        data-tour={`settings-${item.id}`}
+                        onClick={() => setRunnerDialogOpen(true)}
+                        className={cardClasses}
+                      >
+                        {cardBody}
+                      </button>
+                    );
+                  }
+
+                  return (
+                    <Link key={item.id} href={item.href} data-tour={`settings-${item.id}`} className={cardClasses}>
+                      {cardBody}
                     </Link>
                   );
                 })}
@@ -564,8 +590,94 @@ export default function SettingsPage() {
                 </div>
               </div>
             </div>
-          </div>
+        </div>
       </div>
+      <Dialog open={runnerDialogOpen} onOpenChange={(open) => {
+        setRunnerDialogOpen(open);
+        if (open) {
+          setRunnerPage(0);
+        }
+      }}>
+        <DialogContent className="sm:max-w-[720px] bg-white border border-slate-200">
+          <div className="rounded-2xl border border-slate-200 bg-gradient-to-br from-slate-50 via-white to-indigo-50 p-6">
+            <DialogHeader className="text-left">
+              <DialogTitle className="text-2xl font-display font-bold text-slate-900">Runners</DialogTitle>
+              <DialogDescription className="text-sm text-slate-600">
+                Live runner configurations that execute atomic tests in your environments.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="mt-5">
+              {runnerList.length === 0 ? (
+                <div className="text-sm text-slate-600">No runners configured yet.</div>
+              ) : (
+                <div className="space-y-3">
+                  {runnerPageItems.map((runner) => (
+                    <div
+                      key={runner.id ?? `${runner.hostname}-${runner.environment_name}`}
+                      className="flex items-center justify-between gap-4 rounded-2xl border border-slate-200 bg-white px-5 py-4 shadow-sm"
+                    >
+                      <div className="min-w-0">
+                        <div className="text-base font-semibold text-slate-900 truncate">
+                          {runner.hostname || `Runner ${runner.id ?? ""}`}
+                        </div>
+                        <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-slate-600">
+                          <span className="inline-flex items-center rounded-full bg-slate-100 px-2.5 py-1 font-semibold text-slate-700">
+                            {runner.environment_name || "Unknown environment"}
+                          </span>
+                          <span className="inline-flex items-center rounded-full bg-indigo-100 px-2.5 py-1 font-semibold text-indigo-700">
+                            {runner.runner_type === "SSH" ? "Agent" : (runner.runner_type || "Runner")}
+                          </span>
+                        </div>
+                      </div>
+                      <div className="text-xs font-semibold text-slate-600">
+                        {runner.username ? `${runner.username}@${runner.port || 22}` : `Port ${runner.port || 22}`}
+                      </div>
+                    </div>
+                  ))}
+                  {runnerTotalPages > 1 && (
+                    <div className="flex items-center justify-between gap-2">
+                      <button
+                        type="button"
+                        className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed"
+                        aria-label="Previous page"
+                        title="Previous page"
+                        disabled={runnerPage === 0}
+                        onClick={() => setRunnerPage((prev) => Math.max(0, prev - 1))}
+                      >
+                        <ArrowRight className="h-3.5 w-3.5 rotate-180" />
+                        Prev
+                      </button>
+                      <div className="text-xs text-slate-500">
+                        Page {runnerPage + 1} of {runnerTotalPages}
+                      </div>
+                      <button
+                        type="button"
+                        className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed"
+                        aria-label="Next page"
+                        title="Next page"
+                        disabled={runnerPage >= runnerTotalPages - 1}
+                        onClick={() => setRunnerPage((prev) => Math.min(runnerTotalPages - 1, prev + 1))}
+                      >
+                        Next
+                        <ArrowRight className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+            <div className="mt-5 flex justify-end">
+              <Link
+                href="/settings/test-runner"
+                className="inline-flex items-center justify-center rounded-xl bg-white text-slate-900 px-4 py-2 text-sm font-semibold border border-slate-200 hover:bg-slate-50 transition-colors"
+                onClick={() => setRunnerDialogOpen(false)}
+              >
+                Setup runner
+              </Link>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
     </PageContainer>
   );
 }

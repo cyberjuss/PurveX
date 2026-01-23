@@ -6,6 +6,7 @@
 #
 # Usage:
 #   .\register_agent.ps1 -ApiUrl "http://your-server:8000" -Token "YOUR_TOKEN" -Env "lab"
+#   .\register_agent.ps1 -ApiUrl "http://your-server:8000" -AdminUsername "admin" -AdminPassword "admin" -Env "lab"
 #
 # Or set environment variables:
 #   $env:PURVEX_API_URL = "http://your-server:8000"
@@ -24,7 +25,7 @@ param(
 
 # Set defaults
 if ([string]::IsNullOrEmpty($ApiUrl)) {
-    $ApiUrl = "http://localhost:8000"
+    $ApiUrl = "http://127.0.0.1:8001"
 }
 
 if ([string]::IsNullOrEmpty($Env)) {
@@ -39,10 +40,22 @@ if ([string]::IsNullOrEmpty($Username)) {
     $Username = $env:USERNAME
 }
 
+if ([string]::IsNullOrEmpty($Token)) {
+    $inputApi = Read-Host "PurveX API URL [$ApiUrl]"
+    if (-not [string]::IsNullOrEmpty($inputApi)) {
+        $ApiUrl = $inputApi
+    }
+    $inputEnv = Read-Host "Environment [lab/dev/prod] ($Env)"
+    if (-not [string]::IsNullOrEmpty($inputEnv)) {
+        $Env = $inputEnv
+    }
+    $Token = Read-Host "Registration token"
+}
+
 # Validate required parameters
 if ([string]::IsNullOrEmpty($Token)) {
-    Write-Host "❌ ERROR: API token is required." -ForegroundColor Red
-    Write-Host "   Provide it via -Token parameter or PURVEX_API_TOKEN environment variable" -ForegroundColor Yellow
+    Write-Host "❌ ERROR: Registration token is required." -ForegroundColor Red
+    Write-Host "   Provide it via -Token or set PURVEX_API_TOKEN." -ForegroundColor Yellow
     exit 1
 }
 
@@ -84,7 +97,7 @@ Write-Host "  Username: $Username" -ForegroundColor White
 Write-Host ""
 
 # Make API request
-$Url = "$($ApiUrl.TrimEnd('/'))/api/settings/environment-runners"
+$Url = "$($ApiUrl.TrimEnd('/'))/settings/environment-runners"
 $Headers = @{
     "Authorization" = "Bearer $Token"
     "Content-Type" = "application/json"
@@ -117,4 +130,3 @@ catch {
     }
     exit 1
 }
-
