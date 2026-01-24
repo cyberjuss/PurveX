@@ -129,6 +129,137 @@ button:hover,
   text-decoration: none;
 }
 
+/* Seamless motion defaults */
+.route-transition-wrap {
+  position: relative;
+  min-height: 0;
+}
+
+.route-layer {
+  width: 100%;
+}
+
+.route-fade-in {
+  animation: route-fade-in 260ms cubic-bezier(0.16, 1, 0.3, 1);
+  will-change: opacity, transform;
+}
+
+.route-fade-out {
+  position: absolute;
+  inset: 0;
+  animation: route-fade-out 220ms ease-in;
+  pointer-events: none;
+  will-change: opacity;
+}
+
+@keyframes route-fade-in {
+  0% {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes route-fade-out {
+  0% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .route-fade-in,
+  .route-fade-out {
+    animation: none;
+  }
+}
+
+/* Staggered entrance for sections/cards */
+.stagger-children > * {
+  animation: stagger-rise 420ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  animation-delay: calc(var(--stagger-index, 0) * 60ms);
+}
+
+.stagger-children > *:nth-child(1) { --stagger-index: 0; }
+.stagger-children > *:nth-child(2) { --stagger-index: 1; }
+.stagger-children > *:nth-child(3) { --stagger-index: 2; }
+.stagger-children > *:nth-child(4) { --stagger-index: 3; }
+.stagger-children > *:nth-child(5) { --stagger-index: 4; }
+.stagger-children > *:nth-child(6) { --stagger-index: 5; }
+.stagger-children > *:nth-child(7) { --stagger-index: 6; }
+.stagger-children > *:nth-child(8) { --stagger-index: 7; }
+.stagger-children > *:nth-child(9) { --stagger-index: 8; }
+.stagger-children > *:nth-child(10) { --stagger-index: 9; }
+.stagger-children > *:nth-child(11) { --stagger-index: 10; }
+.stagger-children > *:nth-child(12) { --stagger-index: 11; }
+
+@keyframes stagger-rise {
+  0% {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Scroll reveal */
+.reveal-on-scroll {
+  opacity: 0;
+  transform: translateY(14px);
+  transition: opacity 520ms cubic-bezier(0.16, 1, 0.3, 1),
+    transform 520ms cubic-bezier(0.16, 1, 0.3, 1);
+  will-change: opacity, transform;
+}
+
+.reveal-on-scroll.is-visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .stagger-children > * {
+    animation: none;
+  }
+  .reveal-on-scroll {
+    transition: none;
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* Card + button polish */
+[data-slot="card"] {
+  transition: box-shadow var(--transition-base), transform var(--transition-base), border-color var(--transition-base);
+}
+
+[data-slot="card"]:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-lg);
+}
+
+button,
+[role="button"] {
+  transition: transform var(--transition-fast), box-shadow var(--transition-fast), background-color var(--transition-fast), color var(--transition-fast);
+}
+
+button:active,
+[role="button"]:active {
+  transform: translateY(1px) scale(0.99);
+}
+
+input,
+textarea,
+select {
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast), background-color var(--transition-fast);
+}
+
 :root {
   --surface-page: #f7f9fc;
   --surface-card: #ffffff;

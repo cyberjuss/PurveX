@@ -1,7 +1,9 @@
 from typing import List, Optional, Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, status
-from datetime import datetime
+from fastapi import APIRouter, Depends, HTTPException, status, Request
+from datetime import datetime, timedelta, timezone
+import hashlib
+import secrets
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy import func # for default timestamps
@@ -216,7 +218,8 @@ async def list_siem_connections(
     result = await db.execute(
         select(models.SIEMConnection).where(models.SIEMConnection.organization_id == org_id)
     )
-    return result.scalars().all()
+    from ..services.siem_universal import SIEMUniversalService
+    return [SIEMUniversalService(conn).to_connection_response() for conn in result.scalars().all()]
 
 @router.post("/siem-connections", response_model=schemas.SIEMConnection, status_code=status.HTTP_201_CREATED)
 async def create_siem_connection(
@@ -254,7 +257,8 @@ async def create_siem_connection(
         )
         await session.commit()
 
-    return db_siem
+    from ..services.siem_universal import SIEMUniversalService
+    return SIEMUniversalService(db_siem).to_connection_response()
 
 @router.get("/siem-connections/{siem_id}", response_model=schemas.SIEMConnection)
 async def get_siem_connection(
@@ -275,7 +279,8 @@ async def get_siem_connection(
     siem_connection = result.scalar_one_or_none()
     if not siem_connection:
         raise HTTPException(status_code=404, detail="SIEM Connection not found")
-    return siem_connection
+    from ..services.siem_universal import SIEMUniversalService
+    return SIEMUniversalService(siem_connection).to_connection_response()
 
 @router.put("/siem-connections/{siem_id}", response_model=schemas.SIEMConnection)
 async def update_siem_connection(
@@ -306,6 +311,9 @@ async def update_siem_connection(
     from ..utils.sanitize_inputs import sanitize_model_inputs
     sanitized_update = sanitize_model_inputs(siem_update)
     update_data = sanitized_update.model_dump(exclude_unset=True) if hasattr(sanitized_update, 'model_dump') else sanitized_update
+    # SECURITY: Do not overwrite credentials unless explicitly provided
+    if update_data.get("credentials") in ["", None]:
+        update_data.pop("credentials", None)
     for key, value in update_data.items():
         setattr(siem_connection, key, value)
     
@@ -325,7 +333,8 @@ async def update_siem_connection(
         )
         await session.commit()
 
-    return siem_connection
+    from ..services.siem_universal import SIEMUniversalService
+    return SIEMUniversalService(siem_connection).to_connection_response()
 
 @router.delete("/siem-connections/{siem_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_siem_connection(
@@ -370,6 +379,96 @@ async def delete_siem_connection(
 
     return {"message": "SIEM Connection deleted successfully"}
 
+@router.get("/siem-connections/{siem_id}/alerts", response_model=List[schemas.SIEMAlert])
+async def get_siem_alerts(
+    siem_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+    limit: int = 50,
+):
+    await require_permission(current_user, Permission.DETECTIONS_READ, db)
+    if siem_id <= 0:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid SIEM connection ID")
+    org_id = require_org_id(current_user)
+    result = await db.execute(
+        select(models.SIEMConnection)
+        .filter(models.SIEMConnection.id == siem_id)
+        .filter(models.SIEMConnection.organization_id == org_id)
+    )
+    siem_connection = result.scalar_one_or_none()
+    if not siem_connection:
+        raise HTTPException(status_code=404, detail="SIEM Connection not found")
+    from ..services.siem_universal import SIEMUniversalService
+    return await SIEMUniversalService(siem_connection).get_alerts(limit=limit)
+
+
+@router.get("/siem-connections/{siem_id}/events", response_model=List[schemas.SIEMEvent])
+async def get_siem_events(
+    siem_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+    limit: int = 100,
+):
+    await require_permission(current_user, Permission.DETECTIONS_READ, db)
+    if siem_id <= 0:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid SIEM connection ID")
+    org_id = require_org_id(current_user)
+    result = await db.execute(
+        select(models.SIEMConnection)
+        .filter(models.SIEMConnection.id == siem_id)
+        .filter(models.SIEMConnection.organization_id == org_id)
+    )
+    siem_connection = result.scalar_one_or_none()
+    if not siem_connection:
+        raise HTTPException(status_code=404, detail="SIEM Connection not found")
+    from ..services.siem_universal import SIEMUniversalService
+    return await SIEMUniversalService(siem_connection).get_events(limit=limit)
+
+
+@router.get("/siem-connections/{siem_id}/rules", response_model=List[schemas.SIEMRule])
+async def get_siem_rules(
+    siem_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+    limit: int = 200,
+):
+    await require_permission(current_user, Permission.SETTINGS_SIEM_MANAGE, db)
+    if siem_id <= 0:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid SIEM connection ID")
+    org_id = require_org_id(current_user)
+    result = await db.execute(
+        select(models.SIEMConnection)
+        .filter(models.SIEMConnection.id == siem_id)
+        .filter(models.SIEMConnection.organization_id == org_id)
+    )
+    siem_connection = result.scalar_one_or_none()
+    if not siem_connection:
+        raise HTTPException(status_code=404, detail="SIEM Connection not found")
+    from ..services.siem_universal import SIEMUniversalService
+    return await SIEMUniversalService(siem_connection).get_rules(limit=limit)
+
+
+@router.get("/siem-connections/{siem_id}/health", response_model=schemas.SIEMHealth)
+async def get_siem_health(
+    siem_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    await require_permission(current_user, Permission.SETTINGS_SIEM_MANAGE, db)
+    if siem_id <= 0:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid SIEM connection ID")
+    org_id = require_org_id(current_user)
+    result = await db.execute(
+        select(models.SIEMConnection)
+        .filter(models.SIEMConnection.id == siem_id)
+        .filter(models.SIEMConnection.organization_id == org_id)
+    )
+    siem_connection = result.scalar_one_or_none()
+    if not siem_connection:
+        raise HTTPException(status_code=404, detail="SIEM Connection not found")
+    from ..services.siem_universal import SIEMUniversalService
+    return await SIEMUniversalService(siem_connection).get_health()
+
 
 # --- Environment Runner Settings ---
 
@@ -382,7 +481,10 @@ async def generate_agent_registration_token(
     Generate a registration token for agent registration.
     This token is specifically for registering agents and has limited scope.
     """
-    from ..security import create_access_token
+    from ..security import create_access_token, decode_access_token
+
+    if not current_user.is_admin:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only administrators can generate registration tokens")
     
     # Create a token that expires in 1 year (long-lived for agent registration)
     # Include user info and a flag indicating this is an agent registration token
@@ -393,15 +495,30 @@ async def generate_agent_registration_token(
         "agent_registration": True,  # Flag to identify this as an agent registration token
     }
     
-    # Generate token with 1 year expiration (365 days * 24 hours * 60 minutes)
+    # Generate a short-lived token for one-time agent registration
     registration_token = create_access_token(
         data=token_data,
-        expires_minutes=365 * 24 * 60
+        expires_minutes=settings.AGENT_REGISTRATION_TOKEN_TTL_MINUTES,
     )
-    
+
+    token_payload = decode_access_token(registration_token) or {}
+    token_jti = token_payload.get("jti")
+    token_exp = token_payload.get("exp")
+    if token_jti and token_exp:
+        org_id = require_org_id(current_user)
+        db.add(
+            models.AgentRegistrationToken(
+                organization_id=org_id,
+                issued_by_user_id=current_user.id,
+                jti=token_jti,
+                expires_at=datetime.fromtimestamp(token_exp, tz=timezone.utc),
+            )
+        )
+        await db.commit()
+
     return {
         "token": registration_token,
-        "expires_in_days": 365,
+        "expires_in_minutes": settings.AGENT_REGISTRATION_TOKEN_TTL_MINUTES,
         "message": "Agent registration token generated successfully"
     }
 
@@ -418,8 +535,9 @@ async def list_environment_runners(
     )
     return result.scalars().all()
 
-@router.post("/environment-runners", response_model=schemas.EnvironmentRunnerConfig, status_code=status.HTTP_201_CREATED)
+@router.post("/environment-runners", response_model=schemas.EnvironmentRunnerRegistrationResponse, status_code=status.HTTP_201_CREATED)
 async def create_environment_runner(
+    request: Request,
     runner_create: schemas.EnvironmentRunnerConfigCreate,
     db: DBSession,
     current_user: CurrentUser,
@@ -432,10 +550,58 @@ async def create_environment_runner(
     from ..utils.sanitize_inputs import sanitize_model_inputs
     sanitized_data = sanitize_model_inputs(runner_create)
     sanitized_data.pop("organization_id", None)
+    sanitized_data.pop("runner_token_hash", None)
+    sanitized_data.pop("runner_token_last_rotated_at", None)
+    sanitized_data.pop("runner_token_expires_at", None)
     
     org_id = require_org_id(current_user)
-    db_runner = models.EnvironmentRunnerConfig(organization_id=org_id, **sanitized_data)
+    token_record = None
+    now = datetime.now(timezone.utc)
+    auth_header = request.headers.get("Authorization")
+    token = None
+    if auth_header and auth_header.lower().startswith("bearer "):
+        token = auth_header.split(" ", 1)[1].strip()
+    if not token:
+        token = request.cookies.get("access_token")
+
+    if token:
+        from ..security import decode_access_token
+        payload = decode_access_token(token) or {}
+        if payload.get("agent_registration"):
+            token_jti = payload.get("jti")
+            if not token_jti:
+                raise HTTPException(status_code=401, detail="Invalid registration token")
+            result = await db.execute(
+                select(models.AgentRegistrationToken)
+                .filter(models.AgentRegistrationToken.jti == token_jti)
+                .filter(models.AgentRegistrationToken.organization_id == org_id)
+            )
+            token_record = result.scalar_one_or_none()
+            if not token_record:
+                raise HTTPException(status_code=401, detail="Registration token expired or invalid")
+            if token_record.expires_at:
+                expires_at = token_record.expires_at
+                if expires_at.tzinfo is None:
+                    expires_at = expires_at.replace(tzinfo=timezone.utc)
+                if expires_at < now:
+                    raise HTTPException(status_code=401, detail="Registration token expired or invalid")
+            if token_record.used_at is not None:
+                raise HTTPException(status_code=409, detail="Registration token already used")
+    runner_token = secrets.token_urlsafe(32)
+    runner_token_hash = hashlib.sha256(runner_token.encode()).hexdigest()
+    expires_at = now + timedelta(days=settings.RUNNER_TOKEN_TTL_DAYS)
+    db_runner = models.EnvironmentRunnerConfig(
+        organization_id=org_id,
+        runner_token_hash=runner_token_hash,
+        runner_token_last_rotated_at=now,
+        runner_token_expires_at=expires_at,
+        **sanitized_data,
+    )
     db.add(db_runner)
+    await db.flush()
+    if token_record:
+        token_record.used_at = now
+        token_record.used_by_runner_id = db_runner.id
     await db.commit()
     await db.refresh(db_runner)
 
@@ -452,7 +618,226 @@ async def create_environment_runner(
         )
         await session.commit()
 
-    return db_runner
+    response = schemas.EnvironmentRunnerRegistrationResponse.model_validate(db_runner)
+    response.runner_token = runner_token
+    return response
+
+@router.post("/environment-runners/{runner_id}/stop", response_model=dict)
+async def stop_environment_runner(
+    runner_id: int,
+    db: DBSession,
+    current_user: CurrentUser,
+):
+    if not current_user.is_admin:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only administrators can stop environment runners")
+    user_id, user_email = safe_user_identity(current_user)
+    org_id = require_org_id(current_user)
+    result = await db.execute(
+        select(models.EnvironmentRunnerConfig)
+        .filter(models.EnvironmentRunnerConfig.id == runner_id)
+        .filter(models.EnvironmentRunnerConfig.organization_id == org_id)
+    )
+    runner_config = result.scalar_one_or_none()
+    if not runner_config:
+        raise HTTPException(status_code=404, detail="Environment Runner Config not found")
+
+    existing = await db.execute(
+        select(models.AgentCommand)
+        .filter(models.AgentCommand.runner_id == runner_id)
+        .filter(models.AgentCommand.status == "pending")
+        .filter(models.AgentCommand.command_type == "STOP_AGENT")
+    )
+    existing_cmd = existing.scalar_one_or_none()
+    if existing_cmd:
+        return {"command_id": existing_cmd.id, "status": "pending"}
+
+    cmd = models.AgentCommand(
+        organization_id=org_id,
+        runner_id=runner_id,
+        command_type="STOP_AGENT",
+        status="pending",
+        issued_by_user_id=current_user.id,
+    )
+    runner_config.status = "stopping"
+    db.add(cmd)
+    await db.commit()
+    await db.refresh(cmd)
+
+    async with async_sessionmaker() as session:
+        session.add(
+            models.AuditEvent(
+                user_id=user_id,
+                user_email=user_email,
+                action="STOP_ENVIRONMENT_RUNNER",
+                resource_type="settings",
+                resource_id=str(runner_id),
+                details=runner_config.environment_name,
+            )
+        )
+        await session.commit()
+
+    return {"command_id": cmd.id, "status": "queued"}
+
+@router.post("/environment-runners/{runner_id}/pause", response_model=dict)
+async def pause_environment_runner(
+    runner_id: int,
+    db: DBSession,
+    current_user: CurrentUser,
+):
+    if not current_user.is_admin:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only administrators can pause environment runners")
+    user_id, user_email = safe_user_identity(current_user)
+    org_id = require_org_id(current_user)
+    result = await db.execute(
+        select(models.EnvironmentRunnerConfig)
+        .filter(models.EnvironmentRunnerConfig.id == runner_id)
+        .filter(models.EnvironmentRunnerConfig.organization_id == org_id)
+    )
+    runner_config = result.scalar_one_or_none()
+    if not runner_config:
+        raise HTTPException(status_code=404, detail="Environment Runner Config not found")
+
+    existing = await db.execute(
+        select(models.AgentCommand)
+        .filter(models.AgentCommand.runner_id == runner_id)
+        .filter(models.AgentCommand.status == "pending")
+        .filter(models.AgentCommand.command_type == "PAUSE_AGENT")
+    )
+    existing_cmd = existing.scalar_one_or_none()
+    if existing_cmd:
+        return {"command_id": existing_cmd.id, "status": "pending"}
+
+    cmd = models.AgentCommand(
+        organization_id=org_id,
+        runner_id=runner_id,
+        command_type="PAUSE_AGENT",
+        status="pending",
+        issued_by_user_id=current_user.id,
+    )
+    runner_config.status = "pausing"
+    db.add(cmd)
+    await db.commit()
+    await db.refresh(cmd)
+
+    async with async_sessionmaker() as session:
+        session.add(
+            models.AuditEvent(
+                user_id=user_id,
+                user_email=user_email,
+                action="PAUSE_ENVIRONMENT_RUNNER",
+                resource_type="settings",
+                resource_id=str(runner_id),
+                details=runner_config.environment_name,
+            )
+        )
+        await session.commit()
+
+    return {"command_id": cmd.id, "status": "queued"}
+
+@router.post("/environment-runners/{runner_id}/resume", response_model=dict)
+async def resume_environment_runner(
+    runner_id: int,
+    db: DBSession,
+    current_user: CurrentUser,
+):
+    if not current_user.is_admin:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only administrators can resume environment runners")
+    user_id, user_email = safe_user_identity(current_user)
+    org_id = require_org_id(current_user)
+    result = await db.execute(
+        select(models.EnvironmentRunnerConfig)
+        .filter(models.EnvironmentRunnerConfig.id == runner_id)
+        .filter(models.EnvironmentRunnerConfig.organization_id == org_id)
+    )
+    runner_config = result.scalar_one_or_none()
+    if not runner_config:
+        raise HTTPException(status_code=404, detail="Environment Runner Config not found")
+
+    existing = await db.execute(
+        select(models.AgentCommand)
+        .filter(models.AgentCommand.runner_id == runner_id)
+        .filter(models.AgentCommand.status == "pending")
+        .filter(models.AgentCommand.command_type == "RESUME_AGENT")
+    )
+    existing_cmd = existing.scalar_one_or_none()
+    if existing_cmd:
+        return {"command_id": existing_cmd.id, "status": "pending"}
+
+    cmd = models.AgentCommand(
+        organization_id=org_id,
+        runner_id=runner_id,
+        command_type="RESUME_AGENT",
+        status="pending",
+        issued_by_user_id=current_user.id,
+    )
+    runner_config.status = "resuming"
+    db.add(cmd)
+    await db.commit()
+    await db.refresh(cmd)
+
+    async with async_sessionmaker() as session:
+        session.add(
+            models.AuditEvent(
+                user_id=user_id,
+                user_email=user_email,
+                action="RESUME_ENVIRONMENT_RUNNER",
+                resource_type="settings",
+                resource_id=str(runner_id),
+                details=runner_config.environment_name,
+            )
+        )
+        await session.commit()
+
+    return {"command_id": cmd.id, "status": "queued"}
+
+@router.post("/environment-runners/{runner_id}/rotate-token", response_model=dict)
+async def rotate_environment_runner_token(
+    runner_id: int,
+    db: DBSession,
+    current_user: CurrentUser,
+):
+    if not current_user.is_admin:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only administrators can rotate runner tokens")
+    org_id = require_org_id(current_user)
+    result = await db.execute(
+        select(models.EnvironmentRunnerConfig)
+        .filter(models.EnvironmentRunnerConfig.id == runner_id)
+        .filter(models.EnvironmentRunnerConfig.organization_id == org_id)
+    )
+    runner_config = result.scalar_one_or_none()
+    if not runner_config:
+        raise HTTPException(status_code=404, detail="Environment Runner Config not found")
+
+    token = secrets.token_urlsafe(32)
+    token_hash = hashlib.sha256(token.encode()).hexdigest()
+    now = datetime.utcnow()
+    expires_at = now + timedelta(days=settings.RUNNER_TOKEN_TTL_DAYS)
+
+    runner_config.runner_token_hash = token_hash
+    runner_config.runner_token_last_rotated_at = now
+    runner_config.runner_token_expires_at = expires_at
+    await db.commit()
+    await db.refresh(runner_config)
+
+    user_id, user_email = safe_user_identity(current_user)
+    async with async_sessionmaker() as session:
+        session.add(
+            models.AuditEvent(
+                user_id=user_id,
+                user_email=user_email,
+                action="ROTATE_ENVIRONMENT_RUNNER_TOKEN",
+                resource_type="settings",
+                resource_id=str(runner_config.id),
+                details=runner_config.environment_name,
+            )
+        )
+        await session.commit()
+
+    return {
+        "token": token,
+        "expires_at": runner_config.runner_token_expires_at,
+        "runner_id": runner_config.id,
+    }
 
 @router.get("/environment-runners/{runner_id}", response_model=schemas.EnvironmentRunnerConfig)
 async def get_environment_runner(

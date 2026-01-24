@@ -106,6 +106,20 @@ async def run_test(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail=f"Environment '{test_run.environment}' is not allowed by testing policy.",
             )
+
+        # Block execution on paused/stopped runners.
+        if test_run.endpoint:
+            runner_result = await db.execute(
+                select(models.EnvironmentRunnerConfig)
+                .where(models.EnvironmentRunnerConfig.organization_id == org_id)
+                .where(models.EnvironmentRunnerConfig.hostname == test_run.endpoint)
+            )
+            runner = runner_result.scalar_one_or_none()
+            if runner and runner.status in {"paused", "pausing", "stopped", "stopping"}:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=f"Runner '{test_run.endpoint}' is {runner.status}. Resume it before running tests.",
+                )
         
         # RBAC: Check permission to run tests in this environment
         await require_test_run(current_user, db, test_run.environment)

@@ -18,7 +18,8 @@ import {
   Filter,
   RefreshCw,
   Zap,
-  Bell
+  Bell,
+  X
 } from "lucide-react";
 import Link from "next/link";
 import { formatRelative, format, isToday, isThisWeek, isThisMonth } from "date-fns";
@@ -49,6 +50,7 @@ interface UnifiedNotification {
 
 const PLATFORM_NOTIFICATIONS_KEY = "purvex_platform_notifications";
 const PLATFORM_RUNNER_SEEN_KEY = "purvex_platform_runner_ids";
+const DISMISSED_NOTIFICATIONS_KEY = "purvex_dismissed_notifications";
 
 type StoredNotification = Omit<UnifiedNotification, "timestamp"> & { timestamp: string };
 
@@ -60,6 +62,7 @@ export default function NotificationsPage() {
   const [error, setError] = useState<string | null>(null);
   const [category, setCategory] = useState<NotificationCategory>("all");
   const [refreshing, setRefreshing] = useState(false);
+  const [dismissedIds, setDismissedIds] = useState<Set<string>>(new Set());
   const router = useRouter();
 
   const loadData = async () => {
@@ -121,6 +124,10 @@ export default function NotificationsPage() {
     // Visiting the notifications page marks test notifications as read.
     if (typeof window !== "undefined") {
       window.localStorage.removeItem("purvex_unread_test_notification");
+      const storedDismissed: string[] = JSON.parse(
+        window.localStorage.getItem(DISMISSED_NOTIFICATIONS_KEY) || "[]"
+      );
+      setDismissedIds(new Set(storedDismissed));
       handler = () => {
         loadData();
       };
@@ -186,8 +193,9 @@ export default function NotificationsPage() {
     });
 
     // Sort by timestamp (newest first)
-    return items.sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
-  }, [tests, detections, platformNotifications]);
+    const sorted = items.sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
+    return sorted.filter((item) => !dismissedIds.has(item.id));
+  }, [tests, detections, platformNotifications, dismissedIds]);
 
   // Filter by category
   const filteredNotifications = useMemo(() => {
@@ -255,6 +263,16 @@ export default function NotificationsPage() {
   };
 
   const unreadCount = notifications.length; // Could be enhanced with actual read/unread tracking
+  const dismissNotification = (id: string) => {
+    setDismissedIds((prev) => {
+      const next = new Set(prev);
+      next.add(id);
+      if (typeof window !== "undefined") {
+        window.localStorage.setItem(DISMISSED_NOTIFICATIONS_KEY, JSON.stringify(Array.from(next)));
+      }
+      return next;
+    });
+  };
 
   if (loading) {
     return (
@@ -408,18 +426,32 @@ export default function NotificationsPage() {
                                 {notification.description}
                           </p>
                         </div>
-                        <Button
-                              variant="ghost"
-                          size="sm"
-                              className="h-8 px-3 text-xs shrink-0 opacity-0 group-hover:opacity-100 transition-all"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                router.push(notification.actionUrl);
-                              }}
-                        >
-                              View
-                              <ArrowRight className="h-3.5 w-3.5 ml-1.5" />
-                        </Button>
+                            <div className="flex items-center gap-2 shrink-0">
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="h-8 px-3 text-xs opacity-0 group-hover:opacity-100 transition-all"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  router.push(notification.actionUrl);
+                                }}
+                              >
+                                View
+                                <ArrowRight className="h-3.5 w-3.5 ml-1.5" />
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-8 w-8 opacity-0 group-hover:opacity-100 transition-all"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  dismissNotification(notification.id);
+                                }}
+                                aria-label="Dismiss notification"
+                              >
+                                <X className="h-4 w-4" />
+                              </Button>
+                            </div>
                           </div>
 
                           {/* Timestamp */}

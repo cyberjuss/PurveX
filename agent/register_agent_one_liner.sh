@@ -22,6 +22,5 @@ echo "Hostname: $HOSTNAME | IP: $LOCAL_IP | Env: $PURVEX_ENV"
 curl -s -X POST "${PURVEX_API_URL%/}/api/settings/environment-runners" \
   -H "Authorization: Bearer $PURVEX_API_TOKEN" \
   -H "Content-Type: application/json" \
-  -d "{\"environment_name\":\"$PURVEX_ENV\",\"runner_type\":\"SSH\",\"hostname\":\"$HOSTNAME\",\"port\":22,\"username\":\"$USERNAME\",\"auth_method\":\"key\",\"allowed_test_types\":\"[\\\"Atomic only\\\"]\",\"max_concurrent_tests\":1,\"heartbeat_interval_seconds\":60,\"alert_offline_minutes\":5}" \
+  -d "{\"environment_name\":\"$PURVEX_ENV\",\"runner_type\":\"SSH\",\"hostname\":\"$HOSTNAME\",\"port\":22,\"username\":\"$USERNAME\",\"auth_method\":\"key\",\"allowed_test_types\":\"[\\\"Atomic only\\\"]\",\"max_concurrent_tests\":1,\"heartbeat_interval_seconds\":5,\"alert_offline_minutes\":5}" \
   && echo -e "\n✅ Registration successful!" || echo -e "\n❌ Registration failed!"
-

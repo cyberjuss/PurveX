@@ -129,20 +129,31 @@ export default function LoginPage() {
       console.log("[PurveX] Login response status:", res.status, res.statusText);
 
       if (!res.ok) {
-        let errorMessage = "Login failed";
-        try {
-          const data = await res.json();
-          console.error("[PurveX] Login failed:", data);
-          errorMessage = data.detail || data.message || `Login failed with status ${res.status}`;
-        } catch (parseError) {
-          // If response isn't JSON, try to get text
+        let errorMessage = `Login failed with status ${res.status}`;
+        const contentType = res.headers.get("content-type") || "";
+        const contentLength = res.headers.get("content-length");
+
+        if (contentLength === "0") {
+          errorMessage = `Login failed with status ${res.status}: empty response`;
+        } else if (contentType.includes("application/json")) {
+          try {
+            const data = await res.json();
+            if (data && Object.keys(data).length > 0) {
+              console.error("[PurveX] Login failed:", data);
+            }
+            errorMessage = data?.detail || data?.message || errorMessage;
+          } catch (parseError) {
+            console.error("[PurveX] Login failed (invalid JSON):", parseError);
+          }
+        } else {
           try {
             const text = await res.text();
-            console.error("[PurveX] Login failed (non-JSON):", text);
-            errorMessage = text || `Login failed with status ${res.status}`;
+            if (text) {
+              console.error("[PurveX] Login failed (non-JSON):", text);
+              errorMessage = text;
+            }
           } catch (textError) {
-            console.error("[PurveX] Login failed (could not parse response):", res.status, res.statusText);
-            errorMessage = `Login failed with status ${res.status}: ${res.statusText}`;
+            console.error("[PurveX] Login failed (could not read response):", textError);
           }
         }
         throw new Error(errorMessage);

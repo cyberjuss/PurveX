@@ -40,33 +40,23 @@ function getAgentScript(type: "bash" | "powershell" | "python", apiUrl: string):
 set -e
 
 API_URL="${apiUrl}"
-API_TOKEN=""
-ADMIN_TOKEN=""
-ADMIN_USERNAME=""
-ADMIN_EMAIL=""
-ADMIN_PASSWORD=""
+TOKEN_PLACEHOLDER="__PURVEX_TOKEN_PLACEHOLDER__"
+API_TOKEN="${"${PURVEX_API_TOKEN:-__PURVEX_TOKEN_VALUE__}"}"
 ENV="lab"
 HOSTNAME=""
 PORT="22"
 USERNAME="${"${USER:-purvex}"}"
-
-read_prompt() {
-    local __var="$1"
-    local __prompt="$2"
-    local __value=""
-    if [ -r /dev/tty ]; then
-        IFS= read -r -p "$__prompt" __value < /dev/tty || true
-    else
-        IFS= read -r -p "$__prompt" __value || true
-    fi
-    eval "$__var=\"\$__value\""
-}
+ENV_SET="false"
+if [ -n "${"${PURVEX_ENV:-}"}" ]; then
+    ENV_SET="true"
+fi
 
 while [[ $# -gt 0 ]]; do
     case $1 in
         --api-url=*) API_URL="\${1#*=}"; shift 1 ;;
         --api-url) API_URL="$2"; shift 2 ;;
-        --env) ENV="$2"; shift 2 ;;
+        --token) API_TOKEN="$2"; shift 2 ;;
+        --env) ENV="$2"; ENV_SET="true"; shift 2 ;;
         --hostname) HOSTNAME="$2"; shift 2 ;;
         --port) PORT="$2"; shift 2 ;;
         --username) USERNAME="$2"; shift 2 ;;
@@ -82,23 +72,32 @@ fi
 
 api_base="\${API_URL%/}"
 
-if [ -z "$API_TOKEN" ]; then
-    read_prompt input_api "PurveX API URL [\${API_URL}]: "
+if [ -z "$API_TOKEN" ] || [ "$API_TOKEN" = "$TOKEN_PLACEHOLDER" ]; then
+    read -r -p "PurveX API URL [\${API_URL}]: " input_api
     if [ -n "$input_api" ]; then
         API_URL="$input_api"
         api_base="\${API_URL%/}"
     fi
-    read_prompt input_env "Environment [lab/dev/prod] (\${ENV}): "
+    read -r -p "Environment [lab/dev/prod] (\${ENV}): " input_env
     if [ -n "$input_env" ]; then
         ENV="$input_env"
     fi
-    while [ -z "$API_TOKEN" ]; do
-        read_prompt API_TOKEN "Registration token: "
-        API_TOKEN="$(printf "%s" "$API_TOKEN" | tr -d '\r')"
-    done
+    read -r -s -p "Registration token (paste and press Enter): " API_TOKEN
+    echo ""
+    if [ -z "$API_TOKEN" ]; then
+        read -r -s -p "Registration token (required): " API_TOKEN
+        echo ""
+    fi
 fi
 
-if [ -z "$API_TOKEN" ] || [ "$API_TOKEN" = "YOUR_TOKEN_HERE" ]; then
+if [ "$ENV_SET" = "false" ]; then
+    read -r -p "Environment [lab/dev/prod] (\${ENV}): " input_env
+    if [ -n "$input_env" ]; then
+        ENV="$input_env"
+    fi
+fi
+
+if [ -z "$API_TOKEN" ] || [ "$API_TOKEN" = "$TOKEN_PLACEHOLDER" ]; then
     echo "ERROR: Registration token is required."
     echo "   Please paste the token when prompted."
     exit 1
@@ -134,7 +133,7 @@ REGISTRATION_DATA=$(cat <<EOF
   "auth_method": "key",
   "allowed_test_types": "[\\"Atomic only\\"]",
   "max_concurrent_tests": 1,
-  "heartbeat_interval_seconds": 60,
+  "heartbeat_interval_seconds": 5,
   "alert_offline_minutes": 5
 }
 EOF
@@ -159,6 +158,10 @@ if [ "$HTTP_CODE" -eq 201 ] || [ "$HTTP_CODE" -eq 200 ]; then
     if [ -n "$RUNNER_ID" ]; then
         echo "   Runner ID: $RUNNER_ID"
     fi
+    RUNNER_TOKEN=$(echo "$BODY" | grep -o '"runner_token":"[^"]*"' | cut -d'"' -f4)
+    if [ -n "$RUNNER_TOKEN" ]; then
+        API_TOKEN="$RUNNER_TOKEN"
+    fi
     if [ -n "$RUNNER_ID" ]; then
         OS_NAME=$(uname -s 2>/dev/null || echo "Unknown")
         HB_PAYLOAD=$(cat <<EOF
@@ -171,7 +174,7 @@ if [ "$HTTP_CODE" -eq 201 ] || [ "$HTTP_CODE" -eq 200 ]; then
 EOF
 )
         curl -s -X POST -H "Authorization: Bearer $API_TOKEN" -H "Content-Type: application/json" \
-          -d "$HB_PAYLOAD" "\${api_base}/settings/environment-runners/\${RUNNER_ID}/heartbeat" >/dev/null 2>&1 || true
+          -d "$HB_PAYLOAD" "\${API_URL%/}/agent/heartbeat" >/dev/null 2>&1 || true
         if command -v systemctl >/dev/null 2>&1; then
             HB_SCRIPT="/usr/local/bin/purvex-agent-heartbeat.sh"
             HB_UNIT="/etc/systemd/system/purvex-agent-heartbeat.service"
@@ -185,8 +188,28 @@ while true; do
   LOCAL_IP=\$(hostname -I 2>/dev/null | awk '{print $1}' || echo "127.0.0.1")
   curl -s -X POST -H "Authorization: Bearer \${API_TOKEN}" -H "Content-Type: application/json" \\
     -d "{\"os\":\"\${OS_NAME}\",\"ip_address\":\"\${LOCAL_IP}\",\"agent_version\":\"v1.0.0\",\"status\":\"online\"}" \\
-    "\${API_URL%/}/settings/environment-runners/\${RUNNER_ID}/heartbeat" >/dev/null 2>&1 || true
-  sleep 60
+    "\${API_URL%/}/agent/heartbeat" >/dev/null 2>&1 || true
+  CMD_JSON=$(curl -s -H "Authorization: Bearer \${API_TOKEN}" "\${API_URL%/}/agent/commands/next" || true)
+  CMD_ID=$(echo "$CMD_JSON" | grep -o '"id":[0-9]*' | grep -o '[0-9]*' | head -1)
+  CMD_TYPE=$(echo "$CMD_JSON" | grep -o '"command_type":"[^"]*"' | cut -d'"' -f4)
+  if [ "$CMD_TYPE" = "STOP_AGENT" ] && [ -n "$CMD_ID" ]; then
+    curl -s -X POST -H "Authorization: Bearer \${API_TOKEN}" -H "Content-Type: application/json" \
+      -d "{\"status\":\"completed\",\"message\":\"Agent stopped\"}" \
+      "\${API_URL%/}/agent/commands/\${CMD_ID}/ack" >/dev/null 2>&1 || true
+    systemctl disable --now purvex-agent-heartbeat.service >/dev/null 2>&1 || true
+    exit 0
+  fi
+  if [ "$CMD_TYPE" = "PAUSE_AGENT" ] && [ -n "$CMD_ID" ]; then
+    curl -s -X POST -H "Authorization: Bearer \${API_TOKEN}" -H "Content-Type: application/json" \
+      -d "{\"status\":\"completed\",\"message\":\"Agent paused\"}" \
+      "\${API_URL%/}/agent/commands/\${CMD_ID}/ack" >/dev/null 2>&1 || true
+  fi
+  if [ "$CMD_TYPE" = "RESUME_AGENT" ] && [ -n "$CMD_ID" ]; then
+    curl -s -X POST -H "Authorization: Bearer \${API_TOKEN}" -H "Content-Type: application/json" \
+      -d "{\"status\":\"completed\",\"message\":\"Agent resumed\"}" \
+      "\${API_URL%/}/agent/commands/\${CMD_ID}/ack" >/dev/null 2>&1 || true
+  fi
+  sleep 5
 done
 EOF
             sudo chmod +x "$HB_SCRIPT"
@@ -228,6 +251,10 @@ else
             if [ -n "$RUNNER_ID" ]; then
                 echo "   Runner ID: $RUNNER_ID"
             fi
+            RUNNER_TOKEN=$(echo "$BODY" | grep -o '"runner_token":"[^"]*"' | cut -d'"' -f4)
+            if [ -n "$RUNNER_TOKEN" ]; then
+                API_TOKEN="$RUNNER_TOKEN"
+            fi
             if [ -n "$RUNNER_ID" ]; then
                 OS_NAME=$(uname -s 2>/dev/null || echo "Unknown")
                 HB_PAYLOAD=$(cat <<EOF
@@ -240,7 +267,7 @@ else
 EOF
 )
                 curl -s -X POST -H "Authorization: Bearer $API_TOKEN" -H "Content-Type: application/json" \
-                  -d "$HB_PAYLOAD" "\${api_base}/settings/environment-runners/\${RUNNER_ID}/heartbeat" >/dev/null 2>&1 || true
+                  -d "$HB_PAYLOAD" "\${API_URL%/}/agent/heartbeat" >/dev/null 2>&1 || true
                 if command -v systemctl >/dev/null 2>&1; then
                     HB_SCRIPT="/usr/local/bin/purvex-agent-heartbeat.sh"
                     HB_UNIT="/etc/systemd/system/purvex-agent-heartbeat.service"
@@ -254,8 +281,28 @@ while true; do
   LOCAL_IP=\$(hostname -I 2>/dev/null | awk '{print $1}' || echo "127.0.0.1")
   curl -s -X POST -H "Authorization: Bearer \${API_TOKEN}" -H "Content-Type: application/json" \\
     -d "{\"os\":\"\${OS_NAME}\",\"ip_address\":\"\${LOCAL_IP}\",\"agent_version\":\"v1.0.0\",\"status\":\"online\"}" \\
-    "\${API_URL%/}/settings/environment-runners/\${RUNNER_ID}/heartbeat" >/dev/null 2>&1 || true
-  sleep 60
+    "\${API_URL%/}/agent/heartbeat" >/dev/null 2>&1 || true
+  CMD_JSON=$(curl -s -H "Authorization: Bearer \${API_TOKEN}" "\${API_URL%/}/agent/commands/next" || true)
+  CMD_ID=$(echo "$CMD_JSON" | grep -o '"id":[0-9]*' | grep -o '[0-9]*' | head -1)
+  CMD_TYPE=$(echo "$CMD_JSON" | grep -o '"command_type":"[^"]*"' | cut -d'"' -f4)
+  if [ "$CMD_TYPE" = "STOP_AGENT" ] && [ -n "$CMD_ID" ]; then
+    curl -s -X POST -H "Authorization: Bearer \${API_TOKEN}" -H "Content-Type: application/json" \
+      -d "{\"status\":\"completed\",\"message\":\"Agent stopped\"}" \
+      "\${API_URL%/}/agent/commands/\${CMD_ID}/ack" >/dev/null 2>&1 || true
+    systemctl disable --now purvex-agent-heartbeat.service >/dev/null 2>&1 || true
+    exit 0
+  fi
+  if [ "$CMD_TYPE" = "PAUSE_AGENT" ] && [ -n "$CMD_ID" ]; then
+    curl -s -X POST -H "Authorization: Bearer \${API_TOKEN}" -H "Content-Type: application/json" \
+      -d "{\"status\":\"completed\",\"message\":\"Agent paused\"}" \
+      "\${API_URL%/}/agent/commands/\${CMD_ID}/ack" >/dev/null 2>&1 || true
+  fi
+  if [ "$CMD_TYPE" = "RESUME_AGENT" ] && [ -n "$CMD_ID" ]; then
+    curl -s -X POST -H "Authorization: Bearer \${API_TOKEN}" -H "Content-Type: application/json" \
+      -d "{\"status\":\"completed\",\"message\":\"Agent resumed\"}" \
+      "\${API_URL%/}/agent/commands/\${CMD_ID}/ack" >/dev/null 2>&1 || true
+  fi
+  sleep 5
 done
 EOF
                     sudo chmod +x "$HB_SCRIPT"
@@ -290,26 +337,31 @@ fi`;
 
 param(
     [string]$ApiUrl = "${apiUrl}",
-    [string]$Token = "YOUR_TOKEN_HERE",
+    [string]$Token = "__PURVEX_TOKEN_VALUE__",
     [string]$Env = "lab",
     [string]$Hostname = $env:COMPUTERNAME,
     [int]$Port = 22,
     [string]$Username = $env:USERNAME
 )
 
-if ([string]::IsNullOrEmpty($Token) -or $Token -eq "YOUR_TOKEN_HERE") {
-    $inputApi = Read-Host "PurveX API URL [$ApiUrl]"
-    if (-not [string]::IsNullOrEmpty($inputApi)) {
-        $ApiUrl = $inputApi
-    }
+$envProvided = $PSBoundParameters.ContainsKey('Env') -or (-not [string]::IsNullOrEmpty($env:PURVEX_ENV))
+if (-not $envProvided) {
     $inputEnv = Read-Host "Environment [lab/dev/prod] ($Env)"
     if (-not [string]::IsNullOrEmpty($inputEnv)) {
         $Env = $inputEnv
     }
+}
+
+$TokenPlaceholder = "__PURVEX_TOKEN_PLACEHOLDER__"
+if ([string]::IsNullOrEmpty($Token) -or $Token -eq $TokenPlaceholder) {
+    $inputApi = Read-Host "PurveX API URL [$ApiUrl]"
+    if (-not [string]::IsNullOrEmpty($inputApi)) {
+        $ApiUrl = $inputApi
+    }
     $Token = Read-Host "Registration token"
 }
 
-if ([string]::IsNullOrEmpty($Token) -or $Token -eq "YOUR_TOKEN_HERE") {
+if ([string]::IsNullOrEmpty($Token) -or $Token -eq $TokenPlaceholder) {
     Write-Host "❌ ERROR: Registration token is required." -ForegroundColor Red
     Write-Host "   Provide it via -Token or set PURVEX_API_TOKEN." -ForegroundColor Yellow
     exit 1
@@ -338,7 +390,7 @@ $RegistrationData = @{
     auth_method = "key"
     allowed_test_types = '["Atomic only"]'
     max_concurrent_tests = 1
-    heartbeat_interval_seconds = 60
+    heartbeat_interval_seconds = 5
     alert_offline_minutes = 5
 } | ConvertTo-Json
 
@@ -358,6 +410,10 @@ $Headers = @{
 try {
     $Response = Invoke-RestMethod -Uri $Url -Method Post -Headers $Headers -Body $RegistrationData -ContentType "application/json" -ErrorAction Stop
     Write-Host "✅ Successfully registered with PurveX!" -ForegroundColor Green
+    if ($Response.runner_token) {
+        $Token = $Response.runner_token
+        $Headers["Authorization"] = "Bearer $Token"
+    }
     Write-Host "   Runner ID: $($Response.id)" -ForegroundColor White
     Write-Host "   Environment: $($Response.environment_name)" -ForegroundColor White
     Write-Host "   Hostname: $($Response.hostname)" -ForegroundColor White
@@ -368,7 +424,7 @@ try {
             agent_version = "v1.0.0"
             status = "online"
         } | ConvertTo-Json
-        $hbUrl = "$($ApiUrl.TrimEnd('/'))/settings/environment-runners/$($Response.id)/heartbeat"
+        $hbUrl = "$($ApiUrl.TrimEnd('/'))/agent/heartbeat"
         Invoke-RestMethod -Uri $hbUrl -Method Post -Headers $Headers -Body $hbBody -ContentType "application/json" -ErrorAction SilentlyContinue | Out-Null
         $taskScript = Join-Path $env:ProgramData "PurveX\\purvex-heartbeat.ps1"
         New-Item -ItemType Directory -Path (Split-Path $taskScript) -Force | Out-Null
@@ -381,9 +437,18 @@ while (\$true) {
   \$ip = (Get-NetIPAddress -AddressFamily IPv4 | Where-Object { \$_.IPAddress -notlike "127.*" -and \$_.IPAddress -notlike "169.254.*" } | Select-Object -First 1).IPAddress
   \$body = @{ os = \$os; ip_address = \$ip; agent_version = "v1.0.0"; status = "online" } | ConvertTo-Json
   try {
-    Invoke-RestMethod -Uri "\$((\$ApiUrl.TrimEnd('/')))/settings/environment-runners/\$RunnerId/heartbeat" -Method Post -Headers @{ Authorization = "Bearer \$Token" } -Body \$body -ContentType "application/json" -ErrorAction SilentlyContinue | Out-Null
+    Invoke-RestMethod -Uri "\$((\$ApiUrl.TrimEnd('/')))/agent/heartbeat" -Method Post -Headers @{ Authorization = "Bearer \$Token" } -Body \$body -ContentType "application/json" -ErrorAction SilentlyContinue | Out-Null
   } catch {}
-  Start-Sleep -Seconds 60
+  try {
+    \$cmd = Invoke-RestMethod -Uri "\$((\$ApiUrl.TrimEnd('/')))/agent/commands/next" -Method Get -Headers @{ Authorization = "Bearer \$Token" } -ErrorAction SilentlyContinue
+    if (\$cmd -and \$cmd.command_type -eq "STOP_AGENT") {
+      \$ackBody = @{ status = "completed"; message = "Agent stopped" } | ConvertTo-Json
+      Invoke-RestMethod -Uri "\$((\$ApiUrl.TrimEnd('/')))/agent/commands/\$((\$cmd.id))/ack" -Method Post -Headers @{ Authorization = "Bearer \$Token" } -Body \$ackBody -ContentType "application/json" -ErrorAction SilentlyContinue | Out-Null
+      Unregister-ScheduledTask -TaskName "PurveX Agent Heartbeat" -Confirm:\$false -ErrorAction SilentlyContinue | Out-Null
+      exit
+    }
+  } catch {}
+  Start-Sleep -Seconds 5
 }
 "@ | Set-Content -Path $taskScript -Encoding UTF8
         $action = New-ScheduledTaskAction -Execute 'PowerShell.exe' -Argument ('-NoProfile -ExecutionPolicy Bypass -File "' + $taskScript + '"')
@@ -399,6 +464,10 @@ catch {
             $Url = "$($ApiUrl.TrimEnd('/'))/api/settings/environment-runners"
             $Response = Invoke-RestMethod -Uri $Url -Method Post -Headers $Headers -Body $RegistrationData -ContentType "application/json" -ErrorAction Stop
             Write-Host "✅ Successfully registered with PurveX!" -ForegroundColor Green
+            if ($Response.runner_token) {
+                $Token = $Response.runner_token
+                $Headers["Authorization"] = "Bearer $Token"
+            }
             Write-Host "   Runner ID: $($Response.id)" -ForegroundColor White
             Write-Host "   Environment: $($Response.environment_name)" -ForegroundColor White
             Write-Host "   Hostname: $($Response.hostname)" -ForegroundColor White
@@ -409,7 +478,7 @@ catch {
                     agent_version = "v1.0.0"
                     status = "online"
                 } | ConvertTo-Json
-                $hbUrl = "$($ApiUrl.TrimEnd('/'))/settings/environment-runners/$($Response.id)/heartbeat"
+                $hbUrl = "$($ApiUrl.TrimEnd('/'))/agent/heartbeat"
                 Invoke-RestMethod -Uri $hbUrl -Method Post -Headers $Headers -Body $hbBody -ContentType "application/json" -ErrorAction SilentlyContinue | Out-Null
                 $taskScript = Join-Path $env:ProgramData "PurveX\\purvex-heartbeat.ps1"
                 New-Item -ItemType Directory -Path (Split-Path $taskScript) -Force | Out-Null
@@ -422,9 +491,18 @@ while (\$true) {
   \$ip = (Get-NetIPAddress -AddressFamily IPv4 | Where-Object { \$_.IPAddress -notlike "127.*" -and \$_.IPAddress -notlike "169.254.*" } | Select-Object -First 1).IPAddress
   \$body = @{ os = \$os; ip_address = \$ip; agent_version = "v1.0.0"; status = "online" } | ConvertTo-Json
   try {
-    Invoke-RestMethod -Uri "\$((\$ApiUrl.TrimEnd('/')))/settings/environment-runners/\$RunnerId/heartbeat" -Method Post -Headers @{ Authorization = "Bearer \$Token" } -Body \$body -ContentType "application/json" -ErrorAction SilentlyContinue | Out-Null
+    Invoke-RestMethod -Uri "\$((\$ApiUrl.TrimEnd('/')))/agent/heartbeat" -Method Post -Headers @{ Authorization = "Bearer \$Token" } -Body \$body -ContentType "application/json" -ErrorAction SilentlyContinue | Out-Null
   } catch {}
-  Start-Sleep -Seconds 60
+  try {
+    \$cmd = Invoke-RestMethod -Uri "\$((\$ApiUrl.TrimEnd('/')))/agent/commands/next" -Method Get -Headers @{ Authorization = "Bearer \$Token" } -ErrorAction SilentlyContinue
+    if (\$cmd -and \$cmd.command_type -eq "STOP_AGENT") {
+      \$ackBody = @{ status = "completed"; message = "Agent stopped" } | ConvertTo-Json
+      Invoke-RestMethod -Uri "\$((\$ApiUrl.TrimEnd('/')))/agent/commands/\$((\$cmd.id))/ack" -Method Post -Headers @{ Authorization = "Bearer \$Token" } -Body \$ackBody -ContentType "application/json" -ErrorAction SilentlyContinue | Out-Null
+      Unregister-ScheduledTask -TaskName "PurveX Agent Heartbeat" -Confirm:\$false -ErrorAction SilentlyContinue | Out-Null
+      exit
+    }
+  } catch {}
+  Start-Sleep -Seconds 5
 }
 "@ | Set-Content -Path $taskScript -Encoding UTF8
                 $action = New-ScheduledTaskAction -Execute 'PowerShell.exe' -Argument ('-NoProfile -ExecutionPolicy Bypass -File "' + $taskScript + '"')
@@ -509,7 +587,7 @@ def register_agent(api_url: str, api_token: str, environment: str, hostname: Opt
         "auth_method": "key",
         "allowed_test_types": '["Atomic only"]',
         "max_concurrent_tests": 1,
-        "heartbeat_interval_seconds": 60,
+        "heartbeat_interval_seconds": 5,
         "alert_offline_minutes": 5
     }
     
@@ -535,12 +613,15 @@ def register_agent(api_url: str, api_token: str, environment: str, hostname: Opt
             response = requests.post(url, json=registration_data, headers=headers, timeout=30)
         response.raise_for_status()
         result = response.json()
+        if result.get("runner_token"):
+            api_token = result.get("runner_token")
+            headers["Authorization"] = f"Bearer {api_token}"
         print("Status      : Registered")
         print(f"Runner ID   : {result.get('id')}")
         print(f"Environment : {result.get('environment_name')}")
         print(f"Hostname    : {result.get('hostname')}")
         if result.get("id"):
-            hb_url = f"{api_url.rstrip('/')}/settings/environment-runners/{result.get('id')}/heartbeat"
+            hb_url = f"{api_url.rstrip('/')}/agent/heartbeat"
             hb_payload = {
                 "os": os.uname().sysname if hasattr(os, "uname") else "Unknown",
                 "ip_address": get_local_ip(),
@@ -564,7 +645,27 @@ while true; do
   curl -s -X POST -H "Authorization: Bearer $API_TOKEN" -H "Content-Type: application/json" \\
     -d "{{\\"os\\":\\"$OS_NAME\\",\\"ip_address\\":\\"$LOCAL_IP\\",\\"agent_version\\":\\"v1.0.0\\",\\"status\\":\\"online\\"}}" \\
     "{api_url.rstrip('/')}/settings/environment-runners/{result.get('id')}/heartbeat" >/dev/null 2>&1 || true
-  sleep 60
+  CMD_JSON=$(curl -s -H "Authorization: Bearer \${API_TOKEN}" "\${API_URL%/}/agent/commands/next" || true)
+  CMD_ID=$(echo "$CMD_JSON" | grep -o '"id":[0-9]*' | grep -o '[0-9]*' | head -1)
+  CMD_TYPE=$(echo "$CMD_JSON" | grep -o '"command_type":"[^"]*"' | cut -d'"' -f4)
+  if [ "$CMD_TYPE" = "STOP_AGENT" ] && [ -n "$CMD_ID" ]; then
+    curl -s -X POST -H "Authorization: Bearer \${API_TOKEN}" -H "Content-Type: application/json" \
+      -d "{\"status\":\"completed\",\"message\":\"Agent stopped\"}" \
+      "\${API_URL%/}/agent/commands/\${CMD_ID}/ack" >/dev/null 2>&1 || true
+    systemctl disable --now purvex-agent-heartbeat.service >/dev/null 2>&1 || true
+    exit 0
+  fi
+  if [ "$CMD_TYPE" = "PAUSE_AGENT" ] && [ -n "$CMD_ID" ]; then
+    curl -s -X POST -H "Authorization: Bearer \${API_TOKEN}" -H "Content-Type: application/json" \
+      -d "{\"status\":\"completed\",\"message\":\"Agent paused\"}" \
+      "\${API_URL%/}/agent/commands/\${CMD_ID}/ack" >/dev/null 2>&1 || true
+  fi
+  if [ "$CMD_TYPE" = "RESUME_AGENT" ] && [ -n "$CMD_ID" ]; then
+    curl -s -X POST -H "Authorization: Bearer \${API_TOKEN}" -H "Content-Type: application/json" \
+      -d "{\"status\":\"completed\",\"message\":\"Agent resumed\"}" \
+      "\${API_URL%/}/agent/commands/\${CMD_ID}/ack" >/dev/null 2>&1 || true
+  fi
+  sleep 5
 done
 """
                 unit = f"""[Unit]
@@ -611,7 +712,8 @@ WantedBy=multi-user.target
 def main():
     parser = argparse.ArgumentParser(description="Register this machine as a PurveX test runner agent")
     parser.add_argument('--api-url', default=os.getenv('PURVEX_API_URL', '${apiUrl}'), help='PurveX API base URL')
-    parser.add_argument('--token', default=os.getenv('PURVEX_API_TOKEN'), help='Registration token (required)')
+    token_placeholder = "__PURVEX_TOKEN_PLACEHOLDER__"
+    parser.add_argument('--token', default=os.getenv('PURVEX_API_TOKEN', "__PURVEX_TOKEN_VALUE__"), help='Registration token (required)')
     parser.add_argument('--env', default=os.getenv('PURVEX_ENV', 'lab'), help='Environment name: lab, dev, or prod')
     parser.add_argument('--hostname', default=None, help='Custom hostname (auto-detected if not provided)')
     parser.add_argument('--port', type=int, default=22, help='SSH port (default: 22)')
@@ -620,16 +722,19 @@ def main():
     args = parser.parse_args()
     
     api_token = args.token
-    if not api_token:
-        input_api = input(f"PurveX API URL [{args.api_url}]: ").strip()
-        if input_api:
-            args.api_url = input_api
+    env_set = '--env' in sys.argv or os.getenv('PURVEX_ENV') is not None
+    if not env_set:
         input_env = input(f"Environment [lab/dev/prod] ({args.env}): ").strip()
         if input_env:
             args.env = input_env
+
+    if not api_token or api_token == token_placeholder:
+        input_api = input(f"PurveX API URL [{args.api_url}]: ").strip()
+        if input_api:
+            args.api_url = input_api
         api_token = getpass("Registration token: ")
 
-    if not api_token:
+    if not api_token or api_token == token_placeholder:
         print("❌ ERROR: Registration token is required.")
         print("   Provide it via --token or set PURVEX_API_TOKEN.")
         sys.exit(1)
@@ -647,10 +752,13 @@ function LabPageContent() {
   const [selectedScript, setSelectedScript] = useState<"bash" | "powershell" | "python">("bash");
   const [copied, setCopied] = useState(false);
   const [userToken, setUserToken] = useState<string | null>(null);
+  const [tokenExpiresInMinutes, setTokenExpiresInMinutes] = useState<number | null>(null);
   const [tokenLoading, setTokenLoading] = useState(false);
   const [endpoints, setEndpoints] = useState<any[]>([]);
   const [endpointsLoading, setEndpointsLoading] = useState(false);
   const [deleteEndpoint, setDeleteEndpoint] = useState<{ id: number; name: string } | null>(null);
+  const [pauseEndpoint, setPauseEndpoint] = useState<{ id: number; name: string } | null>(null);
+  const [resumeEndpoint, setResumeEndpoint] = useState<{ id: number; name: string } | null>(null);
   const [expandedRows, setExpandedRows] = useState<Set<number>>(new Set());
   const [showRegisterDialog, setShowRegisterDialog] = useState(false);
   const searchParams = useSearchParams();
@@ -707,6 +815,9 @@ function LabPageContent() {
         });
         if (response?.token) {
           setUserToken(response.token);
+          if (response?.expires_in_minutes) {
+            setTokenExpiresInMinutes(response.expires_in_minutes);
+          }
         }
       } catch (err: any) {
         // If token generation fails, rely on server-side session state.
@@ -729,6 +840,50 @@ function LabPageContent() {
     }
   };
 
+  const handlePauseEndpoint = async (endpointId: number) => {
+    try {
+      await apiFetch(`/settings/environment-runners/${endpointId}/pause`, { method: "POST" });
+      setEndpoints((prev) =>
+        prev.map((endpoint) =>
+          endpoint.id === endpointId ? { ...endpoint, status: "pausing" } : endpoint
+        )
+      );
+      toast({
+        type: "success",
+        title: "Pause requested",
+        description: "Agent pause command queued.",
+      });
+    } catch (err: any) {
+      toast({
+        type: "error",
+        title: "Failed to pause agent",
+        description: err?.message || "Unable to send pause command.",
+      });
+    }
+  };
+
+  const handleResumeEndpoint = async (endpointId: number) => {
+    try {
+      await apiFetch(`/settings/environment-runners/${endpointId}/resume`, { method: "POST" });
+      setEndpoints((prev) =>
+        prev.map((endpoint) =>
+          endpoint.id === endpointId ? { ...endpoint, status: "resuming" } : endpoint
+        )
+      );
+      toast({
+        type: "success",
+        title: "Resume requested",
+        description: "Agent resume command queued.",
+      });
+    } catch (err: any) {
+      toast({
+        type: "error",
+        title: "Failed to resume agent",
+        description: err?.message || "Unable to send resume command.",
+      });
+    }
+  };
+
   // Fetch environment runners/endpoints
   useEffect(() => {
     async function fetchEndpoints() {
@@ -739,12 +894,26 @@ function LabPageContent() {
         });
         const tests = await apiFetch("/tests/?limit=100", { cache: "no-store" }).catch(() => []);
         const latestByEndpoint = new Map<string, any>();
+        const testsByEndpoint = new Map<string, any[]>();
+        const testsByEnvironment = new Map<string, any[]>();
         if (Array.isArray(tests)) {
           tests.forEach((test: any) => {
             if (!test.endpoint) return;
             const existing = latestByEndpoint.get(test.endpoint);
             if (!existing || new Date(test.started_at).getTime() > new Date(existing.started_at).getTime()) {
               latestByEndpoint.set(test.endpoint, test);
+            }
+          });
+          tests.forEach((test: any) => {
+            if (test.endpoint) {
+              const existing = testsByEndpoint.get(test.endpoint) || [];
+              existing.push(test);
+              testsByEndpoint.set(test.endpoint, existing);
+            }
+            if (test.environment) {
+              const existingEnv = testsByEnvironment.get(test.environment) || [];
+              existingEnv.push(test);
+              testsByEnvironment.set(test.environment, existingEnv);
             }
           });
         }
@@ -761,6 +930,15 @@ function LabPageContent() {
               const latest = latestByEndpoint.get(runner.hostname);
               if (!latest) return "—";
               return latest.technique_id || "—";
+            })(),
+            recentTests: (() => {
+              const endpointKey = runner.hostname;
+              const envKey = runner.environment_name;
+              const source = (endpointKey && testsByEndpoint.get(endpointKey)) || (envKey && testsByEnvironment.get(envKey)) || [];
+              return source
+                .slice()
+                .sort((a, b) => new Date(b.started_at || b.created_at || b.finished_at || 0).getTime() - new Date(a.started_at || a.created_at || a.finished_at || 0).getTime())
+                .slice(0, 3);
             })(),
             agentVersion: runner.agent_version || "—",
             tags: [],
@@ -858,7 +1036,7 @@ function LabPageContent() {
                         <th className="text-left py-3 px-3 min-w-[150px] font-semibold uppercase tracking-wider">Last Test</th>
                         <th className="text-left py-3 px-3 min-w-[110px] font-semibold uppercase tracking-wider">Version</th>
                         <th className="text-left py-3 px-3 min-w-[120px] font-semibold uppercase tracking-wider">Tags</th>
-                        <th className="text-right py-3 px-3 min-w-[60px] font-semibold uppercase tracking-wider">Remove</th>
+                        <th className="text-right py-3 px-3 min-w-[120px] font-semibold uppercase tracking-wider">Actions</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100 text-sm text-slate-700">
@@ -924,6 +1102,11 @@ function LabPageContent() {
                                   endpoint.status === "online" && "bg-emerald-50 text-emerald-700 border-emerald-200",
                                   endpoint.status === "degraded" && "bg-amber-50 text-amber-700 border-amber-200",
                                   endpoint.status === "idle" && "bg-blue-50 text-blue-700 border-blue-200",
+                                  endpoint.status === "stopping" && "bg-amber-50 text-amber-700 border-amber-200",
+                                  endpoint.status === "stopped" && "bg-slate-100 text-slate-700 border-slate-200",
+                                  endpoint.status === "paused" && "bg-slate-100 text-slate-700 border-slate-200",
+                                  endpoint.status === "pausing" && "bg-amber-50 text-amber-700 border-amber-200",
+                                  endpoint.status === "resuming" && "bg-blue-50 text-blue-700 border-blue-200",
                                   endpoint.status === "unknown" && "bg-slate-100 text-slate-600 border-slate-200",
                                   "inline-flex items-center gap-2 border text-xs px-2.5 py-1 rounded-full"
                                 )}
@@ -934,10 +1117,20 @@ function LabPageContent() {
                                     endpoint.status === "online" && "bg-emerald-500",
                                     endpoint.status === "degraded" && "bg-amber-500",
                                     endpoint.status === "idle" && "bg-blue-500",
+                                    endpoint.status === "stopping" && "bg-amber-500",
+                                    endpoint.status === "stopped" && "bg-slate-500",
+                                    endpoint.status === "paused" && "bg-slate-500",
+                                    endpoint.status === "pausing" && "bg-amber-500",
+                                    endpoint.status === "resuming" && "bg-blue-500",
                                     endpoint.status === "unknown" && "bg-slate-400",
                                     endpoint.status !== "online" &&
                                       endpoint.status !== "degraded" &&
                                       endpoint.status !== "idle" &&
+                                      endpoint.status !== "stopping" &&
+                                      endpoint.status !== "stopped" &&
+                                      endpoint.status !== "paused" &&
+                                      endpoint.status !== "pausing" &&
+                                      endpoint.status !== "resuming" &&
                                       "bg-slate-400"
                                   )}
                                 />
@@ -974,10 +1167,38 @@ function LabPageContent() {
                               </div>
                             </td>
                             <td className="py-3 px-3 text-right">
-                              <button
-                                type="button"
-                                aria-label={`Remove ${endpoint.hostname}`}
-                                title="Remove endpoint"
+                              <div className="flex items-center justify-end gap-2">
+                                {endpoint.status === "paused" || endpoint.status === "pausing" || endpoint.status === "stopped" ? (
+                                  <button
+                                    type="button"
+                                    aria-label={`Resume ${endpoint.hostname}`}
+                                    title={endpoint.status === "stopped" ? "Start agent" : "Resume agent"}
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setResumeEndpoint({ id: endpoint.id, name: endpoint.hostname });
+                                    }}
+                                    className="h-8 w-8 inline-flex items-center justify-center rounded-full border border-slate-200 text-slate-500 hover:text-emerald-600 hover:border-emerald-200 hover:bg-emerald-50 transition-colors"
+                                  >
+                                    ▶
+                                  </button>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    aria-label={`Pause ${endpoint.hostname}`}
+                                    title="Pause agent"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setPauseEndpoint({ id: endpoint.id, name: endpoint.hostname });
+                                    }}
+                                    className="h-8 w-8 inline-flex items-center justify-center rounded-full border border-slate-200 text-slate-500 hover:text-slate-800 hover:border-slate-300 hover:bg-slate-100 transition-colors"
+                                  >
+                                    ❚❚
+                                  </button>
+                                )}
+                                <button
+                                  type="button"
+                                  aria-label={`Remove ${endpoint.hostname}`}
+                                  title="Remove endpoint"
                                 onClick={(e) => {
                                   e.stopPropagation();
                                   setDeleteEndpoint({ id: endpoint.id, name: endpoint.hostname });
@@ -986,6 +1207,7 @@ function LabPageContent() {
                               >
                                 ×
                               </button>
+                              </div>
                             </td>
                           </tr>
                           {expandedRows.has(endpoint.id) && (
@@ -1049,15 +1271,39 @@ function LabPageContent() {
                                       <h4 className="text-sm font-semibold text-slate-900">Recent Test Runs</h4>
                                     </div>
                                     <div className="space-y-2">
-                                      <div className="p-2 rounded bg-slate-50 border border-slate-200">
-                                        <div className="flex items-center justify-between mb-1.5">
-                                          <span className="text-xs font-medium text-slate-900 truncate">No recent test data</span>
-                                          <Badge className="bg-slate-100 text-slate-600 border-slate-200 text-xs px-2 py-1 h-5">
-                                            —
-                                          </Badge>
+                                      {(endpoint.recentTests || []).length === 0 ? (
+                                        <div className="p-2 rounded bg-slate-50 border border-slate-200">
+                                          <div className="flex items-center justify-between mb-1.5">
+                                            <span className="text-xs font-medium text-slate-900 truncate">No recent test data</span>
+                                            <Badge className="bg-slate-100 text-slate-600 border-slate-200 text-xs px-2 py-1 h-5">
+                                              —
+                                            </Badge>
+                                          </div>
+                                          <p className="text-[10px] text-slate-600">—</p>
                                         </div>
-                                        <p className="text-[10px] text-slate-600">—</p>
-                                      </div>
+                                      ) : (
+                                        (endpoint.recentTests || []).map((test: any) => (
+                                          <div key={test.id} className="p-2 rounded bg-slate-50 border border-slate-200">
+                                            <div className="flex items-center justify-between mb-1.5">
+                                              <span className="text-xs font-medium text-slate-900 truncate">
+                                                {test.detection_title || test.technique_id || `Test #${test.id}`}
+                                              </span>
+                                              <Badge className={cn(
+                                                "text-xs px-2 py-1 h-5 border",
+                                                test.status === "PASS" && "bg-emerald-100 text-emerald-700 border-emerald-200",
+                                                test.status === "FAIL" && "bg-red-100 text-red-700 border-red-200",
+                                                test.status === "INCONCLUSIVE" && "bg-amber-100 text-amber-700 border-amber-200",
+                                                !test.status && "bg-slate-100 text-slate-600 border-slate-200"
+                                              )}>
+                                                {test.status || "—"}
+                                              </Badge>
+                                            </div>
+                                            <p className="text-[10px] text-slate-600">
+                                              {test.started_at ? new Date(test.started_at).toLocaleString() : "—"}
+                                            </p>
+                                          </div>
+                                        ))
+                                      )}
                                     </div>
                                   </div>
 
@@ -1105,7 +1351,7 @@ function LabPageContent() {
                   Register Agent
                 </DialogTitle>
                 <DialogDescription className="text-sm text-slate-600 mt-2">
-                  Download a registration script to register a new agent in your lab environment. The script will be pre-configured with your registration token.
+                  Download a registration script to register a new agent in your lab environment. The script is pre-configured with a single-use token{tokenExpiresInMinutes ? ` (expires in ${tokenExpiresInMinutes} minutes)` : ""}.
                 </DialogDescription>
               </DialogHeader>
               <div className="space-y-6 py-4">
@@ -1192,13 +1438,15 @@ function LabPageContent() {
                         const apiUrl = getApiUrl();
                         let script = getAgentScript(selectedScript, apiUrl);
 
-                        // Auto-inject generated token
+                        // Auto-inject generated token and update prompt labels
+                        script = script.replace(/__PURVEX_TOKEN_VALUE__/g, userToken);
                         if (selectedScript === "bash") {
                           script = script.replace(/YOUR_TOKEN_HERE/g, userToken);
                           script = script.replace(/API_TOKEN="YOUR_TOKEN_HERE"/g, `API_TOKEN="${userToken}"`);
+                          script = script.replace(/read -r -s -p "Registration token \\(paste and press Enter\\): " API_TOKEN\\n\\s*echo ""\\n\\s*if \\[ -z "\\$API_TOKEN" \\]; then\\n\\s*read -r -s -p "Registration token \\(required\\): " API_TOKEN\\n\\s*echo ""\\n\\s*fi\\n?/g, "");
                         } else if (selectedScript === "powershell") {
                           script = script.replace(/YOUR_TOKEN_HERE/g, userToken);
-                          script = script.replace(/\$Token = "YOUR_TOKEN_HERE"/g, `$Token = "${userToken}"`);
+                          script = script.replace(/\$Token = "__PURVEX_TOKEN_VALUE__"/g, `$Token = "${userToken}"`);
                         } else {
                           script = script.replace(/YOUR_TOKEN_HERE/g, userToken);
                           script = script.replace(/--token YOUR_TOKEN_HERE/g, `--token ${userToken}`);
@@ -1224,7 +1472,7 @@ function LabPageContent() {
                           title: "Script downloaded",
                           description:
                             selectedScript === "bash"
-                              ? `${filename} downloaded. Run: chmod +x ${filename}`
+                              ? `${filename} downloaded with your registration token. Run: chmod +x ${filename}`
                               : `${filename} has been downloaded with your registration token pre-configured.`,
                         });
                         setShowRegisterDialog(false);
@@ -1273,6 +1521,68 @@ function LabPageContent() {
                   }}
                 >
                   Remove
+                </Button>
+              </div>
+            </DialogContent>
+          </Dialog>
+
+          <Dialog open={!!pauseEndpoint} onOpenChange={(open) => !open && setPauseEndpoint(null)}>
+            <DialogContent className="sm:max-w-[420px] bg-white border border-slate-200 rounded-2xl">
+              <DialogHeader>
+                <DialogTitle className="text-lg font-semibold text-slate-900">
+                  Pause agent
+                </DialogTitle>
+                <DialogDescription className="text-sm text-slate-600 mt-2">
+                  This will pause <span className="font-semibold text-slate-900">{pauseEndpoint?.name}</span>. The agent will stop running new tests until resumed.
+                </DialogDescription>
+              </DialogHeader>
+              <div className="flex items-center justify-end gap-2 pt-2">
+                <Button
+                  variant="outline"
+                  onClick={() => setPauseEndpoint(null)}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  className="bg-slate-900 hover:bg-slate-800 text-white"
+                  onClick={() => {
+                    if (!pauseEndpoint) return;
+                    handlePauseEndpoint(pauseEndpoint.id);
+                    setPauseEndpoint(null);
+                  }}
+                >
+                  Pause Agent
+                </Button>
+              </div>
+            </DialogContent>
+          </Dialog>
+
+          <Dialog open={!!resumeEndpoint} onOpenChange={(open) => !open && setResumeEndpoint(null)}>
+            <DialogContent className="sm:max-w-[420px] bg-white border border-slate-200 rounded-2xl">
+              <DialogHeader>
+                <DialogTitle className="text-lg font-semibold text-slate-900">
+                  Resume agent
+                </DialogTitle>
+                <DialogDescription className="text-sm text-slate-600 mt-2">
+                  This will resume <span className="font-semibold text-slate-900">{resumeEndpoint?.name}</span> and allow tests to run again.
+                </DialogDescription>
+              </DialogHeader>
+              <div className="flex items-center justify-end gap-2 pt-2">
+                <Button
+                  variant="outline"
+                  onClick={() => setResumeEndpoint(null)}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  className="bg-emerald-600 hover:bg-emerald-700 text-white"
+                  onClick={() => {
+                    if (!resumeEndpoint) return;
+                    handleResumeEndpoint(resumeEndpoint.id);
+                    setResumeEndpoint(null);
+                  }}
+                >
+                  Resume Agent
                 </Button>
               </div>
             </DialogContent>

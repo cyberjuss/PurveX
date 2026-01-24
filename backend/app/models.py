@@ -271,13 +271,44 @@ class EnvironmentRunnerConfig(Base):
     key_path = Column(String, nullable=True)
     allowed_test_types = Column(Text, default='["Atomic only"]')  # JSON string
     max_concurrent_tests = Column(Integer, default=1)
-    heartbeat_interval_seconds = Column(Integer, default=60)
+    heartbeat_interval_seconds = Column(Integer, default=5)
     alert_offline_minutes = Column(Integer, default=5)
     os = Column(String, nullable=True)
     ip_address = Column(String, nullable=True)
     agent_version = Column(String, nullable=True)
     last_check_in = Column(DateTime(timezone=True), nullable=True)
     status = Column(String, nullable=True)
+    runner_token_hash = Column(String, nullable=True)
+    runner_token_last_rotated_at = Column(DateTime(timezone=True), nullable=True)
+    runner_token_expires_at = Column(DateTime(timezone=True), nullable=True)
+
+
+class AgentCommand(Base):
+    __tablename__ = "agent_commands"
+
+    id = Column(Integer, primary_key=True, index=True)
+    organization_id = Column(Integer, ForeignKey("organizations.id"), nullable=False, index=True)
+    runner_id = Column(Integer, ForeignKey("environment_runner_configs.id"), nullable=False, index=True)
+    command_type = Column(String, nullable=False)
+    status = Column(String, default="pending", index=True)
+    payload = Column(Text, nullable=True)
+    message = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    acknowledged_at = Column(DateTime(timezone=True), nullable=True)
+    completed_at = Column(DateTime(timezone=True), nullable=True)
+    issued_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
+
+class AgentRegistrationToken(Base):
+    __tablename__ = "agent_registration_tokens"
+
+    id = Column(Integer, primary_key=True, index=True)
+    organization_id = Column(Integer, ForeignKey("organizations.id"), nullable=False, index=True)
+    issued_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
+    jti = Column(String, unique=True, index=True, nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    expires_at = Column(DateTime(timezone=True), nullable=False)
+    used_at = Column(DateTime(timezone=True), nullable=True)
+    used_by_runner_id = Column(Integer, ForeignKey("environment_runner_configs.id"), nullable=True)
 
 
 class TestingPolicy(Base):

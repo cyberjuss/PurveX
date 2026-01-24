@@ -19,6 +19,10 @@ set -e
 API_URL="${PURVEX_API_URL:-http://127.0.0.1:8001}"
 API_TOKEN="${PURVEX_API_TOKEN:-}"
 ENV="${PURVEX_ENV:-lab}"
+ENV_SET="false"
+if [ -n "${PURVEX_ENV:-}" ]; then
+    ENV_SET="true"
+fi
 HOSTNAME="${PURVEX_HOSTNAME:-}"
 PORT="${PURVEX_PORT:-22}"
 USERNAME="${PURVEX_USERNAME:-${USER:-purvex}}"
@@ -36,6 +40,7 @@ while [[ $# -gt 0 ]]; do
             ;;
         --env)
             ENV="$2"
+            ENV_SET="true"
             shift 2
             ;;
         --hostname)
@@ -101,8 +106,20 @@ if [ -z "$API_TOKEN" ]; then
     if [ -n "$input_env" ]; then
         ENV="$input_env"
     fi
-    read -r -s -p "Registration token: " API_TOKEN
+    read -r -s -p "Registration token (paste and press Enter): " API_TOKEN
     echo ""
+    if [ -z "$API_TOKEN" ]; then
+        read -r -s -p "Registration token (required): " API_TOKEN
+        echo ""
+    fi
+fi
+
+# Prompt for environment if not explicitly set
+if [ "$ENV_SET" = "false" ]; then
+    read -r -p "Environment [lab/dev/prod] (${ENV}): " input_env
+    if [ -n "$input_env" ]; then
+        ENV="$input_env"
+    fi
 fi
 
 # Validate required arguments
@@ -154,7 +171,7 @@ REGISTRATION_DATA=$(cat <<EOF
   "auth_method": "key",
   "allowed_test_types": "[\"Atomic only\"]",
   "max_concurrent_tests": 1,
-  "heartbeat_interval_seconds": 60,
+  "heartbeat_interval_seconds": 5,
   "alert_offline_minutes": 5
 }
 EOF

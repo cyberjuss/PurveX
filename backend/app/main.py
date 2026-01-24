@@ -22,6 +22,7 @@ from .db import Base, async_engine, async_sessionmaker
 from .routers import detections, tests
 from .routers import auth
 from .routers import settings as settings_router
+from .routers import agent as agent_router
 from .routers import audit as audit_router
 from .routers import assistant as assistant_router
 from .routers import atomic as atomic_router
@@ -109,6 +110,12 @@ async def create_db_and_tables():
                     sync_conn.execute(text("ALTER TABLE environment_runner_configs ADD COLUMN last_check_in DATETIME"))
                 if "status" not in runner_columns:
                     sync_conn.execute(text("ALTER TABLE environment_runner_configs ADD COLUMN status VARCHAR(100)"))
+                if "runner_token_hash" not in runner_columns:
+                    sync_conn.execute(text("ALTER TABLE environment_runner_configs ADD COLUMN runner_token_hash VARCHAR(255)"))
+                if "runner_token_last_rotated_at" not in runner_columns:
+                    sync_conn.execute(text("ALTER TABLE environment_runner_configs ADD COLUMN runner_token_last_rotated_at DATETIME"))
+                if "runner_token_expires_at" not in runner_columns:
+                    sync_conn.execute(text("ALTER TABLE environment_runner_configs ADD COLUMN runner_token_expires_at DATETIME"))
                 # Backfill runner org_id for legacy rows
                 sync_conn.execute(text(
                     "UPDATE environment_runner_configs SET organization_id = (SELECT id FROM organizations LIMIT 1) "
@@ -592,6 +599,7 @@ app.include_router(auth.router)  # /auth/login, /auth/me, /auth/register
 app.include_router(detections.router)  # existing
 app.include_router(tests.router)  # existing
 app.include_router(settings_router.router)
+app.include_router(agent_router.router)
 app.include_router(audit_router.router)
 app.include_router(assistant_router.router)
 app.include_router(atomic_router.router)

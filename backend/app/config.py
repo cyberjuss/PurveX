@@ -75,6 +75,8 @@ class Settings(BaseSettings):
     DEFAULT_MAX_CONCURRENT_TESTS: int = 1
     DEFAULT_RUNNER_HEARTBEAT_INTERVAL: int = 60
     DEFAULT_RUNNER_ALERT_OFFLINE_MINUTES: int = 5
+    RUNNER_TOKEN_TTL_DAYS: int = 90
+    AGENT_REGISTRATION_TOKEN_TTL_MINUTES: int = 60
 
     # Testing Policy & Safety Settings (MVP)
     ALLOWED_TEST_ENVIRONMENTS: str = "lab,dev" # Comma-separated string

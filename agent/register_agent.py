@@ -108,7 +108,7 @@ def register_agent(
         "auth_method": "key",
         "allowed_test_types": '["Atomic only"]',
         "max_concurrent_tests": 1,
-        "heartbeat_interval_seconds": 60,
+        "heartbeat_interval_seconds": 5,
         "alert_offline_minutes": 5
     }
     
@@ -237,14 +237,20 @@ Examples:
     args = parser.parse_args()
     
     api_token = args.token
+    env_set = '--env' in sys.argv or os.getenv('PURVEX_ENV') is not None
+    if not env_set:
+        try:
+            input_env = input(f"Environment [lab/dev/prod] ({args.env}): ").strip()
+            if input_env:
+                args.env = input_env
+        except Exception:
+            pass
+
     if not api_token:
         try:
             input_api = input(f"PurveX API URL [{args.api_url}]: ").strip()
             if input_api:
                 args.api_url = input_api
-            input_env = input(f"Environment [lab/dev/prod] ({args.env}): ").strip()
-            if input_env:
-                args.env = input_env
             api_token = getpass("Registration token: ")
         except Exception:
             pass

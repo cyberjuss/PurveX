@@ -321,8 +321,51 @@ class SIEMConnectionCreate(SIEMConnectionBase):
 
 class SIEMConnection(SIEMConnectionBase):
     id: int
+    status: Optional[str] = None
+    credentials_present: bool = False
 
     model_config = ConfigDict(from_attributes=True)
+
+class SIEMAlert(BaseModel):
+    alert_id: Optional[str] = None
+    rule_id: Optional[str] = None
+    rule_name: Optional[str] = None
+    severity: Optional[str] = None
+    status: Optional[str] = None
+    fired_at: Optional[datetime] = None
+    last_seen_at: Optional[datetime] = None
+    source: Optional[str] = None
+    raw_event: Optional[str] = None
+    evidence_url: Optional[str] = None
+
+class SIEMEvent(BaseModel):
+    event_id: Optional[str] = None
+    event_time: Optional[datetime] = None
+    severity: Optional[str] = None
+    source: Optional[str] = None
+    host: Optional[str] = None
+    user: Optional[str] = None
+    action: Optional[str] = None
+    raw_event: Optional[str] = None
+    evidence_url: Optional[str] = None
+
+class SIEMRule(BaseModel):
+    rule_id: Optional[str] = None
+    name: Optional[str] = None
+    enabled: Optional[bool] = None
+    severity: Optional[str] = None
+    schedule: Optional[str] = None
+    last_run_at: Optional[datetime] = None
+    query: Optional[str] = None
+    evidence_url: Optional[str] = None
+
+class SIEMHealth(BaseModel):
+    status: str
+    auth_status: Optional[str] = None
+    ingestion_lag_seconds: Optional[int] = None
+    last_event_at: Optional[datetime] = None
+    last_alert_at: Optional[datetime] = None
+    message: Optional[str] = None
 
 class EnvironmentRunnerConfigBase(BaseModel):
     organization_id: Optional[int] = None
@@ -335,13 +378,15 @@ class EnvironmentRunnerConfigBase(BaseModel):
     key_path: Optional[str] = None
     allowed_test_types: str = '["Atomic only"]'
     max_concurrent_tests: int = 1
-    heartbeat_interval_seconds: int = 60
+    heartbeat_interval_seconds: int = 5
     alert_offline_minutes: int = 5
     os: Optional[str] = None
     ip_address: Optional[str] = None
     agent_version: Optional[str] = None
     last_check_in: Optional[datetime] = None
     status: Optional[str] = None
+    runner_token_last_rotated_at: Optional[datetime] = None
+    runner_token_expires_at: Optional[datetime] = None
 
 class EnvironmentRunnerHeartbeat(BaseModel):
     os: Optional[str] = None
@@ -356,6 +401,26 @@ class EnvironmentRunnerConfig(EnvironmentRunnerConfigBase):
     id: int
 
     model_config = ConfigDict(from_attributes=True)
+
+class EnvironmentRunnerRegistrationResponse(EnvironmentRunnerConfig):
+    runner_token: Optional[str] = None
+
+class AgentCommand(BaseModel):
+    id: int
+    runner_id: int
+    command_type: str
+    status: str
+    payload: Optional[str] = None
+    message: Optional[str] = None
+    created_at: Optional[datetime] = None
+    acknowledged_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+class AgentCommandAck(BaseModel):
+    status: str
+    message: Optional[str] = None
 
 class TestingPolicyBase(BaseModel):
     organization_id: Optional[int] = None

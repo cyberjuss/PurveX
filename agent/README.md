@@ -119,7 +119,7 @@ $env:PURVEX_USERNAME = "purvex"
 
 ## Getting an API Token
 
-You need a one-time registration token. You can obtain it from:
+You need a one-time registration token. Tokens are single-use and short-lived (by default 60 minutes). You can obtain one from:
 
 1. The PurveX web interface (Settings → API Tokens)
 2. Your PurveX administrator
@@ -143,6 +143,16 @@ After registration, you can verify the agent was registered by:
 1. Checking the PurveX web interface: Settings → Test Runners
 2. Using the API: `GET /api/settings/environment-runners`
 3. The script will display the Runner ID upon successful registration
+
+## Token Rotation
+
+Admins can rotate a runner token to force re-registration:
+
+```
+POST /settings/environment-runners/{runner_id}/rotate-token
+```
+
+The response includes a new one-time token and expiration timestamp.
 
 ## Troubleshooting
 

@@ -18,6 +18,8 @@ interface SIEMConnection {
   url: string;
   auth_type: string;
   credentials?: string; // Stored securely, maybe not directly editable here
+  credentials_present?: boolean;
+  status?: string;
   last_validated_at?: string;
   default_windows_index?: string;
   default_linux_index?: string;
@@ -77,18 +79,23 @@ export default function SiemSettingsPage() {
       return;
     }
 
+    const payload: Partial<SIEMConnection> = { ...formData };
+    if (!payload.credentials || payload.credentials.trim().length === 0) {
+      delete payload.credentials;
+    }
+
     setIsSaving(true);
     setError(null);
     try {
       if (editingConnection) {
         await apiFetch(`/settings/siem-connections/${editingConnection.id}`, {
           method: "PUT",
-          body: JSON.stringify(formData),
+          body: JSON.stringify(payload),
         });
       } else {
         await apiFetch("/settings/siem-connections", {
           method: "POST",
-          body: JSON.stringify(formData),
+          body: JSON.stringify(payload),
         });
       }
       setFormData({
@@ -122,7 +129,7 @@ export default function SiemSettingsPage() {
 
   const handleEdit = (connection: SIEMConnection) => {
     setEditingConnection(connection);
-    setFormData(connection);
+    setFormData({ ...connection, credentials: "" });
     setShowAddForm(true);
   };
 
@@ -214,12 +221,18 @@ export default function SiemSettingsPage() {
                     <div className="grid gap-3 md:grid-cols-2">
                       <div className="space-y-2">
                         <Label htmlFor="name">Connection name</Label>
-                        <Input id="name" value={formData.name || ""} onChange={handleFormChange} required />
+                        <Input
+                          id="name"
+                          value={formData.name || ""}
+                          onChange={handleFormChange}
+                          required
+                          className="bg-white text-slate-900 border-slate-200 placeholder:text-slate-400"
+                        />
                       </div>
                       <div className="space-y-2">
                         <Label htmlFor="siem_type">SIEM type</Label>
                         <Select onValueChange={(value: string) => handleSelectChange("siem_type", value)} value={formData.siem_type}>
-                          <SelectTrigger>
+                          <SelectTrigger className="bg-white text-slate-900 border-slate-200">
                             <SelectValue placeholder="Select SIEM type" />
                           </SelectTrigger>
                           <SelectContent>
@@ -231,7 +244,13 @@ export default function SiemSettingsPage() {
                       </div>
                       <div className="space-y-2 md:col-span-2">
                         <Label htmlFor="url">URL / cluster / workspace</Label>
-                        <Input id="url" value={formData.url || ""} onChange={handleFormChange} required />
+                        <Input
+                          id="url"
+                          value={formData.url || ""}
+                          onChange={handleFormChange}
+                          required
+                          className="bg-white text-slate-900 border-slate-200 placeholder:text-slate-400"
+                        />
                       </div>
                     </div>
                   </div>
@@ -241,7 +260,7 @@ export default function SiemSettingsPage() {
                       <div className="space-y-2">
                         <Label htmlFor="auth_type">Authentication type</Label>
                         <Select onValueChange={(value: string) => handleSelectChange("auth_type", value)} value={formData.auth_type}>
-                          <SelectTrigger>
+                          <SelectTrigger className="bg-white text-slate-900 border-slate-200">
                             <SelectValue placeholder="Select auth type" />
                           </SelectTrigger>
                           <SelectContent>
@@ -259,6 +278,7 @@ export default function SiemSettingsPage() {
                           value={formData.credentials || ""}
                           onChange={handleFormChange}
                           placeholder="Token, API key, or password"
+                          className="bg-white text-slate-900 border-slate-200 placeholder:text-slate-400"
                         />
                         <p className="text-[11px] text-muted-foreground hidden" />
                       </div>
@@ -268,7 +288,13 @@ export default function SiemSettingsPage() {
                   <div className="space-y-2">
                     <div className="space-y-2">
                       <Label htmlFor="log_marker_pattern">Log marker pattern (e.g., purvex_*)</Label>
-                      <Input id="log_marker_pattern" value={formData.log_marker_pattern || ""} onChange={handleFormChange} required />
+                      <Input
+                        id="log_marker_pattern"
+                        value={formData.log_marker_pattern || ""}
+                        onChange={handleFormChange}
+                        required
+                        className="bg-white text-slate-900 border-slate-200 placeholder:text-slate-400"
+                      />
                       <p className="text-[11px] text-muted-foreground">
                         PurveX tags test runs with this prefix so your SIEM searches stay clean and auditable.
                       </p>
@@ -346,8 +372,20 @@ export default function SiemSettingsPage() {
                         <h4 className="text-base font-semibold text-slate-100 mt-1">{conn.name}</h4>
                         <p className="text-xs text-slate-400 mt-1">{conn.siem_type}</p>
                       </div>
-                      <span className="inline-flex items-center rounded-full border border-emerald-400/30 bg-emerald-400/10 px-2.5 py-1 text-[10px] font-semibold text-emerald-300">
-                        Connected
+                      <span
+                        className={`inline-flex items-center rounded-full border px-2.5 py-1 text-[10px] font-semibold ${
+                          conn.status === "connected" || conn.status === "active"
+                            ? "border-emerald-400/30 bg-emerald-400/10 text-emerald-300"
+                            : conn.credentials_present
+                              ? "border-sky-400/30 bg-sky-400/10 text-sky-300"
+                              : "border-amber-400/30 bg-amber-400/10 text-amber-300"
+                        }`}
+                      >
+                        {conn.status === "connected" || conn.status === "active"
+                          ? "Connected"
+                          : conn.credentials_present
+                            ? "Configured"
+                            : "Not configured"}
                       </span>
                     </div>
 

@@ -578,7 +578,7 @@ function RunTestPageContent() {
     }
   }, [testType, techniqueFromExplore, atomicNameFromExplore]);
 
-  // Load MITRE techniques lazily when needed for validation mode
+  // Load MITRE techniques lazily when needed for validation mode or explore coverage
   useEffect(() => {
     async function loadMitre() {
       if (mitreTechniques.length > 0) return;
@@ -593,7 +593,7 @@ function RunTestPageContent() {
       }
     }
 
-    if (testType === "detection_validation" && selectedDetection) {
+    if ((testType === "detection_validation" && selectedDetection) || techniqueFromExplore) {
       loadMitre();
     }
   }, [testType, selectedDetection, mitreTechniques.length]);
@@ -838,9 +838,19 @@ function RunTestPageContent() {
 
   const scenarioNameFromExplore = atomicNameFromExplore || atomicScenarioHint?.name || "";
   const scenarioDescriptionFromExplore = atomicScenarioHint?.description?.trim() || "";
+  const getTechniqueLabel = (techniqueId?: string | null) => {
+    if (!techniqueId) return null;
+    const exact = mitreTechniques.find((t) => t.id === techniqueId);
+    if (exact) return `${exact.id} · ${exact.name}`;
+    const base = techniqueId.split(".")[0];
+    const baseMatch = mitreTechniques.find((t) => t.id === base);
+    if (baseMatch) return `${techniqueId} · ${baseMatch.name}`;
+    return techniqueId;
+  };
+  const techniqueLabelFromExplore = getTechniqueLabel(techniqueFromExplore);
   const scenarioCardTitle =
     scenarioNameFromExplore ||
-    (techniqueFromExplore ? `Technique ${techniqueFromExplore}` : "Selected scenario");
+    (techniqueLabelFromExplore ? `Technique ${techniqueLabelFromExplore}` : "Selected scenario");
 
   const step1Done = !!testType;
   const step2Done =
@@ -1409,10 +1419,10 @@ function RunTestPageContent() {
                               Scenario: {scenarioCardTitle}
                           </p>
                             <p className="text-xs text-slate-600 mt-0.5">
-                              Technique: {techniqueFromExplore}
+                              Technique ID: {techniqueFromExplore}
                               {scenarioNameFromExplore && (
                                 <span className="ml-2 text-slate-700">
-                                  — {scenarioNameFromExplore}
+                                  • {scenarioNameFromExplore}
                                 </span>
                               )}
                             </p>

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { usePathname } from "next/navigation";
 import Link from "next/link";
 import Image from "next/image";
@@ -9,7 +9,7 @@ import { Sidebar } from "@/components/layout/sidebar";
 import { TopHeader } from "@/components/layout/top-header";
 import { ToastProvider } from "@/components/ui/toast";
 import { LoadingSplash } from "@/components/loading-splash";
-import { Inter, Space_Grotesk } from "next/font/google";
+import { Manrope, Sora } from "next/font/google";
 import { cn } from "@/lib/utils";
 import { getApiBaseCandidates } from "@/lib/api";
 import { UnifiedPageHeader } from "@/components/layout/unified-page-header";
@@ -25,16 +25,16 @@ const formatSegmentTitle = (value: string) => {
     .join(" ");
 };
 
-// Configure Inter for body text - mature, professional, highly readable
-const inter = Inter({
+// Configure Manrope for body text - premium SaaS readability
+const inter = Manrope({
   subsets: ["latin"],
   display: "swap",
   variable: "--font-inter",
   weight: ["300", "400", "500", "600", "700"],
 });
 
-// Configure Space Grotesk for headings - youthful, modern, energetic
-const spaceGrotesk = Space_Grotesk({
+// Configure Sora for headings - crisp, modern, high-contrast
+const spaceGrotesk = Sora({
   subsets: ["latin"],
   display: "swap",
   variable: "--font-space-grotesk",
@@ -49,6 +49,10 @@ export default function RootLayout({
   const pathname = usePathname();
   const maxIdleMs = 60 * 60 * 1000;
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [prevRoute, setPrevRoute] = useState<string | null>(null);
+  const [prevChildren, setPrevChildren] = useState<React.ReactNode | null>(null);
+  const lastChildrenRef = useRef<React.ReactNode | null>(null);
+  const prevPathRef = useRef<string | null>(null);
   const segments = pathname.split("/").filter(Boolean);
   const firstSegment = segments[0] || "dashboard";
   const heroMeta: Record<string, { label: string; title: string; subtitle?: string }> = {
@@ -135,6 +139,47 @@ export default function RootLayout({
   useEffect(() => {
     setSidebarOpen(true);
   }, []);
+
+  useEffect(() => {
+    if (prevRoute === null) {
+      setPrevRoute(pathname);
+      prevPathRef.current = pathname;
+      lastChildrenRef.current = children;
+      return;
+    }
+    if (prevPathRef.current !== pathname) {
+      setPrevChildren(lastChildrenRef.current);
+      const timeout = setTimeout(() => {
+        setPrevChildren(null);
+      }, 240);
+      prevPathRef.current = pathname;
+      setPrevRoute(pathname);
+      lastChildrenRef.current = children;
+      return () => clearTimeout(timeout);
+    }
+    lastChildrenRef.current = children;
+  }, [pathname, prevRoute]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const root = document.getElementById("main-content");
+    if (!root) return;
+    const elements = Array.from(root.querySelectorAll(".reveal-on-scroll"));
+    if (elements.length === 0) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          if (entry.isIntersecting) {
+            entry.target.classList.add("is-visible");
+            observer.unobserve(entry.target);
+          }
+        });
+      },
+      { rootMargin: "0px 0px -10% 0px", threshold: 0.12 }
+    );
+    elements.forEach((el) => observer.observe(el));
+    return () => observer.disconnect();
+  }, [pathname, children]);
   const lastSegment = segments[segments.length - 1] || firstSegment;
   const isLoginPage = pathname === "/login";
   const isFullBleedPage = ["/agent"].some((route) => pathname.startsWith(route));
@@ -416,7 +461,18 @@ export default function RootLayout({
                         className="mt-0.5 mb-2 pl-0.5"
                       />
                     )}
-                    <div className="min-h-0 flex flex-col">{children}</div>
+                    <div className="min-h-0 flex flex-col route-transition-wrap">
+                      {prevChildren && (
+                        <div
+                          className="route-layer route-fade-out"
+                          style={{ position: "absolute", inset: 0 }}
+                          aria-hidden
+                        >
+                          {prevChildren}
+                        </div>
+                      )}
+                      <div className="route-layer route-fade-in stagger-children">{children}</div>
+                    </div>
                   </div>
                 </div>
               </main>

@@ -32,6 +32,14 @@ if ([string]::IsNullOrEmpty($Env)) {
     $Env = "lab"
 }
 
+$envProvided = $PSBoundParameters.ContainsKey('Env') -or (-not [string]::IsNullOrEmpty($env:PURVEX_ENV))
+if (-not $envProvided) {
+    $inputEnv = Read-Host "Environment [lab/dev/prod] ($Env)"
+    if (-not [string]::IsNullOrEmpty($inputEnv)) {
+        $Env = $inputEnv
+    }
+}
+
 if ([string]::IsNullOrEmpty($Hostname)) {
     $Hostname = $env:COMPUTERNAME
 }
@@ -44,10 +52,6 @@ if ([string]::IsNullOrEmpty($Token)) {
     $inputApi = Read-Host "PurveX API URL [$ApiUrl]"
     if (-not [string]::IsNullOrEmpty($inputApi)) {
         $ApiUrl = $inputApi
-    }
-    $inputEnv = Read-Host "Environment [lab/dev/prod] ($Env)"
-    if (-not [string]::IsNullOrEmpty($inputEnv)) {
-        $Env = $inputEnv
     }
     $Token = Read-Host "Registration token"
 }
@@ -81,7 +85,7 @@ $RegistrationData = @{
     auth_method = "key"
     allowed_test_types = '["Atomic only"]'
     max_concurrent_tests = 1
-    heartbeat_interval_seconds = 60
+    heartbeat_interval_seconds = 5
     alert_offline_minutes = 5
 } | ConvertTo-Json
 

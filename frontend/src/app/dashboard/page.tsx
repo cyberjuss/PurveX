@@ -739,9 +739,11 @@ export default function DashboardPage() {
                                 {/* Status */}
                                 <div>
                                   <p className="text-sm font-semibold text-slate-700">
-                                    {runnersFullyConfigured
-                                      ? `${systemHealth.runnersActive} of ${systemHealth.runnersTotal || 1} completed`
-                                      : `${systemHealth.runnersActive} of ${systemHealth.runnersTotal || 1} active`}
+                                    {systemHealth.runnersTotal === 0
+                                      ? "No agents connected"
+                                      : runnersFullyConfigured
+                                        ? `${systemHealth.runnersActive} of ${systemHealth.runnersTotal} completed`
+                                        : `${systemHealth.runnersActive} of ${systemHealth.runnersTotal} active`}
                                   </p>
                                 </div>
                                 
@@ -1059,9 +1061,9 @@ export default function DashboardPage() {
           </div>
 
           {/* Main Content Grid - Enhanced Layout */}
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
             {/* Detection Lifecycle Summary */}
-            <Card className="lg:col-span-2">
+            <Card className="lg:col-span-3">
               <CardHeader className="border-b border-slate-800/50 pb-4">
                 <div className="flex items-center justify-between">
                   <div>
@@ -1114,8 +1116,8 @@ export default function DashboardPage() {
             </Card>
 
             {/* Recent Activity - Enhanced */}
-            <Card>
-              <CardHeader className="border-b border-slate-800/50 pb-4">
+            <Card className="lg:col-span-2 border border-white/60 bg-white/85 backdrop-blur shadow-[0_18px_45px_rgba(15,23,42,0.08)]">
+              <CardHeader className="border-b border-slate-200 pb-4">
                 <CardTitle className="text-xl font-display font-bold text-slate-900 flex items-center gap-2">
                   <Activity className="h-5 w-5 text-sky-600" />
                   Recent Activity
@@ -1130,8 +1132,8 @@ export default function DashboardPage() {
                         <Activity className="h-8 w-8 text-sky-400" />
                       </div>
                     </div>
-                    <p className="text-center text-base font-semibold text-white mb-1">No recent activity</p>
-                    <p className="text-center text-sm text-slate-400 mb-6 max-w-xs mx-auto">
+                    <p className="text-center text-base font-semibold text-slate-900 mb-1">No recent activity</p>
+                    <p className="text-center text-sm text-slate-600 mb-6 max-w-xs mx-auto">
                       Start validating your detections by running your first atomic red team test
                     </p>
                     <div className="flex justify-center">
@@ -1152,7 +1154,7 @@ export default function DashboardPage() {
                       <Link
                         key={activity.id}
                         href={`/tests/${activity.id}`}
-                        className="group flex gap-3 p-3 rounded-lg bg-slate-800/30 border border-slate-700/50 hover:border-slate-600/50 hover:bg-slate-800/50 transition-colors"
+                        className="group flex gap-3 p-3 rounded-lg bg-white/80 border border-slate-200 hover:border-sky-200 hover:bg-white transition-colors shadow-sm"
                       >
                         <div className="flex flex-col items-center">
                           <div className={cn(
@@ -1160,23 +1162,23 @@ export default function DashboardPage() {
                             activity.status === "FAIL" && "bg-red-400",
                             activity.status === "PASS" && "bg-emerald-400",
                             activity.status === "INCONCLUSIVE" && "bg-amber-400",
-                            "bg-slate-500"
+                            "bg-slate-400"
                           )} />
                           {index < activities.length - 1 && (
-                            <div className="flex-1 w-px bg-slate-700 mt-1" />
+                            <div className="flex-1 w-px bg-slate-200 mt-1" />
                           )}
                         </div>
                         <div className="flex-1 min-w-0">
-                          <p className="text-sm font-display font-semibold text-white truncate group-hover:text-sky-300 transition-colors">
+                          <p className="text-sm font-display font-semibold text-slate-900 line-clamp-2 leading-snug group-hover:text-sky-600 transition-colors">
                             {activity.title}
                           </p>
-                          <p className="text-xs font-body text-slate-400 mt-0.5">{activity.subtitle}</p>
+                          <p className="text-xs font-body text-slate-600 mt-0.5">{activity.subtitle}</p>
                           <p className="text-xs font-body text-slate-500 mt-1">{activity.time}</p>
                         </div>
-                        <ArrowRight className="h-4 w-4 text-slate-500 group-hover:text-slate-300 transition-colors flex-shrink-0 mt-1" />
+                        <ArrowRight className="h-4 w-4 text-slate-400 group-hover:text-slate-600 transition-colors flex-shrink-0 mt-1" />
                       </Link>
                     ))}
-                    <Button variant="outline" size="sm" className="w-full mt-4 text-xs h-8 border-slate-700/50 bg-slate-800/50 text-slate-300 hover:bg-slate-700/50" asChild>
+                    <Button variant="outline" size="sm" className="w-full mt-4 text-xs h-8 border-slate-300 bg-white text-slate-700 hover:bg-slate-50" asChild>
                       <Link href="/tests">
                         View All Tests
                         <ArrowRight className="h-4 w-4 ml-2" />
