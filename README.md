@@ -14,11 +14,11 @@
 ---
 
 ## ✨ What PurveX delivers
-- ✅ **Validate detections** with real telemetry and outcomes
-- 🧭 **Find coverage gaps** across MITRE ATT&CK techniques
-- 📡 **Verify telemetry health** (Are logs arriving?)
-- 🧪 **Run tests safely** in lab/dev/prod with agent runners
-- 📊 **Track results clearly** with evidence and summaries
+- **Validate detections** with real telemetry and outcomes
+- **Find coverage gaps** across MITRE ATT&CK techniques
+- **Verify telemetry health** (Are logs arriving?)
+- **Run tests safely** in lab/dev/prod with agent runners
+- **Track results clearly** with evidence and summaries
 
 ---
 
@@ -87,18 +87,18 @@ Minimum required data (secure by design):
 - 🧾 **Events/telemetry** (raw or normalized evidence)
 
 Optional but supported:
-- 📚 **Rules inventory** (enabled detections)
-- 🔗 **Evidence links** (deep links back to SIEM)
-- ❤️ **Health** (ingestion lag + auth status)
+- **Rules inventory** (enabled detections)
+- **Evidence links** (deep links back to SIEM)
+- **Health** (ingestion lag + auth status)
 
 > 🛡️ Credentials are stored server‑side only and are **never returned** by the API.
 
 ---
 
 ## 🤖 Agent / runner behavior
-- 🫀 Agent heartbeats every few seconds
-- ⏯️ Pause/Resume updates status in near‑real time
-- ⛔ Tests are **blocked** if the runner is paused
+- Agent heartbeats every few seconds
+- Pause/Resume updates status in near‑real time
+- Tests are **blocked** if the runner is paused
 
 ---
 
@@ -112,14 +112,6 @@ Old agent script is still calling `/settings/.../heartbeat`. Update to the lates
 
 **🧩 Next.js version errors**  
 Ensure **Node 20.9+**.
-
----
-
-## 🔒 Security notes
-- 🔐 Secrets are never echoed back
-- 🧱 Permissions enforce least privilege
-- ⏱️ Tokens are short‑lived where possible
-- 🧼 Input sanitization + validation everywhere
 
 ---
 
