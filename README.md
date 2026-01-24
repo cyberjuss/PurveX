@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="./purvex_logo.png" alt="PurveX" width="140" />
+  <img src="./frontend/public/purvex_logo.png" alt="PurveX" width="140" />
   <h1>PurveX</h1>
   <p><strong>Detection validation, done right.</strong></p>
   <p>Calm, fast, and safe purple‑team validation. Run controlled tests, verify SIEM telemetry, and close detection gaps with confidence.</p>
