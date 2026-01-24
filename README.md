@@ -1,27 +1,35 @@
-# PurveX
+<div align="center">
+  <img src="./purvex_logo.png" alt="PurveX" width="140" />
+  <h1>PurveX</h1>
+  <p><strong>Detection validation, done right.</strong></p>
+  <p>Calm, fast, and safe purple‑team validation. Run controlled tests, verify SIEM telemetry, and close detection gaps with confidence.</p>
 
-**Detection validation, done right.**  
-PurveX is a calm, fast, and safe purple‑team platform that lets you run controlled tests in a sandbox, verify SIEM telemetry, and close detection gaps with confidence.
+  <p>
+    <img src="https://img.shields.io/badge/Status-Active-success" alt="Status" />
+    <img src="https://img.shields.io/badge/Stack-FastAPI%20%2B%20Next.js-blue" alt="Stack" />
+    <img src="https://img.shields.io/badge/License-Private-lightgrey" alt="License" />
+  </p>
+</div>
 
 ---
 
-## What you can do
-- **Validate detections** against real telemetry (and see what actually fired)
-- **Find coverage gaps** for MITRE ATT&CK techniques
-- **Verify telemetry health** (Are logs even arriving?)
-- **Run tests safely** using lab/dev/prod runners
-- **Track results** with clean, explainable evidence
+## ✨ What PurveX delivers
+- ✅ **Validate detections** with real telemetry and outcomes
+- 🧭 **Find coverage gaps** across MITRE ATT&CK techniques
+- 📡 **Verify telemetry health** (Are logs arriving?)
+- 🧪 **Run tests safely** in lab/dev/prod with agent runners
+- 📊 **Track results clearly** with evidence and summaries
 
 ---
 
-## Quickstart (Linux)
+## 🚀 Quickstart (Linux)
 
-### Requirements
+### ✅ Requirements
 - **Python 3.11+**
 - **Node.js 20.9+**
 - **npm**
 
-### One‑time setup
+### ⚙️ One‑time setup
 ```bash
 git clone <your-private-repo-url>
 cd PurveX
@@ -29,7 +37,7 @@ chmod +x scripts/setup_purvex.sh
 ./scripts/setup_purvex.sh
 ```
 
-### Start the platform
+### ▶️ Start the platform
 ```bash
 chmod +x scripts/start_purvex.sh
 ./scripts/start_purvex.sh
@@ -40,78 +48,86 @@ Login: `admin / admin`
 
 ---
 
-## First‑time onboarding (recommended order)
+## 🧭 First‑time onboarding (best flow)
 
-1) **Start PurveX**
-- Run `./scripts/start_purvex.sh`
+1) **▶️ Start PurveX**
+- `./scripts/start_purvex.sh`
 
-2) **Create a strong JWT secret** (production‑style)
-- The start script will guide you if it’s missing.
+2) **🔐 Set a strong JWT secret**
+- The start script will guide you if missing
 
-3) **Connect a SIEM**
+3) **🔌 Connect a SIEM**
 - Go to **Settings → SIEM**
-- Add Splunk or Sentinel connection (credentials are stored securely, never returned)
+- Add Splunk or Sentinel credentials
 
-4) **Register a runner (agent)**
+4) **🤖 Register a runner (agent)**
 - Go to **Settings → Test Runner**
-- Download the registration script for your OS
+- Download the script for your OS
 - Run it on the target endpoint
 
-5) **Run your first test**
+5) **🧪 Run your first test**
 - Go to **Tests → Run Test**
-- Choose a test mode (Validate / Coverage / Telemetry)
-- Select environment + runner, then execute
+- Choose a mode → pick environment → run
 
 ---
 
-## Architecture (simple mental model)
-- **Frontend**: Next.js UI on `http://localhost:1120`
-- **Backend**: FastAPI on `http://127.0.0.1:8001`
-- **DB**: SQLite (`purvex.db`) for local/dev
+## 🧱 Architecture at a glance
+
+| Layer | Tech | URL |
+|------|------|-----|
+| 🎨 Frontend | Next.js | `http://localhost:1120` |
+| ⚙️ Backend | FastAPI | `http://127.0.0.1:8001` |
+| 🗄️ Database | SQLite | `purvex.db` |
 
 ---
 
-## SIEM connections (Splunk + Sentinel)
-PurveX pulls the minimum required data securely:
-- **Detections/alerts** (what fired, when, severity, rule link)
-- **Events/telemetry** (raw or normalized event evidence)
+## 🔌 SIEM integration (Splunk + Sentinel)
+Minimum required data (secure by design):
+- 🔥 **Detections/alerts** (what fired, when, severity, rule mapping)
+- 🧾 **Events/telemetry** (raw or normalized evidence)
 
 Optional but supported:
-- **Rules inventory** (enabled detections)
-- **Evidence links** (deep links back to SIEM)
-- **Health** (ingestion lag + auth status)
+- 📚 **Rules inventory** (enabled detections)
+- 🔗 **Evidence links** (deep links back to SIEM)
+- ❤️ **Health** (ingestion lag + auth status)
 
-Credentials are stored server‑side only and **never returned** by the API.
-
----
-
-## Agent / Runner behavior
-- The agent **heartbeats** and **polls commands** (pause/resume) every few seconds
-- Runner status updates from **online → pausing/paused → resuming/online**
-- Test execution is **blocked** if a runner is paused
+> 🛡️ Credentials are stored server‑side only and are **never returned** by the API.
 
 ---
 
-## Common issues (fast fixes)
-
-**UI says “Resuming” too long**
-- Re‑download the latest agent script and restart the agent
-
-**Heartbeat 422 errors**
-- Your agent is still hitting `/settings/.../heartbeat` (old script). Update to the latest script.
-
-**Next.js version errors**
-- Ensure **Node 20.9+**
+## 🤖 Agent / runner behavior
+- 🫀 Agent heartbeats every few seconds
+- ⏯️ Pause/Resume updates status in near‑real time
+- ⛔ Tests are **blocked** if the runner is paused
 
 ---
 
-## Security notes
-- Credentials are **not echoed** back from APIs
-- Permissions enforce **least privilege**
-- Tokens are short‑lived where possible
-- Rate‑limit and validation hooks are in place for abuse protection
+## ✅ Common quick fixes
+
+**🔄 UI stuck on “Resuming”**  
+Re‑download the latest agent script and restart the agent service.
+
+**⚠️ Heartbeat 422 errors**  
+Old agent script is still calling `/settings/.../heartbeat`. Update to the latest script.
+
+**🧩 Next.js version errors**  
+Ensure **Node 20.9+**.
 
 ---
 
-## Stop
+## 🔒 Security notes
+- 🔐 Secrets are never echoed back
+- 🧱 Permissions enforce least privilege
+- ⏱️ Tokens are short‑lived where possible
+- 🧼 Input sanitization + validation everywhere
+
+---
+
+## 🛑 Stop
 Press `Ctrl+C` in the terminal running `./scripts/start_purvex.sh`.
+
+---
+
+<div align="center">
+  <p>Built for detection engineers and purple teams.</p>
+</div>
