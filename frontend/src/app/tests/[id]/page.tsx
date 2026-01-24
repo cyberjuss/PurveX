@@ -13,6 +13,8 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
+import { PageContainer } from "@/components/layout/page-container";
+import { PageHeader } from "@/components/layout/page-header";
 import {
   TestDetailResponse,
   TestArtifact,
@@ -66,13 +68,13 @@ function getSeverityBadgeClass(severity?: string) {
   switch ((severity || "").toLowerCase()) {
     case "critical":
     case "high":
-      return "bg-red-500/15 text-red-300 border border-red-500/40";
+      return "bg-red-100 text-red-700 border border-red-200";
     case "medium":
-      return "bg-orange-500/15 text-orange-300 border border-orange-500/40";
+      return "bg-orange-100 text-orange-700 border border-orange-200";
     case "low":
-      return "bg-sky-500/15 text-sky-300 border border-sky-500/40";
+      return "bg-sky-100 text-sky-700 border border-sky-200";
     default:
-      return "bg-slate-700/40 text-slate-200 border border-slate-600/60";
+      return "bg-slate-100 text-slate-700 border border-slate-200";
   }
 }
 
@@ -148,7 +150,7 @@ export default function TestDetailPage() {
   if (loading) {
     return (
       <div className="p-6 space-y-4">
-        <p className="text-slate-400 text-sm">Loading test details...</p>
+        <p className="text-slate-500 text-sm">Loading test details...</p>
       </div>
     );
   }
@@ -167,18 +169,19 @@ export default function TestDetailPage() {
   const sampleEvents = parseSampleEvents(artifact);
 
   return (
-    <div className="p-6 space-y-6">
-      <div className="flex items-center justify-between gap-3">
-          <div>
-            <h1 className="text-2xl font-semibold text-slate-900">Test #{data.id}</h1>
-            <p className="text-xs text-slate-600">
-              {detection?.title || "No Detection"} | {data.technique_id || "Unknown"} | {data.environment.toUpperCase()}
-            </p>
-        </div>
-        <Badge className={getResultBadgeClass(data.result || data.status)}>
-          {data.result || data.status}
-        </Badge>
-      </div>
+    <PageContainer maxWidth="xl">
+      <PageHeader
+        eyebrow="Execution detail"
+        title={`Test #${data.id}`}
+        subtitle={`${detection?.title || "No Detection"} · ${data.technique_id || "Unknown"} · ${data.environment.toUpperCase()}`}
+        icon={<Activity className="h-5 w-5" />}
+        actions={
+          <Badge className={getResultBadgeClass(data.result || data.status)}>
+            {data.result || data.status}
+          </Badge>
+        }
+      />
+      <div className="space-y-6">
 
       {/* Section A - Test Summary */}
       <Card className="elite-card ">
@@ -196,62 +199,62 @@ export default function TestDetailPage() {
           </div>
         </CardHeader>
         <CardContent>
-          <div className="grid gap-4 md:grid-cols-3 lg:grid-cols-4 text-sm text-slate-200">
+          <div className="grid gap-4 md:grid-cols-3 lg:grid-cols-4 text-sm text-slate-700">
             <div>
-              <div className="text-xs text-slate-400 uppercase tracking-[0.2em]">Result</div>
+              <div className="text-xs text-slate-500 uppercase tracking-[0.2em]">Result</div>
               <div className="mt-1 flex items-center gap-2">
                 <Badge className={getResultBadgeClass(data.result || data.status)}>
                   {data.result || data.status}
                 </Badge>
                 {typeof data.score === "number" && (
-                  <span className="text-xs text-slate-300">
+                  <span className="text-xs text-slate-600">
                     Score <span className="font-semibold">{data.score}</span>/100
                   </span>
                 )}
               </div>
             </div>
             <div>
-              <div className="text-xs text-slate-400 uppercase tracking-[0.2em]">Technique</div>
+              <div className="text-xs text-slate-500 uppercase tracking-[0.2em]">Technique</div>
               <div className="mt-1 flex items-center gap-1">
-                <Target className="h-3 w-3 text-slate-400" />
+                <Target className="h-3 w-3 text-slate-500" />
                 <span>{data.technique_id || "Unknown"}</span>
               </div>
             </div>
             <div>
-              <div className="text-xs text-slate-400 uppercase tracking-[0.2em]">Marker</div>
-              <div className="mt-1 font-mono text-xs break-all text-slate-200">{data.marker}</div>
+              <div className="text-xs text-slate-500 uppercase tracking-[0.2em]">Marker</div>
+              <div className="mt-1 font-mono text-xs break-all text-slate-700">{data.marker}</div>
             </div>
             <div>
-              <div className="text-xs text-slate-400 uppercase tracking-[0.2em]">Environment</div>
-              <div className="mt-1 text-slate-200">{data.environment.toUpperCase()}</div>
+              <div className="text-xs text-slate-500 uppercase tracking-[0.2em]">Environment</div>
+              <div className="mt-1 text-slate-700">{data.environment.toUpperCase()}</div>
             </div>
             <div>
-              <div className="text-xs text-slate-400 uppercase tracking-[0.2em]">Endpoint</div>
-              <div className="mt-1 text-slate-200">
+              <div className="text-xs text-slate-500 uppercase tracking-[0.2em]">Endpoint</div>
+              <div className="mt-1 text-slate-700">
                 {data.endpoint || getTargetHostFromCommand(artifact?.atomic_command) || "—"}
               </div>
             </div>
             <div>
-              <div className="text-xs text-slate-400 uppercase tracking-[0.2em]">Started</div>
-              <div className="mt-1 flex items-center gap-1 text-slate-200">
-                <Clock className="h-3 w-3 text-slate-400" />
+              <div className="text-xs text-slate-500 uppercase tracking-[0.2em]">Started</div>
+              <div className="mt-1 flex items-center gap-1 text-slate-700">
+                <Clock className="h-3 w-3 text-slate-500" />
                 <span>{formatDate(data.started_at)}</span>
               </div>
             </div>
             <div>
-              <div className="text-xs text-slate-400 uppercase tracking-[0.2em]">Finished</div>
-              <div className="mt-1 flex items-center gap-1 text-slate-200">
-                <Clock className="h-3 w-3 text-slate-400" />
+              <div className="text-xs text-slate-500 uppercase tracking-[0.2em]">Finished</div>
+              <div className="mt-1 flex items-center gap-1 text-slate-700">
+                <Clock className="h-3 w-3 text-slate-500" />
                 <span>{formatDate(data.finished_at)}</span>
               </div>
             </div>
             {detection && (
               <div>
-                <div className="text-xs text-slate-400 uppercase tracking-[0.2em]">
+                <div className="text-xs text-slate-500 uppercase tracking-[0.2em]">
                   Last Alert Fired (PurveX)
                 </div>
-                <div className="mt-1 flex items-center gap-1 text-slate-200">
-                  <ShieldCheck className="h-3 w-3 text-slate-400" />
+                <div className="mt-1 flex items-center gap-1 text-slate-700">
+                  <ShieldCheck className="h-3 w-3 text-slate-500" />
                   <span>{formatDate(detection.last_alert_at as unknown as string)}</span>
                 </div>
               </div>
@@ -285,12 +288,12 @@ export default function TestDetailPage() {
               {testEvents.map((event) => (
                 <div key={event.id} className="flex gap-3">
                   <div className="mt-2 h-2 w-2 rounded-full bg-sky-400" />
-                  <div className="flex-1 rounded-lg border border-slate-800 bg-slate-950/60 px-4 py-3">
+                  <div className="flex-1 rounded-lg border border-slate-200 bg-slate-50 px-4 py-3">
                     <div className="flex flex-wrap items-center gap-2 text-xs">
                       <Badge className={getSeverityBadgeClass(event.severity)}>
                         {event.severity || "medium"}
                       </Badge>
-                      <span className="text-slate-400">
+                      <span className="text-slate-500">
                         {new Date(event.time || event.created_at || new Date()).toLocaleString()}
                       </span>
                     </div>
@@ -298,7 +301,7 @@ export default function TestDetailPage() {
                       {event.name || event.message || "Event"}
                     </div>
                     {event.host && (
-                      <div className="mt-1 text-xs text-slate-400">
+                      <div className="mt-1 text-xs text-slate-500">
                         Host: {event.host}
                       </div>
                     )}
@@ -337,13 +340,13 @@ export default function TestDetailPage() {
           <CardContent className="space-y-4 text-sm">
             <div className="grid gap-4 md:grid-cols-3">
               <div>
-                <div className="text-xs text-slate-400 uppercase tracking-[0.2em]">
+                <div className="text-xs text-slate-500 uppercase tracking-[0.2em]">
                   Detection Owner
                 </div>
-                <div className="mt-1 text-slate-200">{detection.owner || "Unassigned"}</div>
+                <div className="mt-1 text-slate-700">{detection.owner || "Unassigned"}</div>
               </div>
               <div>
-                <div className="text-xs text-slate-400 uppercase tracking-[0.2em]">
+                <div className="text-xs text-slate-500 uppercase tracking-[0.2em]">
                   Lifecycle Status
                 </div>
                 <div className="mt-1">
@@ -353,25 +356,25 @@ export default function TestDetailPage() {
                 </div>
               </div>
               <div>
-                <div className="text-xs text-slate-400 uppercase tracking-[0.2em]">
+                <div className="text-xs text-slate-500 uppercase tracking-[0.2em]">
                   SIEM Type
                 </div>
-                <div className="mt-1 text-slate-200 uppercase">{detection.siem_type || "Unknown"}</div>
+                <div className="mt-1 text-slate-700 uppercase">{detection.siem_type || "Unknown"}</div>
               </div>
             </div>
 
-            <Separator className="my-2 border-slate-800" />
+            <Separator className="my-2 border-slate-200" />
 
             <div className="space-y-2">
               <div className="flex items-center justify-between gap-2">
                 <div className="flex items-center gap-2">
-                  <FileJson className="h-4 w-4 text-slate-400" />
-                  <span className="text-xs uppercase tracking-[0.2em] text-slate-400">
+                  <FileJson className="h-4 w-4 text-slate-500" />
+                  <span className="text-xs uppercase tracking-[0.2em] text-slate-500">
                     SPL Query
                   </span>
                 </div>
               </div>
-              <pre className="mt-1 max-h-40 overflow-auto rounded-lg bg-slate-950/70 p-3 text-xs text-slate-100 border border-slate-800">
+              <pre className="mt-1 max-h-40 overflow-auto rounded-lg bg-slate-50 p-3 text-xs text-slate-700 border border-slate-200">
 {detection.siem_query || "No query available"}
               </pre>
             </div>
@@ -380,22 +383,22 @@ export default function TestDetailPage() {
               <div className="space-y-2">
                 <div className="flex items-center justify-between gap-2">
                   <div className="flex items-center gap-2">
-                    <FileJson className="h-4 w-4 text-slate-400" />
-                    <span className="text-xs uppercase tracking-[0.2em] text-slate-400">
+                    <FileJson className="h-4 w-4 text-slate-500" />
+                    <span className="text-xs uppercase tracking-[0.2em] text-slate-500">
                       Sigma Rule (YAML)
                     </span>
                   </div>
                   <Button
                     variant="ghost"
                     size="sm"
-                    className="text-xs text-slate-300 hover:text-white"
+                    className="text-xs text-slate-600 hover:text-slate-900"
                     onClick={() => setShowSigma(v => !v)}
                   >
                     {showSigma ? "Hide" : "Show"}
                   </Button>
                 </div>
                 {showSigma && (
-                  <pre className="mt-1 max-h-64 overflow-auto rounded-lg bg-slate-950/70 p-3 text-xs text-slate-100 border border-slate-800">
+                  <pre className="mt-1 max-h-64 overflow-auto rounded-lg bg-slate-50 p-3 text-xs text-slate-700 border border-slate-200">
 {detection.sigma_rule}
                   </pre>
                 )}
@@ -436,7 +439,7 @@ export default function TestDetailPage() {
         </CardHeader>
         <CardContent className="space-y-4 text-sm">
           <div>
-            <div className="text-xs text-slate-400 uppercase tracking-[0.2em] mb-1">
+            <div className="text-xs text-slate-500 uppercase tracking-[0.2em] mb-1">
               Atomic Command
             </div>
             <pre className="max-h-32 overflow-auto rounded-lg bg-slate-50 p-3 text-xs text-slate-700 border border-slate-200">
@@ -447,8 +450,8 @@ export default function TestDetailPage() {
           <div>
             <div className="flex items-center justify-between mb-1">
               <div className="flex items-center gap-2">
-                <FileJson className="h-4 w-4 text-slate-400" />
-                <span className="text-xs uppercase tracking-[0.2em] text-slate-400">
+                <FileJson className="h-4 w-4 text-slate-500" />
+                <span className="text-xs uppercase tracking-[0.2em] text-slate-500">
                   Sample SIEM Events
                 </span>
               </div>
@@ -496,7 +499,7 @@ export default function TestDetailPage() {
           ) : (
             <>
               <div>
-                <div className="text-xs text-slate-400 uppercase tracking-[0.2em] mb-1">
+                <div className="text-xs text-slate-500 uppercase tracking-[0.2em] mb-1">
                   AI Summary
                 </div>
                 <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs leading-relaxed text-slate-700 whitespace-pre-wrap">
@@ -508,7 +511,7 @@ export default function TestDetailPage() {
 
               <div className="grid gap-4 md:grid-cols-2">
                 <div>
-                  <div className="text-xs text-slate-400 uppercase tracking-[0.2em] mb-1">
+                  <div className="text-xs text-slate-500 uppercase tracking-[0.2em] mb-1">
                     Query / Rule Suggestion
                   </div>
                   <pre className="max-h-40 overflow-auto rounded-lg bg-slate-50 p-3 text-xs text-slate-700 border border-slate-200">
@@ -517,7 +520,7 @@ export default function TestDetailPage() {
                 </div>
                 <div className="space-y-2">
                   <div>
-                    <div className="text-xs text-slate-400 uppercase tracking-[0.2em] mb-1">
+                    <div className="text-xs text-slate-500 uppercase tracking-[0.2em] mb-1">
                       Root Cause Category
                     </div>
                     <div className="flex items-center gap-2 text-slate-700">
@@ -527,7 +530,7 @@ export default function TestDetailPage() {
                     </div>
                   </div>
                   <div>
-                    <div className="text-xs text-slate-400 uppercase tracking-[0.2em] mb-1">
+                    <div className="text-xs text-slate-500 uppercase tracking-[0.2em] mb-1">
                       AI Confidence
                     </div>
                     <div className="text-slate-700">
@@ -548,7 +551,7 @@ export default function TestDetailPage() {
         <Card className="elite-card ">
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-base">
-              <span className="inline-flex h-8 w-8 items-center justify-center rounded-xl bg-slate-500/15 text-slate-200 border border-slate-500/40">
+              <span className="inline-flex h-8 w-8 items-center justify-center rounded-xl bg-slate-500/15 text-slate-700 border border-slate-500/40">
                 <Clock className="h-4 w-4" />
               </span>
               <span>Detection Lifecycle Summary</span>
@@ -557,48 +560,49 @@ export default function TestDetailPage() {
               When this rule was created, last tested, and how it has behaved over time.
             </CardDescription>
           </CardHeader>
-          <CardContent className="grid gap-4 md:grid-cols-3 text-sm text-slate-200">
+          <CardContent className="grid gap-4 md:grid-cols-3 text-sm text-slate-700">
             <div>
-              <div className="text-xs text-slate-400 uppercase tracking-[0.2em]">Created</div>
+              <div className="text-xs text-slate-500 uppercase tracking-[0.2em]">Created</div>
               <div className="mt-1">{formatDate(detection.created_at as unknown as string)}</div>
             </div>
             <div>
-              <div className="text-xs text-slate-400 uppercase tracking-[0.2em]">Last Updated</div>
+              <div className="text-xs text-slate-500 uppercase tracking-[0.2em]">Last Updated</div>
               <div className="mt-1">{formatDate(detection.last_updated_at as unknown as string)}</div>
             </div>
             <div>
-              <div className="text-xs text-slate-400 uppercase tracking-[0.2em]">Last Tested</div>
+              <div className="text-xs text-slate-500 uppercase tracking-[0.2em]">Last Tested</div>
               <div className="mt-1">{formatDate(detection.last_tested_at as unknown as string)}</div>
             </div>
             <div>
-              <div className="text-xs text-slate-400 uppercase tracking-[0.2em]">Last Passed</div>
+              <div className="text-xs text-slate-500 uppercase tracking-[0.2em]">Last Passed</div>
               <div className="mt-1">{formatDate(detection.last_pass_at as unknown as string)}</div>
             </div>
             <div>
-              <div className="text-xs text-slate-400 uppercase tracking-[0.2em]">Last Failed</div>
+              <div className="text-xs text-slate-500 uppercase tracking-[0.2em]">Last Failed</div>
               <div className="mt-1">{formatDate(detection.last_fail_at as unknown as string)}</div>
             </div>
             <div>
-              <div className="text-xs text-slate-400 uppercase tracking-[0.2em]">
+              <div className="text-xs text-slate-500 uppercase tracking-[0.2em]">
                 Last Alert Fired (PurveX)
               </div>
               <div className="mt-1">{formatDate(detection.last_alert_at as unknown as string)}</div>
             </div>
             <div>
-              <div className="text-xs text-slate-400 uppercase tracking-[0.2em]">Last Reviewed</div>
+              <div className="text-xs text-slate-500 uppercase tracking-[0.2em]">Last Reviewed</div>
               <div className="mt-1">{formatDate(detection.last_reviewed_at as unknown as string)}</div>
             </div>
             <div>
-              <div className="text-xs text-slate-400 uppercase tracking-[0.2em]">Owner</div>
+              <div className="text-xs text-slate-500 uppercase tracking-[0.2em]">Owner</div>
               <div className="mt-1">{detection.owner || "Unassigned"}</div>
             </div>
             <div>
-              <div className="text-xs text-slate-400 uppercase tracking-[0.2em]">Rule Version</div>
+              <div className="text-xs text-slate-500 uppercase tracking-[0.2em]">Rule Version</div>
               <div className="mt-1">v1 (MVP - DAC versioning coming soon)</div>
             </div>
           </CardContent>
         </Card>
       )}
     </div>
+    </PageContainer>
   );
 }

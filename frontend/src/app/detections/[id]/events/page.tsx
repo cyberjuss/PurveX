@@ -120,11 +120,13 @@ export default function DetectionAlertsPage() {
   };
 
   return (
-    <PageContainer maxWidth="full" className="space-y-6 pt-2 pb-10">
+    <PageContainer maxWidth="full" className="space-y-6">
       <div className="w-full pl-0.5 pr-0 sm:pr-0">
         <PageHeader
+          eyebrow="Detection events"
           title={detection?.title || "Detection Events"}
           subtitle="Events tied to validation runs for this detection."
+          icon={<CalendarClock className="h-5 w-5" />}
         />
       </div>
 

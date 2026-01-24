@@ -199,8 +199,10 @@ export default function TestSchedulesPage() {
   return (
     <PageContainer>
       <PageHeader
+        eyebrow="Automation"
         title="Test Schedules"
         subtitle="Schedule tests to run automatically at specified times or intervals"
+        icon={<Calendar className="h-5 w-5" />}
         actions={
           <Dialog open={createDialogOpen} onOpenChange={setCreateDialogOpen}>
             <DialogTrigger asChild>
@@ -387,8 +389,8 @@ export default function TestSchedulesPage() {
         <CardHeader className="pb-4">
           <div className="flex items-center justify-between">
             <div>
-              <CardTitle className="text-lg font-semibold text-slate-100">Scheduled Tests</CardTitle>
-              <CardDescription className="text-slate-400 mt-1">
+              <CardTitle className="text-lg font-semibold text-slate-900">Scheduled Tests</CardTitle>
+              <CardDescription className="text-slate-500 mt-1">
                 {schedules.length} schedule{schedules.length !== 1 ? "s" : ""} configured
               </CardDescription>
             </div>
@@ -397,7 +399,7 @@ export default function TestSchedulesPage() {
                 variant="ghost"
                 size="sm"
                 onClick={fetchSchedules}
-                className="text-slate-400 hover:text-slate-200"
+                className="text-slate-500 hover:text-slate-900"
               >
                 <RefreshCw className="h-4 w-4 mr-2" />
                 Refresh
@@ -412,51 +414,51 @@ export default function TestSchedulesPage() {
             </div>
           ) : schedules.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-16 text-center">
-              <div className="rounded-full bg-slate-800/50 p-4 mb-4">
+              <div className="rounded-full bg-slate-100 p-4 mb-4">
                 <Calendar className="h-10 w-10 text-slate-500" />
               </div>
-              <p className="text-sm font-medium text-slate-300 mb-1">No test schedules configured</p>
+              <p className="text-sm font-medium text-slate-700 mb-1">No test schedules configured</p>
               <p className="text-xs text-slate-500 max-w-sm">
                 Create a schedule to run tests automatically at specified times or intervals
               </p>
             </div>
           ) : (
-            <div className="rounded-lg border border-slate-800/80 overflow-hidden bg-slate-950/30">
+            <div className="rounded-lg border border-slate-200 overflow-hidden bg-white">
               <Table>
                 <TableHeader>
-                  <TableRow className="border-slate-800/80 hover:bg-slate-900/30 bg-slate-900/40">
-                    <TableHead className="text-slate-300 font-semibold text-xs uppercase tracking-wider">Target</TableHead>
-                    <TableHead className="text-slate-300 font-semibold text-xs uppercase tracking-wider">Environment</TableHead>
-                    <TableHead className="text-slate-300 font-semibold text-xs uppercase tracking-wider">Schedule</TableHead>
-                    <TableHead className="text-slate-300 font-semibold text-xs uppercase tracking-wider">Next Run</TableHead>
-                    <TableHead className="text-slate-300 font-semibold text-xs uppercase tracking-wider">Status</TableHead>
-                    <TableHead className="text-slate-300 font-semibold text-xs uppercase tracking-wider text-right">Actions</TableHead>
+                  <TableRow className="border-slate-200 bg-slate-50">
+                    <TableHead className="text-slate-600 font-semibold text-xs uppercase tracking-wider">Target</TableHead>
+                    <TableHead className="text-slate-600 font-semibold text-xs uppercase tracking-wider">Environment</TableHead>
+                    <TableHead className="text-slate-600 font-semibold text-xs uppercase tracking-wider">Schedule</TableHead>
+                    <TableHead className="text-slate-600 font-semibold text-xs uppercase tracking-wider">Next Run</TableHead>
+                    <TableHead className="text-slate-600 font-semibold text-xs uppercase tracking-wider">Status</TableHead>
+                    <TableHead className="text-slate-600 font-semibold text-xs uppercase tracking-wider text-right">Actions</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {schedules.map((schedule) => {
                     const detection = detections.find(d => d.id === schedule.detection_id);
                     return (
-                      <TableRow key={schedule.id} className="border-slate-800/60 hover:bg-slate-900/40 transition-colors">
-                        <TableCell className="text-slate-200 py-4">
+                      <TableRow key={schedule.id} className="border-slate-200 hover:bg-slate-50 transition-colors">
+                        <TableCell className="text-slate-700 py-4">
                           <div className="flex items-center gap-2.5">
                             {detection ? (
                               <>
-                                <div className="rounded-md bg-blue-500/10 p-1.5">
-                                  <FileText className="h-3.5 w-3.5 text-blue-400" />
+                                <div className="rounded-md bg-blue-100 p-1.5">
+                                  <FileText className="h-3.5 w-3.5 text-blue-600" />
                                 </div>
                                 <div className="flex flex-col">
-                                  <span className="text-sm font-medium text-slate-100">{detection.title}</span>
+                                  <span className="text-sm font-medium text-slate-900">{detection.title}</span>
                                   <span className="text-xs text-slate-500">{detection.technique_id || "No technique"}</span>
                                 </div>
                               </>
                             ) : schedule.technique_id ? (
                               <>
-                                <div className="rounded-md bg-purple-500/10 p-1.5">
-                                  <TestTube className="h-3.5 w-3.5 text-purple-400" />
+                                <div className="rounded-md bg-purple-100 p-1.5">
+                                  <TestTube className="h-3.5 w-3.5 text-purple-600" />
                                 </div>
                                 <div className="flex flex-col">
-                                  <span className="text-sm font-medium text-slate-100">{schedule.technique_id}</span>
+                                  <span className="text-sm font-medium text-slate-900">{schedule.technique_id}</span>
                                   <span className="text-xs text-slate-500">MITRE Technique</span>
                                 </div>
                               </>
@@ -478,13 +480,13 @@ export default function TestSchedulesPage() {
                             {schedule.environment.toUpperCase()}
                           </Badge>
                         </TableCell>
-                        <TableCell className="text-slate-200 text-sm py-4">
+                        <TableCell className="text-slate-700 text-sm py-4">
                           <div className="flex items-center gap-2">
                             <Clock className="h-4 w-4 text-slate-500" />
                             <span className="font-medium">{getScheduleDescription(schedule)}</span>
                           </div>
                         </TableCell>
-                        <TableCell className="text-slate-200 text-sm py-4">
+                        <TableCell className="text-slate-700 text-sm py-4">
                           <span className="font-medium">{getNextRunDisplay(schedule)}</span>
                         </TableCell>
                         <TableCell className="py-4">

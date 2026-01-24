@@ -1,6 +1,6 @@
 from typing import List, Optional, Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, status, Request
+from fastapi import APIRouter, Depends, HTTPException, status, Request, Body, Response
 from datetime import datetime, timedelta, timezone
 import hashlib
 import secrets
@@ -234,6 +234,7 @@ async def create_siem_connection(
     # SECURITY: Sanitize all input fields
     from ..utils.sanitize_inputs import sanitize_model_inputs
     sanitized_data = sanitize_model_inputs(siem_create)
+    sanitized_data.pop("organization_id", None)
     
     org_id = require_org_id(current_user)
     db_siem = models.SIEMConnection(
@@ -314,6 +315,20 @@ async def update_siem_connection(
     # SECURITY: Do not overwrite credentials unless explicitly provided
     if update_data.get("credentials") in ["", None]:
         update_data.pop("credentials", None)
+    if "credentials" in update_data:
+        try:
+            incoming = update_data.get("credentials")
+            incoming_data = json.loads(incoming) if isinstance(incoming, str) else (incoming or {})
+        except Exception:
+            incoming_data = {}
+        try:
+            existing_data = json.loads(siem_connection.credentials) if siem_connection.credentials else {}
+        except Exception:
+            existing_data = {}
+        if isinstance(existing_data, dict) and isinstance(incoming_data, dict):
+            if "token" not in incoming_data and existing_data.get("token"):
+                incoming_data["token"] = existing_data.get("token")
+            update_data["credentials"] = json.dumps(incoming_data)
     for key, value in update_data.items():
         setattr(siem_connection, key, value)
     
@@ -467,7 +482,53 @@ async def get_siem_health(
     if not siem_connection:
         raise HTTPException(status_code=404, detail="SIEM Connection not found")
     from ..services.siem_universal import SIEMUniversalService
-    return await SIEMUniversalService(siem_connection).get_health()
+    health = await SIEMUniversalService(siem_connection).get_health()
+    if health.status == "connected":
+        siem_connection.last_validated_at = datetime.now(timezone.utc)
+        await db.commit()
+    return health
+
+@router.get("/siem-connections/{siem_id}/evidence", response_model=schemas.SIEMEvidenceBundle)
+async def get_siem_evidence(
+    siem_id: int,
+    db: DBSession,
+    current_user: CurrentUser,
+    earliest: str = "-2m",
+    latest: str = "now",
+    host: Optional[str] = None,
+    user: Optional[str] = None,
+    dest: Optional[str] = None,
+    src: Optional[str] = None,
+    limit: int = 50,
+):
+    await require_permission(current_user, Permission.DETECTIONS_READ, db)
+    if siem_id <= 0:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid SIEM connection ID")
+    org_id = require_org_id(current_user)
+    result = await db.execute(
+        select(models.SIEMConnection)
+        .filter(models.SIEMConnection.id == siem_id)
+        .filter(models.SIEMConnection.organization_id == org_id)
+    )
+    siem_connection = result.scalar_one_or_none()
+    if not siem_connection:
+        raise HTTPException(status_code=404, detail="SIEM Connection not found")
+    from ..services.siem_universal import SIEMUniversalService
+    try:
+        return await SIEMUniversalService(siem_connection).get_evidence(
+            earliest=earliest,
+            latest=latest,
+            host=host,
+            user=user,
+            dest=dest,
+            src=src,
+            limit=limit,
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Splunk evidence request failed. Check URL, token, and SSL settings. {str(exc)}",
+        )
 
 
 # --- Environment Runner Settings ---
@@ -913,27 +974,94 @@ async def update_environment_runner(
 
     return runner_config
 
-@router.post("/environment-runners/{runner_id}/heartbeat", response_model=schemas.EnvironmentRunnerConfig)
+@router.post("/environment-runners/{runner_id}/heartbeat", response_model=None)
 async def update_environment_runner_heartbeat(
     runner_id: int,
-    heartbeat: schemas.EnvironmentRunnerHeartbeat,
+    request: Request,
     db: DBSession,
-    current_user: CurrentUser,
 ):
     if runner_id <= 0:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid environment runner ID")
 
-    org_id = require_org_id(current_user)
-    result = await db.execute(
-        select(models.EnvironmentRunnerConfig)
-        .filter(models.EnvironmentRunnerConfig.id == runner_id)
-        .filter(models.EnvironmentRunnerConfig.organization_id == org_id)
-    )
-    runner_config = result.scalar_one_or_none()
-    if not runner_config:
-        raise HTTPException(status_code=404, detail="Environment Runner Config not found")
+    auth_header = request.headers.get("Authorization", "")
+    token = None
+    if auth_header.lower().startswith("bearer "):
+        token = auth_header.split(" ", 1)[1].strip() or None
 
-    update_data = heartbeat.model_dump(exclude_unset=True)
+    runner_config = None
+    if token:
+        result = await db.execute(
+            select(models.EnvironmentRunnerConfig)
+            .filter(models.EnvironmentRunnerConfig.id == runner_id)
+        )
+        runner_config = result.scalar_one_or_none()
+        if not runner_config:
+            return Response(status_code=status.HTTP_404_NOT_FOUND)
+        token_hash = hashlib.sha256(token.encode()).hexdigest()
+        if runner_config.runner_token_hash:
+            if runner_config.runner_token_hash != token_hash:
+                # Allow valid registration tokens to heartbeat (older agents/scripts).
+                from ..security import decode_access_token
+                payload = decode_access_token(token) or {}
+                if payload.get("agent_registration"):
+                    token_jti = payload.get("jti")
+                    if token_jti:
+                        result = await db.execute(
+                            select(models.AgentRegistrationToken)
+                            .filter(models.AgentRegistrationToken.jti == token_jti)
+                            .filter(models.AgentRegistrationToken.organization_id == runner_config.organization_id)
+                        )
+                        token_record = result.scalar_one_or_none()
+                        if token_record:
+                            expires_at = token_record.expires_at
+                            now = datetime.now(timezone.utc)
+                            if expires_at and expires_at.tzinfo is None:
+                                expires_at = expires_at.replace(tzinfo=timezone.utc)
+                            if not expires_at or expires_at >= now:
+                                runner_token_valid = True
+                            else:
+                                runner_token_valid = False
+                        else:
+                            runner_token_valid = False
+                    else:
+                        runner_token_valid = False
+                else:
+                    runner_token_valid = False
+                if not runner_token_valid:
+                    return Response(status_code=status.HTTP_204_NO_CONTENT)
+        else:
+            # Backfill missing runner token hash for legacy records.
+            runner_config.runner_token_hash = token_hash
+            runner_config.runner_token_last_rotated_at = datetime.now(timezone.utc)
+            runner_config.runner_token_expires_at = datetime.now(timezone.utc) + timedelta(days=settings.RUNNER_TOKEN_TTL_DAYS)
+    else:
+        # Legacy endpoint: only accept user-authenticated calls; otherwise ignore quietly.
+        if "access_token" not in request.cookies:
+            return Response(status_code=status.HTTP_204_NO_CONTENT)
+        try:
+            current_user = await get_current_user(request, db)
+        except HTTPException:
+            return Response(status_code=status.HTTP_204_NO_CONTENT)
+        org_id = require_org_id(current_user)
+        result = await db.execute(
+            select(models.EnvironmentRunnerConfig)
+            .filter(models.EnvironmentRunnerConfig.id == runner_id)
+            .filter(models.EnvironmentRunnerConfig.organization_id == org_id)
+        )
+        runner_config = result.scalar_one_or_none()
+        if not runner_config:
+            return Response(status_code=status.HTTP_404_NOT_FOUND)
+
+    update_data = {}
+    try:
+        payload = await request.json()
+        if isinstance(payload, dict) and payload:
+            try:
+                update_data = schemas.EnvironmentRunnerHeartbeat(**payload).model_dump(exclude_unset=True)
+            except Exception:
+                update_data = {}
+    except Exception:
+        update_data = {}
     if "status" not in update_data:
         update_data["status"] = "online"
     update_data["last_check_in"] = datetime.utcnow()
@@ -942,8 +1070,7 @@ async def update_environment_runner_heartbeat(
         setattr(runner_config, key, value)
 
     await db.commit()
-    await db.refresh(runner_config)
-    return runner_config
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 @router.delete("/environment-runners/{runner_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_environment_runner(

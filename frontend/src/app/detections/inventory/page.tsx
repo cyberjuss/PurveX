@@ -232,7 +232,7 @@ export default function DetectionInventoryPage() {
                       stroke="currentColor"
                       strokeWidth="6"
                       fill="none"
-                      className="text-slate-200"
+                      className="text-slate-300"
                     />
                     <circle
                       cx="40"

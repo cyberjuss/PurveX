@@ -48,6 +48,7 @@ import {
 } from "lucide-react";
 import { PageContainer } from "@/components/layout/page-container";
 import { cn } from "@/lib/utils";
+import { PageHeader } from "@/components/layout/page-header";
 
 type UiTestType = "detection_validation" | "find_detection_coverage" | "telemetry_check";
 
@@ -904,6 +905,13 @@ function RunTestPageContent() {
 
   return (
     <PageContainer>
+      <PageHeader
+        eyebrow="Test orchestration"
+        title="Run Test"
+        subtitle="Choose a validation goal, map a technique, and launch a controlled run against your lab environment."
+        icon={<Target className="h-5 w-5" />}
+        actions={null}
+      />
 
       {/* Step Progress Indicator */}
       <div className="mb-8 flex justify-center">

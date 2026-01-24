@@ -295,15 +295,12 @@ export default function NotificationsPage() {
   }
 
   return (
-    <PageContainer maxWidth="full" className={cn("p-0", refreshing && "page-refreshing")}>
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-1">
-        {/* Hero header removed per request */}
-      </div>
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-6">
+    <PageContainer maxWidth="full" className={cn("pt-4", refreshing && "page-refreshing")}>
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-2 pb-8 space-y-6">
 
       {/* Category Tabs */}
-      <div className="mb-6 flex items-center gap-2 flex-wrap">
-        <Filter className="h-4 w-4 text-slate-400" />
+      <div className="mb-6 flex items-center gap-3 flex-wrap">
+        <Filter className="h-4 w-4 text-slate-500" />
         {(["all", "tests", "detections", "platform"] as NotificationCategory[]).map((cat) => (
           <Button
             key={cat}
@@ -313,15 +310,15 @@ export default function NotificationsPage() {
             className={cn(
               "h-8 text-xs capitalize focus-visible:ring-2 focus-visible:ring-sky-500/50 transition-all font-semibold",
               category === cat
-                ? "bg-white text-slate-900 border-white shadow-lg"
-                : "bg-white/90 text-slate-800 border border-slate-200 hover:bg-white"
+                ? "bg-white text-slate-900 border-white shadow-md"
+                : "bg-white/90 text-slate-700 border border-slate-200 hover:bg-white"
             )}
             aria-label={`Filter notifications by ${cat}`}
             aria-pressed={category === cat}
           >
             {cat === "all" ? "All" : cat}
             {cat === "all" && unreadCount > 0 && (
-              <Badge className="ml-2 h-4 px-1.5 text-[10px] bg-sky-500/30 text-sky-200 border-sky-400/40">
+              <Badge className="ml-2 h-4 px-1.5 text-[10px] bg-slate-100 text-slate-700 border-slate-200">
                 {unreadCount}
               </Badge>
             )}
@@ -332,15 +329,15 @@ export default function NotificationsPage() {
       {/* Notifications Timeline */}
       {filteredNotifications.length === 0 ? (
         <Card className="elite-card">
-          <CardContent className="pt-16 pb-16 text-center">
-            <div className="relative inline-flex h-20 w-20 items-center justify-center rounded-full bg-slate-800/50 mb-6">
-              <div className="absolute inset-0 bg-sky-500/10 rounded-full animate-ping" />
-              <Bell className="h-10 w-10 text-slate-500 relative z-10" />
-                </div>
-            <p className="text-lg font-display font-semibold text-slate-200 mb-2">
+          <CardContent className="pt-14 pb-14 text-center">
+            <div className="relative inline-flex h-16 w-16 items-center justify-center rounded-full bg-white shadow-sm border border-slate-200 mb-5">
+              <div className="absolute inset-0 rounded-full ring-1 ring-slate-200/60" />
+              <Bell className="h-8 w-8 text-slate-500 relative z-10" />
+            </div>
+            <p className="text-lg font-display font-semibold text-slate-900 mb-2">
               {category === "all" ? "No notifications yet" : `No ${category} notifications`}
             </p>
-            <p className="text-sm text-slate-400 max-w-md mx-auto">
+            <p className="text-sm text-slate-500 max-w-md mx-auto">
               {category === "all"
                 ? "When you run tests, add detections, or receive platform updates, they'll appear here."
                 : `No ${category} notifications available. Try selecting a different category.`}
@@ -354,23 +351,23 @@ export default function NotificationsPage() {
               >
                 View All Notifications
               </Button>
-              )}
-            </CardContent>
-          </Card>
+            )}
+          </CardContent>
+        </Card>
       ) : (
         <div className="space-y-8">
           {groupedNotifications.map((group, groupIndex) => (
             <div key={group.label} className="space-y-4">
               {/* Time Group Header */}
               <div className="flex items-center gap-3">
-                <div className="h-px flex-1 bg-gradient-to-r from-transparent via-slate-700 to-transparent" />
-                <h2 className="text-sm font-display font-semibold text-slate-900 uppercase tracking-wider">
+                <div className="h-px flex-1 bg-gradient-to-r from-transparent via-slate-200 to-transparent" />
+                <h2 className="text-xs font-display font-semibold text-slate-700 uppercase tracking-[0.2em]">
                   {group.label}
                 </h2>
-                <Badge variant="outline" className="text-[10px] px-2 py-0.5 bg-white/90 border-slate-200 text-slate-900">
+                <Badge variant="outline" className="text-[10px] px-2 py-0.5 bg-white border-slate-200 text-slate-700">
                   {group.items.length}
                 </Badge>
-                <div className="h-px flex-1 bg-gradient-to-r from-transparent via-slate-700 to-transparent" />
+                <div className="h-px flex-1 bg-gradient-to-r from-transparent via-slate-200 to-transparent" />
               </div>
 
               {/* Notifications List */}
@@ -379,7 +376,7 @@ export default function NotificationsPage() {
                   <Card
                     key={notification.id}
                     className={cn(
-                      "elite-card dynamic-card border transition-all cursor-pointer group",
+                      "elite-card dynamic-card border border-slate-200 transition-all cursor-pointer group",
                       getStatusColor(notification.status) || ""
                     )}
                     style={{
@@ -406,23 +403,23 @@ export default function NotificationsPage() {
                           <div className="flex items-start justify-between gap-3">
                             <div className="flex-1 min-w-0">
                               <div className="flex items-center gap-2 mb-1 flex-wrap">
-                                <div className="flex items-center gap-1.5 text-xs text-slate-400">
-                                  {getTypeIcon(notification.type)}
-                                  <span className="capitalize">{notification.type}</span>
-                                </div>
-                                {notification.metadata?.score !== undefined && (
-                                  <>
-                                    <span className="text-slate-600">·</span>
-                                    <span className="text-xs font-semibold text-emerald-400">
-                                      Score: {notification.metadata.score}
+                          <div className="flex items-center gap-1.5 text-xs text-slate-500">
+                            {getTypeIcon(notification.type)}
+                            <span className="capitalize">{notification.type}</span>
+                          </div>
+                          {notification.metadata?.score !== undefined && (
+                            <>
+                              <span className="text-slate-400">·</span>
+                              <span className="text-xs font-semibold text-emerald-600">
+                                Score: {notification.metadata.score}
                   </span>
-                                  </>
-                                )}
-                              </div>
-                              <h3 className="text-base font-display font-semibold text-slate-100 group-hover:text-indigo-300 transition-colors">
+                            </>
+                          )}
+                        </div>
+                              <h3 className="text-base font-display font-semibold text-slate-900 group-hover:text-slate-700 transition-colors">
                                 {notification.title}
                               </h3>
-                              <p className="text-sm text-slate-400 mt-1">
+                              <p className="text-sm text-slate-600 mt-1">
                                 {notification.description}
                           </p>
                         </div>
@@ -460,8 +457,8 @@ export default function NotificationsPage() {
                             <span>{formatRelative(notification.timestamp, new Date())}</span>
                             {notification.metadata?.testId && (
                               <>
-                                <span className="text-slate-600">·</span>
-                                <span className="font-mono text-slate-400">#{notification.metadata.testId}</span>
+                                <span className="text-slate-400">·</span>
+                                <span className="font-mono text-slate-500">#{notification.metadata.testId}</span>
                               </>
                 )}
                           </div>

@@ -12,6 +12,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { apiFetch } from "@/lib/api";
 import { Building2 } from "lucide-react";
 import { PageContainer } from "@/components/layout/page-container";
+import { PageHeader } from "@/components/layout/page-header";
 
 interface OrganizationSettings {
   name: string;
@@ -76,6 +77,12 @@ export default function OrganizationSettingsPage() {
 
   return (
     <PageContainer maxWidth="lg" className="space-y-6">
+      <PageHeader
+        eyebrow="Organization"
+        title="Organization Settings"
+        subtitle="Set the defaults, locale, and compliance posture for this workspace."
+        icon={<Building2 className="h-5 w-5" />}
+      />
       <Card>
         <CardHeader className="flex flex-row items-start justify-between gap-4 border-b border-slate-200 pb-4">
           <div>

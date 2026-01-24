@@ -10,6 +10,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
 import { apiFetch } from "@/lib/api";
 import { ShieldCheck } from "lucide-react";
+import { PageContainer } from "@/components/layout/page-container";
+import { PageHeader } from "@/components/layout/page-header";
 
 interface TestingPolicySettings {
   allowed_environments: string; // JSON string
@@ -112,7 +114,13 @@ export default function TestingPolicySettingsPage() {
   const riskUnprotectedProd = prodAllowed && !maintenanceRequired;
 
   return (
-    <div className="space-y-6 max-w-5xl mx-auto">
+    <PageContainer maxWidth="xl" className="space-y-6">
+      <PageHeader
+        eyebrow="Safety controls"
+        title="Testing Policy"
+        subtitle="Define where tests run, how they are tagged, and the protections around production."
+        icon={<ShieldCheck className="h-5 w-5" />}
+      />
       <Card className="border border-slate-200 bg-white shadow-sm">
         <CardHeader className="flex flex-row items-start justify-between gap-4 border-b border-slate-200 pb-3">
           <div>
@@ -266,6 +274,6 @@ export default function TestingPolicySettingsPage() {
           </form>
         </CardContent>
     </Card>
-    </div>
+    </PageContainer>
   );
 }

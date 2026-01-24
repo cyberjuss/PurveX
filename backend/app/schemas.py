@@ -304,7 +304,6 @@ class Organization(OrganizationBase):
     model_config = ConfigDict(from_attributes=True)
 
 class SIEMConnectionBase(BaseModel):
-    organization_id: Optional[int] = None
     siem_type: str
     name: str
     url: str
@@ -321,6 +320,7 @@ class SIEMConnectionCreate(SIEMConnectionBase):
 
 class SIEMConnection(SIEMConnectionBase):
     id: int
+    organization_id: Optional[int] = None
     status: Optional[str] = None
     credentials_present: bool = False
 
@@ -348,6 +348,22 @@ class SIEMEvent(BaseModel):
     action: Optional[str] = None
     raw_event: Optional[str] = None
     evidence_url: Optional[str] = None
+
+class SIEMEvidence(BaseModel):
+    event_time: Optional[datetime] = None
+    severity: Optional[str] = None
+    host: Optional[str] = None
+    user: Optional[str] = None
+    dest: Optional[str] = None
+    src: Optional[str] = None
+    signature: Optional[str] = None
+    sourcetype: Optional[str] = None
+    index: Optional[str] = None
+
+class SIEMEvidenceBundle(BaseModel):
+    count: int
+    items: List[SIEMEvidence]
+    deep_link: Optional[str] = None
 
 class SIEMRule(BaseModel):
     rule_id: Optional[str] = None

@@ -13,6 +13,8 @@ import { apiFetch } from "@/lib/api";
 import { useToast } from "@/components/ui/toast";
 import { Tooltip } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
+import { PageContainer } from "@/components/layout/page-container";
+import { PageHeader } from "@/components/layout/page-header";
 
 interface EnvironmentRunnerConfig {
   id: number;
@@ -652,7 +654,7 @@ while true; do
   LOCAL_IP=$(hostname -I 2>/dev/null | awk '{{print $1}}' || echo "127.0.0.1")
   curl -s -X POST -H "Authorization: Bearer $API_TOKEN" -H "Content-Type: application/json" \\
     -d "{{\\"os\\":\\"$OS_NAME\\",\\"ip_address\\":\\"$LOCAL_IP\\",\\"agent_version\\":\\"v1.0.0\\",\\"status\\":\\"online\\"}}" \\
-    "{api_url.rstrip('/')}/settings/environment-runners/{result.get('id')}/heartbeat" >/dev/null 2>&1 || true
+    "{api_url.rstrip('/')}/agent/heartbeat" >/dev/null 2>&1 || true
   CMD_JSON=$(curl -s -H "Authorization: Bearer \${API_TOKEN}" "\${API_URL%/}/agent/commands/next" || true)
   CMD_ID=$(echo "$CMD_JSON" | grep -o '"id":[0-9]*' | grep -o '[0-9]*' | head -1)
   CMD_TYPE=$(echo "$CMD_JSON" | grep -o '"command_type":"[^"]*"' | cut -d'"' -f4)
@@ -780,6 +782,7 @@ export default function TestRunnerSettingsPage() {
   const [userToken, setUserToken] = useState<string | null>(null);
   const [tokenExpiresInMinutes, setTokenExpiresInMinutes] = useState<number | null>(null);
   const [tokenLoading, setTokenLoading] = useState(false);
+  const [showToken, setShowToken] = useState(false);
   const [currentStep, setCurrentStep] = useState<number>(1);
 
   useEffect(() => {
@@ -936,7 +939,13 @@ export default function TestRunnerSettingsPage() {
   }
 
   return (
-    <div className="space-y-8 max-w-6xl mx-auto">
+    <PageContainer maxWidth="xl" className="space-y-8">
+      <PageHeader
+        eyebrow="Runner setup"
+        title="Test Runner"
+        subtitle="Connect lab endpoints and keep agent health in sync with PurveX."
+        icon={<ServerCog className="h-5 w-5" />}
+      />
       {/* Step Progress Indicator */}
       <div className="flex justify-center">
         {connectionType === "agent" ? (
@@ -1406,7 +1415,10 @@ export default function TestRunnerSettingsPage() {
                             <code className="text-sm font-mono text-slate-900 break-all">
                               {tokenLoading && !userToken && "Generating token..."}
                               {!tokenLoading && !userToken && "Token unavailable. Refresh to retry."}
-                              {userToken}
+                              {userToken &&
+                                (showToken
+                                  ? userToken
+                                  : `${userToken.slice(0, 6)}…${userToken.slice(-4)}`)}
                             </code>
                           </div>
                           {tokenExpiresInMinutes && (
@@ -1415,28 +1427,43 @@ export default function TestRunnerSettingsPage() {
                             </p>
                           )}
                         </div>
-                        <button
-                          type="button"
-                          aria-label="Copy registration token"
-                          title="Copy registration token"
-                          className="inline-flex h-9 w-9 items-center justify-center rounded-lg bg-slate-100 border border-slate-200 text-slate-600 hover:bg-indigo-600 hover:border-indigo-500 hover:text-white cursor-pointer transition-all duration-200 shadow-sm hover:scale-105 flex-shrink-0 disabled:opacity-50 disabled:cursor-not-allowed"
-                          onClick={() => {
-                            if (!userToken || typeof navigator === "undefined" || !navigator.clipboard) {
-                              return;
-                            }
-                            navigator.clipboard.writeText(userToken).then(() => {
-                              setTokenCopied(true);
-                              setTimeout(() => setTokenCopied(false), 2000);
-                            }).catch(() => {});
-                          }}
-                          disabled={!userToken || tokenLoading}
-                        >
-                          {tokenCopied ? (
-                            <CheckCircle2 className="h-5 w-5 text-emerald-500" />
-                          ) : (
-                            <CopyIcon className="h-5 w-5" />
-                          )}
-                        </button>
+                        <div className="flex items-center gap-2 flex-shrink-0">
+                          <button
+                            type="button"
+                            aria-label={showToken ? "Hide registration token" : "Reveal registration token"}
+                            title={showToken ? "Hide token" : "Reveal token"}
+                            className="inline-flex h-9 px-3 items-center justify-center rounded-lg bg-slate-100 border border-slate-200 text-slate-600 hover:bg-slate-200 cursor-pointer transition-all duration-200 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                            onClick={() => {
+                              if (!userToken || tokenLoading) return;
+                              setShowToken((prev) => !prev);
+                            }}
+                            disabled={!userToken || tokenLoading}
+                          >
+                            {showToken ? "Hide" : "Reveal"}
+                          </button>
+                          <button
+                            type="button"
+                            aria-label="Copy registration token"
+                            title="Copy registration token"
+                            className="inline-flex h-9 w-9 items-center justify-center rounded-lg bg-slate-100 border border-slate-200 text-slate-600 hover:bg-indigo-600 hover:border-indigo-500 hover:text-white cursor-pointer transition-all duration-200 shadow-sm hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed"
+                            onClick={() => {
+                              if (!userToken || typeof navigator === "undefined" || !navigator.clipboard) {
+                                return;
+                              }
+                              navigator.clipboard.writeText(userToken).then(() => {
+                                setTokenCopied(true);
+                                setTimeout(() => setTokenCopied(false), 2000);
+                              }).catch(() => {});
+                            }}
+                            disabled={!userToken || tokenLoading}
+                          >
+                            {tokenCopied ? (
+                              <CheckCircle2 className="h-5 w-5 text-emerald-500" />
+                            ) : (
+                              <CopyIcon className="h-5 w-5" />
+                            )}
+                          </button>
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -1666,6 +1693,6 @@ export default function TestRunnerSettingsPage() {
         </CardContent>
       </Card>
 
-    </div>
+    </PageContainer>
   );
 }

@@ -9,7 +9,7 @@ import { Sidebar } from "@/components/layout/sidebar";
 import { TopHeader } from "@/components/layout/top-header";
 import { ToastProvider } from "@/components/ui/toast";
 import { LoadingSplash } from "@/components/loading-splash";
-import { Manrope, Sora } from "next/font/google";
+import { Geist, Space_Grotesk } from "next/font/google";
 import { cn } from "@/lib/utils";
 import { getApiBaseCandidates } from "@/lib/api";
 import { UnifiedPageHeader } from "@/components/layout/unified-page-header";
@@ -25,16 +25,15 @@ const formatSegmentTitle = (value: string) => {
     .join(" ");
 };
 
-// Configure Manrope for body text - premium SaaS readability
-const inter = Manrope({
+// Configure Geist for body text - modern SaaS clarity
+const inter = Geist({
   subsets: ["latin"],
   display: "swap",
   variable: "--font-inter",
-  weight: ["300", "400", "500", "600", "700"],
 });
 
-// Configure Sora for headings - crisp, modern, high-contrast
-const spaceGrotesk = Sora({
+// Configure Space Grotesk for headings - futuristic, confident
+const spaceGrotesk = Space_Grotesk({
   subsets: ["latin"],
   display: "swap",
   variable: "--font-space-grotesk",
@@ -326,7 +325,7 @@ export default function RootLayout({
       >
         <head>
           <link rel="icon" href="/purvex-favicon.svg" />
-          <link rel="apple-touch-icon" sizes="180x180" href="/purvex_logo.png?v=6" />
+          <link rel="apple-touch-icon" sizes="180x180" href="/logo.png?v=6" />
           <link rel="shortcut icon" href="/purvex-favicon.svg" />
         </head>
         <body className={`${inter.className} text-foreground`} suppressHydrationWarning>
@@ -358,7 +357,7 @@ export default function RootLayout({
           }}
         />
         <link rel="icon" href="/purvex-favicon.svg" />
-        <link rel="apple-touch-icon" sizes="180x180" href="/purvex_logo.png?v=6" />
+        <link rel="apple-touch-icon" sizes="180x180" href="/logo.png?v=6" />
         <link rel="shortcut icon" href="/purvex-favicon.svg" />
       </head>
       <body className={`${inter.className} text-foreground`} suppressHydrationWarning>

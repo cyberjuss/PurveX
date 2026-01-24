@@ -9,6 +9,8 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { apiFetch } from "@/lib/api";
 import { Gauge } from "lucide-react";
+import { PageContainer } from "@/components/layout/page-container";
+import { PageHeader } from "@/components/layout/page-header";
 
 interface DetectionScoringSettings {
   base_scoring_explanation: string;
@@ -75,7 +77,13 @@ export default function ScoringSettingsPage() {
   if (!settings) return <p className="text-muted-foreground">No scoring settings found.</p>;
 
   return (
-    <div className="space-y-6 max-w-5xl mx-auto">
+    <PageContainer maxWidth="xl" className="space-y-6">
+      <PageHeader
+        eyebrow="Health model"
+        title="Detection Scoring"
+        subtitle="Tune scoring weights and thresholds so health reflects your risk tolerance."
+        icon={<Gauge className="h-5 w-5" />}
+      />
       <Card className="elite-card ">
         <CardHeader className="flex flex-row items-start justify-between gap-4 border-b border-white/5 pb-4">
           <div>
@@ -181,6 +189,6 @@ export default function ScoringSettingsPage() {
         </form>
       </CardContent>
     </Card>
-    </div>
+    </PageContainer>
   );
 }

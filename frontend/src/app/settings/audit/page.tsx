@@ -19,6 +19,7 @@ import { cn } from "@/lib/utils";
 import { PageContainer } from "@/components/layout/page-container";
 import { PageHeader } from "@/components/layout/page-header";
 import { usePermissions } from "@/hooks/usePermissions";
+import { useToast } from "@/components/ui/toast";
 
 const ACTION_COLORS: Record<string, string> = {
   "LOGIN_SUCCESS": "bg-emerald-500/20 text-emerald-400 border-emerald-500/30",
@@ -65,6 +66,7 @@ export default function AuditLogPage() {
   const [cleaning, setCleaning] = useState(false);
   const [cleanupDays, setCleanupDays] = useState(30);
   const { isAdmin } = usePermissions();
+  const { toast } = useToast();
   
   // Filters
   const [searchQuery, setSearchQuery] = useState("");
@@ -147,12 +149,22 @@ export default function AuditLogPage() {
     if (!confirmed) return;
     try {
       setCleaning(true);
-      await cleanupAuditEvents(cleanupDays);
+      const result = await cleanupAuditEvents(cleanupDays);
       setPage(0);
       await fetchEvents();
       await fetchStats();
+      toast({
+        type: "success",
+        title: "Audit log cleaned",
+        description: `Removed ${result?.deleted ?? 0} event(s) older than ${cleanupDays} day(s).`,
+      });
     } catch (err: any) {
       setError(err?.message || "Failed to clean audit events");
+      toast({
+        type: "error",
+        title: "Cleanup failed",
+        description: err?.message || "Failed to clean audit events",
+      });
     } finally {
       setCleaning(false);
     }
@@ -190,19 +202,21 @@ export default function AuditLogPage() {
       <div className="w-full pl-0.5 pr-0 sm:pr-0">
         <PageHeader
           className="mb-6"
+          eyebrow="Governance"
           title="Audit Log"
           subtitle="View and analyze all security-sensitive actions and administrative changes"
+          icon={<FileText className="h-5 w-5" />}
           actions={
             <div className="flex items-center justify-end">
-              <div className="flex flex-nowrap items-center gap-3 rounded-2xl border border-slate-200 bg-white/80 px-3 py-2 shadow-sm">
+              <div className="flex flex-nowrap items-center gap-3 rounded-2xl border border-slate-200 bg-white px-3 py-2 shadow-sm">
                 {isAdmin() && (
-                  <div className="flex flex-nowrap items-center gap-2 rounded-xl border border-slate-200 bg-slate-50/80 px-2 py-1">
+                  <div className="flex flex-nowrap items-center gap-2 rounded-xl border border-slate-200 bg-white px-2 py-1 shadow-inner">
                     <Input
                       type="number"
                       min={1}
                       value={cleanupDays}
                       onChange={(e) => setCleanupDays(Number(e.target.value))}
-                      className="h-9 w-20 text-center border-slate-200 bg-white text-slate-900"
+                      className="h-9 w-20 text-center border-slate-200 bg-slate-50 text-slate-900 font-semibold"
                       aria-label="Audit cleanup days"
                     />
                     <Button
@@ -210,7 +224,7 @@ export default function AuditLogPage() {
                       size="sm"
                       onClick={handleCleanup}
                       disabled={cleaning}
-                      className="h-9 whitespace-nowrap"
+                      className="h-9 whitespace-nowrap bg-white border-slate-200 text-slate-900 hover:bg-slate-50 shadow-sm"
                     >
                       <Filter className={cn("h-4 w-4 mr-2", cleaning && "animate-spin")} />
                       Clean {cleanupDays}+ days
@@ -223,7 +237,7 @@ export default function AuditLogPage() {
                     size="sm"
                     onClick={handleExport}
                     disabled={events.length === 0}
-                    className="h-9 whitespace-nowrap"
+                    className="h-9 whitespace-nowrap bg-white border-slate-200 text-slate-900 hover:bg-slate-50 shadow-sm"
                   >
                     <Download className="h-4 w-4 mr-2" />
                     Export CSV
@@ -396,15 +410,15 @@ export default function AuditLogPage() {
             </div>
           ) : (
             <>
-              <div className="rounded-lg border border-slate-800 overflow-hidden">
+              <div className="rounded-lg border border-slate-200 overflow-hidden">
                 <Table>
                   <TableHeader>
-                    <TableRow className="border-slate-800 hover:bg-slate-900/50">
-                      <TableHead className="text-slate-400">Timestamp</TableHead>
-                      <TableHead className="text-slate-400">User</TableHead>
-                      <TableHead className="text-slate-400">Action</TableHead>
-                      <TableHead className="text-slate-400">Resource</TableHead>
-                      <TableHead className="text-slate-400">Details</TableHead>
+                    <TableRow className="border-slate-200 bg-slate-50">
+                      <TableHead className="text-slate-500">Timestamp</TableHead>
+                      <TableHead className="text-slate-500">User</TableHead>
+                      <TableHead className="text-slate-500">Action</TableHead>
+                      <TableHead className="text-slate-500">Resource</TableHead>
+                      <TableHead className="text-slate-500">Details</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -413,8 +427,8 @@ export default function AuditLogPage() {
                       const ResourceIcon = RESOURCE_ICONS[event.resource_type || ""] || Activity;
                       
                       return (
-                        <TableRow key={event.id} className="border-slate-800 hover:bg-slate-900/50">
-                          <TableCell className="text-slate-300">
+                        <TableRow key={event.id} className="border-slate-200 hover:bg-slate-50">
+                          <TableCell className="text-slate-700">
                             <div className="flex items-center gap-2">
                               <Clock className="h-3.5 w-3.5 text-slate-500" />
                               <div>
@@ -423,7 +437,7 @@ export default function AuditLogPage() {
                               </div>
                             </div>
                           </TableCell>
-                          <TableCell className="text-slate-300">
+                          <TableCell className="text-slate-700">
                             <div className="flex items-center gap-2">
                               <User className="h-3.5 w-3.5 text-slate-500" />
                               <span className="text-sm">{event.user_email || "Unknown"}</span>

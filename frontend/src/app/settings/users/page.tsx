@@ -333,8 +333,10 @@ export default function UserManagementPage() {
       <div className="w-full pl-0.5 pr-0 sm:pr-0 mb-4">
         <PageHeader
           className="mb-4"
+          eyebrow="Access control"
           title="Users & Access Management"
           subtitle="Manage user accounts, roles, and permissions across your organization"
+          icon={<Users className="h-5 w-5" />}
           actions={
             <div className="flex flex-wrap items-center justify-end gap-2">
               <Dialog open={createUserOpen} onOpenChange={setCreateUserOpen}>

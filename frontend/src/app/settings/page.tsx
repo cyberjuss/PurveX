@@ -20,6 +20,7 @@ import {
   Target,
 } from "lucide-react";
 import { PageContainer } from "@/components/layout/page-container";
+import { PageHeader } from "@/components/layout/page-header";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import {
   getOrganizationSettings,
@@ -241,9 +242,14 @@ export default function SettingsPage() {
   const managementItems = settingsItems.filter(item => item.category === "management");
 
   return (
-    <PageContainer maxWidth="full" className="p-0">
-
-        <div className="max-w-7xl mx-auto px-8 py-8">
+    <PageContainer maxWidth="full">
+        <div className="max-w-7xl mx-auto px-8 py-8 space-y-6">
+          <PageHeader
+            eyebrow="Platform configuration"
+            title="Settings"
+            subtitle="Tune platform setup, policies, and governance without leaving PurveX."
+            icon={<SettingsIcon className="h-5 w-5" />}
+          />
           {/* Category Tabs - Unique Horizontal Design */}
           <div className="flex items-center gap-3 mb-8 overflow-x-auto hide-scrollbar pb-2" data-tour="settings-categories">
             {categoryTabs.map((cat) => {
@@ -310,7 +316,7 @@ export default function SettingsPage() {
                           stroke="currentColor"
                           strokeWidth="6"
                           fill="none"
-                          className="text-slate-200"
+                          className="text-slate-700"
                         />
                         <circle
                           cx="40"

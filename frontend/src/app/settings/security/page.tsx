@@ -106,8 +106,10 @@ export default function SecuritySettingsPage() {
     <PageContainer>
       <div className="w-full pl-0.5 pr-0 sm:pr-0">
         <PageHeader
+          eyebrow="Account security"
           title="Security Settings"
           subtitle="Manage your account security settings including two-factor authentication"
+          icon={<Shield className="h-5 w-5" />}
         />
       </div>
 

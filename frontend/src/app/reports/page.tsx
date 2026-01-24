@@ -11,6 +11,7 @@ import { Badge } from "@/components/ui/badge";
 import { FileText, Download, Calendar, Server, Loader2, Trash2, CheckCircle2, XCircle, AlertTriangle, AlertCircle, X } from "lucide-react";
 import { useToast } from "@/components/ui/toast";
 import { PageHeader } from "@/components/layout/page-header";
+import { PageContainer } from "@/components/layout/page-container";
 import { format, subDays, subMonths } from "date-fns";
 import { cn } from "@/lib/utils";
 import { getReports, generateReport, deleteReport, apiFetch, getApiBaseCandidates } from "@/lib/api";
@@ -196,10 +197,12 @@ export default function ReportsPage() {
   };
 
   return (
-    <div className="space-y-6 max-w-7xl mx-auto relative">
+    <PageContainer maxWidth="xl" className="space-y-6">
       <PageHeader
+        eyebrow="Executive reporting"
         title="Detection Effectiveness Reports"
-        subtitle="Generate comprehensive PDF reports proving detection effectiveness, highlighting gaps, and guiding next actions"
+        subtitle="Generate comprehensive PDF reports proving detection effectiveness, highlighting gaps, and guiding next actions."
+        icon={<FileText className="h-5 w-5" />}
       />
 
       {/* Report Generation Card */}
@@ -426,6 +429,6 @@ export default function ReportsPage() {
           )}
         </CardContent>
       </Card>
-    </div>
+    </PageContainer>
   );
 }

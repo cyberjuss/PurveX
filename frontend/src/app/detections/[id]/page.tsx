@@ -12,6 +12,8 @@ import {
 } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { PageContainer } from "@/components/layout/page-container";
+import { PageHeader } from "@/components/layout/page-header";
 import {
   Table,
   TableBody,
@@ -99,6 +101,20 @@ export default function DetectionDetailPage() {
   const [users, setUsers] = useState<Array<{ id: number; email: string; is_admin: boolean; is_active: boolean; created_at: string }>>([]);
   const [selectedOwner, setSelectedOwner] = useState<string>("unassigned");
   const [assigningOwner, setAssigningOwner] = useState(false);
+  const [siemConnections, setSiemConnections] = useState<Array<{ id: number; name: string; siem_type: string }>>([]);
+  const [selectedSiemId, setSelectedSiemId] = useState<number | null>(null);
+  const [evidenceLoading, setEvidenceLoading] = useState(false);
+  const [evidenceError, setEvidenceError] = useState<string | null>(null);
+  const [evidenceData, setEvidenceData] = useState<{ count: number; items: any[]; deep_link?: string } | null>(null);
+  const [evidenceFilters, setEvidenceFilters] = useState({
+    earliest: "-2m",
+    latest: "now",
+    host: "",
+    user: "",
+    dest: "",
+    src: "",
+    limit: "50",
+  });
   const { hasPermission, loading: permissionsLoading } = usePermissions();
   const { toast } = useToast();
   
@@ -130,6 +146,28 @@ export default function DetectionDetailPage() {
           allTests.filter((t) => t.detection_id === detectionId)
         );
         setEvents(detectionEvents || []);
+        if (!evidenceFilters.host && (detectionEvents || []).length > 0) {
+          const latestEvent = [...(detectionEvents || [])].sort((a, b) => {
+            const dateA = new Date(a.time || a.created_at || 0).getTime();
+            const dateB = new Date(b.time || b.created_at || 0).getTime();
+            return dateB - dateA;
+          })[0];
+          if (latestEvent?.host) {
+            setEvidenceFilters((prev) => ({ ...prev, host: latestEvent.host || "" }));
+          }
+        }
+        try {
+          const siemData = await apiFetch("/settings/siem-connections");
+          const validConnections = Array.isArray(siemData) ? siemData : [];
+          setSiemConnections(validConnections);
+          if (!selectedSiemId && validConnections.length > 0) {
+            setSelectedSiemId(validConnections[0].id);
+            setEvidenceData(null);
+            setEvidenceError(null);
+          }
+        } catch {
+          setSiemConnections([]);
+        }
       } catch (err: any) {
         // Only set error for non-404 errors
         const is404 = (err as any)?.is404 || 
@@ -170,6 +208,32 @@ export default function DetectionDetailPage() {
       loadUsers();
     }
   }, [assignOwnerOpen, canAssignOwner, detection?.owner]);
+
+  const fetchEvidence = async () => {
+    if (!selectedSiemId) {
+      setEvidenceError("No SIEM connection configured.");
+      return;
+    }
+    setEvidenceLoading(true);
+    setEvidenceError(null);
+    try {
+      const params = new URLSearchParams();
+      if (evidenceFilters.earliest) params.set("earliest", evidenceFilters.earliest);
+      if (evidenceFilters.latest) params.set("latest", evidenceFilters.latest);
+      if (evidenceFilters.host) params.set("host", evidenceFilters.host);
+      if (evidenceFilters.user) params.set("user", evidenceFilters.user);
+      if (evidenceFilters.dest) params.set("dest", evidenceFilters.dest);
+      if (evidenceFilters.src) params.set("src", evidenceFilters.src);
+      if (evidenceFilters.limit) params.set("limit", evidenceFilters.limit);
+      const data = await apiFetch(`/settings/siem-connections/${selectedSiemId}/evidence?${params.toString()}`);
+      setEvidenceData(data);
+    } catch (err: any) {
+      setEvidenceError(err.message || "Failed to fetch evidence.");
+    } finally {
+      setEvidenceLoading(false);
+    }
+  };
+
 
   const handleAssignOwner = async () => {
     if (!detectionId || !canAssignOwner) return;
@@ -283,38 +347,34 @@ export default function DetectionDetailPage() {
   };
 
   return (
-    <div className="p-6 space-y-6">
-      <div className="flex items-center justify-between gap-3">
-        <div className="flex flex-col gap-2">
-          <div>
-            <h1 className="text-2xl font-semibold text-slate-900">
-              {detection.title}
-            </h1>
-            <p className="text-xs text-slate-700 mt-1">
-              {detection.technique_id} | {detection.siem_type} |{" "}
-              {detection.siem_query}
-            </p>
+    <PageContainer maxWidth="xl">
+      <PageHeader
+        eyebrow="Detection detail"
+        title={detection.title}
+        subtitle={`${detection.technique_id} · ${detection.siem_type} · ${detection.siem_query}`}
+        icon={<Target className="h-5 w-5" />}
+        actions={
+          <div className="flex flex-col items-end gap-2">
+            <Badge className={getStatusBadgeClass(detection.status)}>
+              {detection.status || "UNSET"}
+            </Badge>
+            {lastTest && (
+              <div className="flex items-center gap-2 text-[11px] text-slate-700">
+                <span className="uppercase tracking-[0.18em] text-slate-500">
+                  Last test
+                </span>
+                <Badge className={getResultBadgeClass(lastResult)}>
+                  {lastResult}
+                </Badge>
+                <span className="text-slate-700">
+                  {formatRelative(new Date(lastTest.started_at), new Date())}
+                </span>
+              </div>
+            )}
           </div>
-        </div>
-        <div className="flex flex-col items-end gap-2">
-          <Badge className={getStatusBadgeClass(detection.status)}>
-            {detection.status || "UNSET"}
-          </Badge>
-          {lastTest && (
-            <div className="flex items-center gap-2 text-[11px] text-slate-900">
-              <span className="uppercase tracking-[0.18em] text-slate-900">
-                Last test
-              </span>
-              <Badge className={getResultBadgeClass(lastResult)}>
-                {lastResult}
-              </Badge>
-              <span className="text-slate-900">
-                {formatRelative(new Date(lastTest.started_at), new Date())}
-              </span>
-            </div>
-          )}
-        </div>
-      </div>
+        }
+      />
+      <div className="space-y-6">
 
       <Tabs defaultValue="overview" className="space-y-4">
         <TabsList className="bg-white border border-slate-200 text-black">
@@ -465,6 +525,188 @@ export default function DetectionDetailPage() {
               )}
             </CardContent>
           </Card>
+
+          {/* SIEM Evidence */}
+          <Card className="border border-slate-200 bg-white shadow-sm">
+            <CardHeader className="flex flex-row items-center justify-between gap-4">
+              <div>
+                <CardTitle className="flex items-center gap-2 text-base text-slate-900">
+                  <span className="inline-flex h-8 w-8 items-center justify-center rounded-xl bg-indigo-100 text-indigo-600 border border-indigo-200">
+                    <FileText className="h-4 w-4" />
+                  </span>
+                  <span>Splunk ES evidence</span>
+                </CardTitle>
+                <CardDescription className="mt-1 text-slate-700">
+                  Pull a minimal evidence bundle from notables (no raw logs).
+                </CardDescription>
+              </div>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={fetchEvidence}
+                disabled={evidenceLoading || !selectedSiemId}
+                className="border-slate-200 text-slate-700 hover:bg-slate-50 inline-flex items-center gap-2"
+              >
+                {evidenceLoading ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Fetching…
+                  </>
+                ) : (
+                  "Fetch evidence"
+                )}
+              </Button>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              {siemConnections.length === 0 ? (
+                <p className="text-sm text-slate-700">
+                  No Splunk ES connection configured yet. Add one in Settings → SIEM.
+                </p>
+              ) : (
+                <>
+                  <div className="grid gap-3 md:grid-cols-3">
+                    <div className="space-y-1">
+                      <Label>Connection</Label>
+                      <Select
+                        value={selectedSiemId ? String(selectedSiemId) : ""}
+                        onValueChange={(value) => {
+                          setSelectedSiemId(Number(value));
+                          setEvidenceData(null);
+                          setEvidenceError(null);
+                        }}
+                      >
+                        <SelectTrigger className="bg-white text-slate-900 border-slate-200">
+                          <SelectValue placeholder="Select connection" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {siemConnections.map((conn) => (
+                            <SelectItem key={conn.id} value={String(conn.id)}>
+                              {conn.name}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-1">
+                      <Label>Earliest</Label>
+                      <Input
+                        value={evidenceFilters.earliest}
+                        onChange={(e) => setEvidenceFilters((prev) => ({ ...prev, earliest: e.target.value }))}
+                        placeholder="-2m"
+                        className="bg-white text-slate-900 border-slate-200"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <Label>Latest</Label>
+                      <Input
+                        value={evidenceFilters.latest}
+                        onChange={(e) => setEvidenceFilters((prev) => ({ ...prev, latest: e.target.value }))}
+                        placeholder="now"
+                        className="bg-white text-slate-900 border-slate-200"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <Label>Host</Label>
+                      <Input
+                        value={evidenceFilters.host}
+                        onChange={(e) => setEvidenceFilters((prev) => ({ ...prev, host: e.target.value }))}
+                        placeholder="host"
+                        className="bg-white text-slate-900 border-slate-200"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <Label>User</Label>
+                      <Input
+                        value={evidenceFilters.user}
+                        onChange={(e) => setEvidenceFilters((prev) => ({ ...prev, user: e.target.value }))}
+                        placeholder="user"
+                        className="bg-white text-slate-900 border-slate-200"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <Label>Dest</Label>
+                      <Input
+                        value={evidenceFilters.dest}
+                        onChange={(e) => setEvidenceFilters((prev) => ({ ...prev, dest: e.target.value }))}
+                        placeholder="dest"
+                        className="bg-white text-slate-900 border-slate-200"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <Label>Src</Label>
+                      <Input
+                        value={evidenceFilters.src}
+                        onChange={(e) => setEvidenceFilters((prev) => ({ ...prev, src: e.target.value }))}
+                        placeholder="src"
+                        className="bg-white text-slate-900 border-slate-200"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <Label>Limit</Label>
+                      <Input
+                        value={evidenceFilters.limit}
+                        onChange={(e) => setEvidenceFilters((prev) => ({ ...prev, limit: e.target.value }))}
+                        placeholder="50"
+                        className="bg-white text-slate-900 border-slate-200"
+                      />
+                    </div>
+                  </div>
+
+                  {evidenceError && (
+                    <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
+                      {evidenceError}
+                    </div>
+                  )}
+
+                  {evidenceData?.deep_link && (
+                    <a
+                      href={evidenceData.deep_link}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-xs text-sky-700 underline hover:text-sky-800"
+                    >
+                      Open in Splunk
+                    </a>
+                  )}
+
+                  {evidenceData?.items?.length ? (
+                    <div className="rounded-lg border border-slate-200 overflow-hidden">
+                      <div className="max-h-56 overflow-auto">
+                        <table className="min-w-full text-xs text-slate-900">
+                          <thead className="bg-slate-50 text-slate-600">
+                            <tr>
+                              <th className="px-2 py-2 text-left">Time</th>
+                              <th className="px-2 py-2 text-left">Host</th>
+                              <th className="px-2 py-2 text-left">User</th>
+                              <th className="px-2 py-2 text-left">Dest</th>
+                              <th className="px-2 py-2 text-left">Src</th>
+                              <th className="px-2 py-2 text-left">Signature</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {evidenceData.items.map((item, idx) => (
+                              <tr key={`${idx}`} className="border-t border-slate-200">
+                                <td className="px-2 py-2 text-slate-700">{item.event_time || "-"}</td>
+                                <td className="px-2 py-2">{item.host || "-"}</td>
+                                <td className="px-2 py-2">{item.user || "-"}</td>
+                                <td className="px-2 py-2">{item.dest || "-"}</td>
+                                <td className="px-2 py-2">{item.src || "-"}</td>
+                                <td className="px-2 py-2 text-slate-700">{item.signature || "-"}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  ) : (
+                    <p className="text-xs text-slate-600">
+                      No evidence returned yet. Adjust filters and fetch.
+                    </p>
+                  )}
+                </>
+              )}
+            </CardContent>
+          </Card>
         </TabsContent>
 
         <TabsContent value="tests">
@@ -534,7 +776,7 @@ export default function DetectionDetailPage() {
               <div className="overflow-x-hidden max-h-[19rem] overflow-y-auto hide-scrollbar">
                 <Table>
                   <TableHeader>
-                    <TableRow className="border-slate-800">
+                    <TableRow className="border-slate-200">
                       <TableHead className="text-[11px] text-slate-700">
                         Started
                       </TableHead>
@@ -556,7 +798,7 @@ export default function DetectionDetailPage() {
                     {testsForDetection.map((t) => (
                       <TableRow
                         key={t.id}
-                        className="border-slate-900/80 hover:bg-slate-900/60"
+                        className="border-slate-200 hover:bg-slate-50"
                       >
                         <TableCell className="text-slate-700">
                           {formatRelative(new Date(t.started_at), new Date())}
@@ -571,7 +813,7 @@ export default function DetectionDetailPage() {
                         <TableCell className="text-slate-700">
                           {typeof t.score === "number" ? t.score : "N/A"}
                         </TableCell>
-                        <TableCell className="text-slate-300 uppercase">
+                        <TableCell className="text-slate-600 uppercase">
                           {t.environment}
                         </TableCell>
                         <TableCell>
@@ -837,6 +1079,7 @@ export default function DetectionDetailPage() {
           </Card>
         </TabsContent>
       </Tabs>
-    </div>
+      </div>
+    </PageContainer>
   );
 }

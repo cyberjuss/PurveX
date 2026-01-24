@@ -121,15 +121,15 @@ function getHealthNarrative(state: HealthStateKey) {
 function getStatusBadgeClass(status?: string) {
   switch ((status || "").toUpperCase()) {
     case "ACTIVE":
-      return "bg-emerald-500/15 text-emerald-300 border border-emerald-500/40";
+      return "bg-emerald-100 text-emerald-700 border border-emerald-200";
     case "NEEDS_IMPROVEMENT":
-      return "bg-amber-500/15 text-amber-300 border border-amber-500/40";
+      return "bg-amber-100 text-amber-700 border border-amber-200";
     case "DRAFT":
-      return "bg-slate-500/20 text-slate-200 border border-slate-400/40";
+      return "bg-slate-100 text-slate-700 border border-slate-200";
     case "RETIRED":
-      return "bg-slate-700/40 text-slate-400 border border-slate-600/60";
+      return "bg-slate-200 text-slate-700 border border-slate-300";
     default:
-      return "bg-slate-700/40 text-slate-200 border border-slate-600/60";
+      return "bg-slate-100 text-slate-700 border border-slate-200";
   }
 }
 
@@ -480,7 +480,7 @@ function DetectionsPageContent() {
     return (
       <PageContainer>
         <Card className="elite-card">
-          <CardContent className="pt-6 text-slate-200">Loading detections…</CardContent>
+          <CardContent className="pt-6 text-slate-700">Loading detections…</CardContent>
         </Card>
       </PageContainer>
     );
@@ -794,8 +794,10 @@ function DetectionsPageContent() {
       {/* Unified hero header */}
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-1 pb-6">
         <PageHeader
+          eyebrow="Detection workspace"
           title="Detection Workspace"
           subtitle="Manage and validate your detection engineering portfolio"
+          icon={<Shield className="h-5 w-5" />}
         />
       </div>
 
@@ -1139,7 +1141,7 @@ function DetectionsPageContent() {
                               <button
                                 type="button"
                                 onClick={() => handleSort("last_result")}
-                                className="flex items-center gap-1.5 hover:text-slate-200 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500/50 rounded px-1 py-0.5"
+                                className="flex items-center gap-1.5 hover:text-slate-700 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500/50 rounded px-1 py-0.5"
                                 aria-label={`Sort by Last Result ${sortField === "last_result" ? (sortDirection === "asc" ? "ascending" : "descending") : ""}`}
                                 aria-sort={sortField === "last_result" ? (sortDirection === "asc" ? "ascending" : "descending") : "none"}
                               >
@@ -1151,7 +1153,7 @@ function DetectionsPageContent() {
                               <button
                                 type="button"
                                 onClick={() => handleSort("last_score")}
-                                className="flex items-center gap-1.5 hover:text-slate-200 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500/50 rounded px-1 py-0.5"
+                                className="flex items-center gap-1.5 hover:text-slate-700 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500/50 rounded px-1 py-0.5"
                                 aria-label={`Sort by Health Score ${sortField === "last_score" ? (sortDirection === "asc" ? "ascending" : "descending") : ""}`}
                                 aria-sort={sortField === "last_score" ? (sortDirection === "asc" ? "ascending" : "descending") : "none"}
                               >
@@ -1164,7 +1166,7 @@ function DetectionsPageContent() {
                               <button
                                 type="button"
                                 onClick={() => handleSort("last_tested_at")}
-                                className="flex items-center gap-1.5 hover:text-slate-200 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500/50 rounded px-1 py-0.5"
+                                className="flex items-center gap-1.5 hover:text-slate-700 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500/50 rounded px-1 py-0.5"
                                 aria-label={`Sort by Last Tested ${sortField === "last_tested_at" ? (sortDirection === "asc" ? "ascending" : "descending") : ""}`}
                                 aria-sort={sortField === "last_tested_at" ? (sortDirection === "asc" ? "ascending" : "descending") : "none"}
                               >
@@ -1176,7 +1178,7 @@ function DetectionsPageContent() {
                               <button
                                 type="button"
                                 onClick={() => handleSort("last_pass_at")}
-                                className="flex items-center gap-1.5 hover:text-slate-200 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500/50 rounded px-1 py-0.5"
+                                className="flex items-center gap-1.5 hover:text-slate-700 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500/50 rounded px-1 py-0.5"
                                 aria-label={`Sort by Last Pass ${sortField === "last_pass_at" ? (sortDirection === "asc" ? "ascending" : "descending") : ""}`}
                                 aria-sort={sortField === "last_pass_at" ? (sortDirection === "asc" ? "ascending" : "descending") : "none"}
                               >
@@ -1188,7 +1190,7 @@ function DetectionsPageContent() {
                               <button
                                 type="button"
                                 onClick={() => handleSort("last_fail_at")}
-                                className="flex items-center gap-1.5 hover:text-slate-200 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500/50 rounded px-1 py-0.5"
+                                className="flex items-center gap-1.5 hover:text-slate-700 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500/50 rounded px-1 py-0.5"
                                 aria-label={`Sort by Last Fail ${sortField === "last_fail_at" ? (sortDirection === "asc" ? "ascending" : "descending") : ""}`}
                                 aria-sort={sortField === "last_fail_at" ? (sortDirection === "asc" ? "ascending" : "descending") : "none"}
                               >
@@ -1316,7 +1318,7 @@ function DetectionsPageContent() {
                 </div>
                       {/* Pagination Controls */}
                       {catalogDetections.length > itemsPerPage && (
-                        <div className="flex items-center justify-between px-4 sm:px-6 py-4 border-t border-slate-800/50">
+                        <div className="flex items-center justify-between px-4 sm:px-6 py-4 border-t border-slate-200/70">
                           <div className="text-sm text-slate-400">
                             Showing {catalogPage * itemsPerPage + 1}-{Math.min((catalogPage + 1) * itemsPerPage, catalogDetections.length)} of {catalogDetections.length} detections
                           </div>

@@ -2,7 +2,7 @@ import json
 from typing import List, Optional, Dict, Any
 
 from .. import models
-from ..schemas import SIEMAlert, SIEMEvent, SIEMRule, SIEMHealth
+from ..schemas import SIEMAlert, SIEMEvent, SIEMRule, SIEMHealth, SIEMEvidenceBundle, SIEMEvidence
 from ..services.siem_connectors import SplunkConnector, SentinelConnector, _parse_credentials
 
 
@@ -31,7 +31,7 @@ class SIEMUniversalService:
     async def get_alerts(self, limit: int = 50) -> List[SIEMAlert]:
         if not self.has_credentials():
             return []
-        if self.siem_type == "splunk":
+        if self.siem_type in {"splunk es", "splunk_es", "splunk-es", "splunk"}:
             return await SplunkConnector(self.connection.url, self.credentials).get_alerts(limit)
         if self.siem_type == "sentinel":
             return await SentinelConnector(self.credentials).get_alerts(limit)
@@ -40,7 +40,7 @@ class SIEMUniversalService:
     async def get_events(self, limit: int = 100) -> List[SIEMEvent]:
         if not self.has_credentials():
             return []
-        if self.siem_type == "splunk":
+        if self.siem_type in {"splunk es", "splunk_es", "splunk-es", "splunk"}:
             return await SplunkConnector(self.connection.url, self.credentials).get_events(limit)
         if self.siem_type == "sentinel":
             return await SentinelConnector(self.credentials).get_events(limit)
@@ -49,7 +49,7 @@ class SIEMUniversalService:
     async def get_rules(self, limit: int = 200) -> List[SIEMRule]:
         if not self.has_credentials():
             return []
-        if self.siem_type == "splunk":
+        if self.siem_type in {"splunk es", "splunk_es", "splunk-es", "splunk"}:
             return await SplunkConnector(self.connection.url, self.credentials).get_rules(limit)
         if self.siem_type == "sentinel":
             return await SentinelConnector(self.credentials).get_rules(limit)
@@ -66,13 +66,42 @@ class SIEMUniversalService:
                 message="Credentials not supplied. Add a token or service principal to enable SIEM queries.",
             )
 
-        if self.siem_type == "splunk":
+        if self.siem_type in {"splunk es", "splunk_es", "splunk-es", "splunk"}:
             health = await SplunkConnector(self.connection.url, self.credentials).health()
         elif self.siem_type == "sentinel":
             health = await SentinelConnector(self.credentials).health()
         else:
             health = {"status": "configured", "auth_status": "not_supported", "message": "Unsupported SIEM type"}
         return SIEMHealth(**health)
+
+    async def get_evidence(
+        self,
+        earliest: str,
+        latest: str,
+        host: Optional[str] = None,
+        user: Optional[str] = None,
+        dest: Optional[str] = None,
+        src: Optional[str] = None,
+        limit: int = 50,
+    ) -> SIEMEvidenceBundle:
+        if not self.has_credentials():
+            return SIEMEvidenceBundle(count=0, items=[], deep_link=None)
+        if self.siem_type in {"splunk es", "splunk_es", "splunk-es", "splunk"}:
+            items, deep_link = await SplunkConnector(self.connection.url, self.credentials).get_evidence(
+                earliest=earliest,
+                latest=latest,
+                host=host,
+                user=user,
+                dest=dest,
+                src=src,
+                limit=limit,
+            )
+            return SIEMEvidenceBundle(
+                count=len(items),
+                items=[SIEMEvidence(**item) for item in items],
+                deep_link=deep_link,
+            )
+        return SIEMEvidenceBundle(count=0, items=[], deep_link=None)
 
     def to_connection_response(self) -> Dict[str, Any]:
         return {

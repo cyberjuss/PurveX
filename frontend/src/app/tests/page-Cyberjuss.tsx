@@ -17,19 +17,19 @@ import { Activity, Play, Target, History, Loader2, Clock, Shield, AlertCircle, R
 function getResultBadgeClass(result?: string) {
   switch (result) {
     case "PASS":
-      return "bg-emerald-500/15 text-emerald-300 border border-emerald-500/40";
+      return "bg-emerald-100 text-emerald-700 border border-emerald-200";
     case "FAIL":
-      return "bg-red-500/15 text-red-300 border border-red-500/40";
+      return "bg-red-100 text-red-700 border border-red-200";
     case "INCONCLUSIVE":
-      return "bg-orange-500/15 text-orange-300 border border-orange-500/40";
+      return "bg-orange-100 text-orange-700 border border-orange-200";
     case "PENDING":
-      return "bg-blue-500/15 text-blue-300 border border-blue-500/40";
+      return "bg-blue-100 text-blue-700 border border-blue-200";
     case "RUNNING":
-      return "bg-yellow-500/15 text-yellow-300 border border-yellow-500/40";
+      return "bg-yellow-100 text-yellow-700 border border-yellow-200";
     case "ERROR":
-      return "bg-red-700/15 text-red-500 border border-red-700/40";
+      return "bg-red-100 text-red-700 border border-red-200";
     default:
-      return "bg-slate-700/40 text-slate-200 border border-slate-600/60";
+      return "bg-slate-100 text-slate-700 border border-slate-200";
   }
 }
 

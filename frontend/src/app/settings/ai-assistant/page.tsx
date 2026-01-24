@@ -11,6 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { apiFetch } from "@/lib/api";
 import { Sparkles } from "lucide-react";
 import { PageContainer } from "@/components/layout/page-container";
+import { PageHeader } from "@/components/layout/page-header";
 
 interface AIAssistantSettings {
   ai_provider: string;
@@ -102,6 +103,12 @@ export default function AIAssistantSettingsPage() {
 
   return (
     <PageContainer maxWidth="lg" className="space-y-6">
+      <PageHeader
+        eyebrow="AI governance"
+        title="AI Assistant"
+        subtitle="Shape how PurveX AI explains failures, recommends tuning, and respects your data boundaries."
+        icon={<Sparkles className="h-5 w-5" />}
+      />
       <Card>
         <CardHeader className="flex flex-row items-start justify-between gap-4 border-b border-slate-200 pb-4">
           <div>

@@ -178,8 +178,42 @@ export default function DetectionAlertDetailPage() {
  const eventStatus = (alert as any)?.status || "active";
 
   return (
-    <PageContainer maxWidth="full" className="p-0 bg-slate-50">
-      <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-10 space-y-10">
+    <PageContainer maxWidth="xl">
+      <PageHeader
+        eyebrow="Detection event"
+        title={alert?.name || "Event details"}
+        subtitle={detection?.notes || "Purpose not set."}
+        icon={<Shield className="h-5 w-5" />}
+        actions={
+          <div className="flex flex-wrap gap-2">
+            <Button
+              asChild
+              size="sm"
+              variant="outline"
+              className="border-slate-300 bg-white text-slate-900 hover:bg-slate-50"
+            >
+              <Link href={`/run-test?detectionId=${detectionId}`}>
+                <Activity className="h-4 w-4 mr-2" />
+                Run Test
+              </Link>
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              className="border-slate-300 text-slate-700 hover:bg-slate-50"
+              onClick={() => {
+                if (typeof window !== "undefined") {
+                  window.location.href = `/agent?detectionId=${detectionId}&alertId=${alert?.id}`;
+                }
+              }}
+            >
+              <Cpu className="h-4 w-4 mr-2" />
+              Ask Watchtower
+            </Button>
+          </div>
+        }
+      />
+      <div className="space-y-6">
     {alert && (
           <Card className="border border-slate-200 bg-white shadow-[0_24px_60px_rgba(15,23,42,0.08)] overflow-hidden rounded-3xl">
             <CardContent className="p-0">
@@ -196,32 +230,6 @@ export default function DetectionAlertDetailPage() {
                     <p className="text-sm text-slate-600 mt-2 max-w-2xl">
                       {detection?.notes || "Purpose not set."}
                     </p>
-                  </div>
-                  <div className="flex flex-wrap gap-2">
-                    <Button
-                      asChild
-                      size="sm"
-                      variant="outline"
-                      className="border-slate-300 bg-white text-slate-900 hover:bg-slate-50"
-                    >
-                      <Link href={`/run-test?detectionId=${detectionId}`}>
-                        <Activity className="h-4 w-4 mr-2" />
-                        Run Test
-                      </Link>
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      className="border-slate-300 text-slate-700 hover:bg-slate-50"
-                      onClick={() => {
-                        if (typeof window !== "undefined") {
-                          window.location.href = `/agent?detectionId=${detectionId}&alertId=${alert.id}`;
-                        }
-                      }}
-                    >
-                      <Cpu className="h-4 w-4 mr-2" />
-                      Ask Watchtower
-                    </Button>
                   </div>
                 </div>
                 <div className="mt-6 flex flex-wrap gap-3">

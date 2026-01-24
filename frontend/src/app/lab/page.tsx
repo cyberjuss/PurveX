@@ -644,7 +644,7 @@ while true; do
   LOCAL_IP=$(hostname -I 2>/dev/null | awk '{{print $1}}' || echo "127.0.0.1")
   curl -s -X POST -H "Authorization: Bearer $API_TOKEN" -H "Content-Type: application/json" \\
     -d "{{\\"os\\":\\"$OS_NAME\\",\\"ip_address\\":\\"$LOCAL_IP\\",\\"agent_version\\":\\"v1.0.0\\",\\"status\\":\\"online\\"}}" \\
-    "{api_url.rstrip('/')}/settings/environment-runners/{result.get('id')}/heartbeat" >/dev/null 2>&1 || true
+    "{api_url.rstrip('/')}/agent/heartbeat" >/dev/null 2>&1 || true
   CMD_JSON=$(curl -s -H "Authorization: Bearer \${API_TOKEN}" "\${API_URL%/}/agent/commands/next" || true)
   CMD_ID=$(echo "$CMD_JSON" | grep -o '"id":[0-9]*' | grep -o '[0-9]*' | head -1)
   CMD_TYPE=$(echo "$CMD_JSON" | grep -o '"command_type":"[^"]*"' | cut -d'"' -f4)
@@ -970,12 +970,14 @@ function LabPageContent() {
   }
 
   return (
-    <PageContainer maxWidth="full" className="p-0">
+    <PageContainer maxWidth="full">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-5">
           <div className="w-full pl-0.5 pr-0 sm:pr-0">
             <PageHeader
+              eyebrow="Controlled lab"
               title="Lab"
               subtitle="Experiment safely and validate detection changes"
+              icon={<FlaskConical className="h-5 w-5" />}
             />
           </div>
 
@@ -1590,7 +1592,7 @@ function LabPageContent() {
 
           {currentTest && (
             <Card className="transition-all duration-300 hover:border-slate-600/50">
-              <CardHeader className="border-b border-slate-800/50 pb-3">
+              <CardHeader className="border-b border-slate-200 pb-3">
                 <div className="flex items-center justify-between">
                   <div>
                     <CardTitle className="text-lg font-display font-bold text-white flex items-center gap-2">
@@ -1611,7 +1613,7 @@ function LabPageContent() {
                   </Badge>
                 </div>
               </CardHeader>
-              <CardContent className="pt-4 space-y-4 text-xs font-body text-slate-200">
+              <CardContent className="pt-4 space-y-4 text-xs font-body text-slate-700">
                 {/* Timeline / progress strip */}
                 <div className="space-y-2">
                   <div className="flex items-center justify-between">
@@ -1622,7 +1624,7 @@ function LabPageContent() {
                       {labStatus !== "pending" && labStatus !== "running" && "Run completed."}
                     </span>
                   </div>
-                  <div className="h-1.5 w-full rounded-full bg-slate-900/80 overflow-hidden border border-slate-800/50 transition-all duration-300">
+                  <div className="h-1.5 w-full rounded-full bg-slate-200 overflow-hidden border border-slate-200 transition-all duration-300">
                     <div
                       className="h-full bg-gradient-to-r from-sky-400 via-emerald-400 to-sky-500 transition-all duration-700 ease-out"
                       style={{ width: `${Math.round(labProgress * 100)}%` }}
@@ -1671,7 +1673,7 @@ function LabPageContent() {
                           <Activity className="h-3.5 w-3.5" />
                           Telemetry
                         </div>
-                        <p className="text-sm font-body text-slate-200">
+                        <p className="text-sm font-body text-slate-700">
                           Logs present:{" "}
                           <span className="font-display font-semibold text-white">
                             {(() => {
@@ -1696,7 +1698,7 @@ function LabPageContent() {
                           <Zap className="h-3.5 w-3.5" />
                           Detection
                         </div>
-                        <p className="text-sm font-body text-slate-200">
+                        <p className="text-sm font-body text-slate-700">
                           Linked detection:{" "}
                           <span className="font-display font-semibold text-white">
                             {currentTest.detection?.title ?? "None (telemetry-only run)"}
