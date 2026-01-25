@@ -6,6 +6,7 @@ MIN_NODE_VERSION="20.9.0"
 MIN_NODE_MAJOR="20"
 MIN_NODE_MINOR="9"
 MIN_NODE_PATCH="0"
+OLLAMA_MODEL_DEFAULT="${OLLAMA_MODEL_NAME:-gemma2:2b}"
 
 echo "Checking required tooling..."
 
@@ -144,6 +145,51 @@ ensure_node() {
 
 ensure_node
 
+ensure_ollama() {
+  if command -v ollama >/dev/null 2>&1; then
+    echo "Ollama found."
+  else
+    echo "Ollama not found."
+    if prompt_yes_no "Install Ollama now?"; then
+      if ! command -v curl >/dev/null 2>&1; then
+        echo "curl not found."
+        if command -v apt-get >/dev/null 2>&1; then
+          if prompt_yes_no "Install curl with apt-get?"; then
+            sudo apt-get update
+            sudo apt-get install -y curl
+          else
+            echo "Install curl and rerun."
+            return 1
+          fi
+        else
+          echo "Install curl and rerun."
+          return 1
+        fi
+      fi
+      echo "Installing Ollama..."
+      curl -fsSL https://ollama.com/install.sh | sh
+    else
+      echo "Skipping Ollama installation."
+      return 0
+    fi
+  fi
+
+  if prompt_yes_no "Start Ollama and pull model (${OLLAMA_MODEL_DEFAULT}) now?"; then
+    if ! curl -fsS http://127.0.0.1:11434/api/tags >/dev/null 2>&1; then
+      echo "Starting Ollama..."
+      (ollama serve >/dev/null 2>&1 &)
+      for _ in {1..20}; do
+        if curl -fsS http://127.0.0.1:11434/api/tags >/dev/null 2>&1; then
+          break
+        fi
+        sleep 1
+      done
+    fi
+    echo "Pulling Ollama model: ${OLLAMA_MODEL_DEFAULT}"
+    ollama pull "${OLLAMA_MODEL_DEFAULT}" || true
+  fi
+}
+
 echo "Setting up backend venv and dependencies..."
 cd "${ROOT_DIR}/backend"
 if [ ! -d "venv" ]; then
@@ -175,5 +221,7 @@ deactivate
 echo "Setting up frontend dependencies..."
 cd "${ROOT_DIR}/frontend"
 npm install
+
+ensure_ollama
 
 echo "Setup complete. Run: ${ROOT_DIR}/scripts/start_purvex.sh"

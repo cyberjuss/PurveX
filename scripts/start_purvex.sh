@@ -66,6 +66,14 @@ if ! node_version_ok "${nodever}"; then
 fi
 
 export NEXT_PUBLIC_API_BASE_URL="http://127.0.0.1:${BACKEND_PORT}"
+export OLLAMA_MODEL_NAME="${OLLAMA_MODEL_NAME:-gemma2:2b}"
+export OLLAMA_MODEL="${OLLAMA_MODEL:-${OLLAMA_MODEL_NAME}}"
+export OLLAMA_BASE_URL="${OLLAMA_BASE_URL:-http://127.0.0.1:11434}"
+export PURVEX_ENV="${PURVEX_ENV:-dev}"
+export OLLAMA_NUM_PREDICT="${OLLAMA_NUM_PREDICT:-128}"
+export OLLAMA_NUM_CTX="${OLLAMA_NUM_CTX:-1536}"
+export OLLAMA_TEMPERATURE="${OLLAMA_TEMPERATURE:-0.2}"
+export OLLAMA_TOP_P="${OLLAMA_TOP_P:-0.9}"
 
 ensure_jwt_secret() {
   local default_secret="super-secret-change-me-in-production"
@@ -98,6 +106,33 @@ start_backend() {
   python -m uvicorn app.main:app --host 127.0.0.1 --port "${BACKEND_PORT}" --reload
 }
 
+start_ollama() {
+  if ! command -v ollama >/dev/null 2>&1; then
+    echo "Ollama not found. Skipping local AI startup."
+    return
+  fi
+
+  local ollama_url="http://127.0.0.1:11434"
+  local model="${OLLAMA_MODEL_NAME:-mistral:7b}"
+  if ! curl -fsS "${ollama_url}/api/tags" >/dev/null 2>&1; then
+    echo "Starting Ollama on ${ollama_url}"
+    (ollama serve >/dev/null 2>&1 &)
+    for _ in {1..20}; do
+      if curl -fsS "${ollama_url}/api/tags" >/dev/null 2>&1; then
+        break
+      fi
+      sleep 1
+    done
+  else
+    echo "Ollama already running at ${ollama_url}"
+  fi
+
+  if ! ollama list 2>/dev/null | grep -q "${model}"; then
+    echo "Pulling Ollama model ${model} (first run only)..."
+    ollama pull "${model}" || true
+  fi
+}
+
 start_frontend() {
   echo "Starting frontend on http://127.0.0.1:${FRONTEND_PORT}"
   cd "${ROOT_DIR}/frontend"
@@ -115,6 +150,8 @@ cleanup() {
 }
 
 trap cleanup EXIT
+
+start_ollama
 
 start_backend &
 BACKEND_PID=$!
