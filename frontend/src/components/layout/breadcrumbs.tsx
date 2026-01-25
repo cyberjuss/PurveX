@@ -50,6 +50,7 @@ export function Breadcrumbs({ items, variant = "light", className }: Breadcrumbs
               .map((word) => {
                 const upper = word.toUpperCase();
                 if (upper === "MITRE") return upper;
+                if (upper === "SIEM") return upper;
                 if (upper === "ALERTS") return "Signals";
                 if (upper === "EVENTS") return "Signals";
                 return word.charAt(0).toUpperCase() + word.slice(1);
@@ -181,4 +182,3 @@ export function Breadcrumbs({ items, variant = "light", className }: Breadcrumbs
     </nav>
   );
 }
-

@@ -1,12 +1,13 @@
 "use client";
 
 import Link from "next/link";
-import { useState, useEffect, useCallback, type ReactNode, Suspense } from "react";
+import { useState, useEffect, useCallback, useRef, type ReactNode, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
@@ -21,6 +22,7 @@ import {
   getMitreTechniques,
   type MitreTechnique,
   getAtomicTests,
+  type AtomicTestDefinition,
   getEnvironmentRunners,
 } from "@/lib/api";
 import { usePermissions } from "@/hooks/usePermissions";
@@ -45,12 +47,28 @@ import {
   ArrowRight,
   Server,
   Settings,
+  Plus,
+  X,
 } from "lucide-react";
 import { PageContainer } from "@/components/layout/page-container";
 import { cn } from "@/lib/utils";
 import { PageHeader } from "@/components/layout/page-header";
+import { Tooltip } from "@/components/ui/tooltip";
 
 type UiTestType = "detection_validation" | "find_detection_coverage" | "telemetry_check";
+type RoleTier = "T1" | "T2" | "T3";
+type GoalTemplate = {
+  id: string;
+  title: string;
+  description: string;
+  defaultTestType: UiTestType;
+  scopeHint: string;
+  objective: string;
+  roles: RoleTier[];
+  techniques: string[];
+  requiredTelemetry: string[];
+  recommendedTests: Array<{ technique: string; name: string }>;
+};
 
 type HighLevelResultType = "PASS" | "FAIL_RULE_VISIBILITY" | "NO_LOGS" | "SYSTEM_ERROR";
 
@@ -433,6 +451,7 @@ function RunTestPageContent() {
   const [detections, setDetections] = useState<Detection[]>([]);
   const [selectedDetection, setSelectedDetection] = useState<string>("");
   const [selectedScenario, setSelectedScenario] = useState<string>("");
+  const [selectedGoalId, setSelectedGoalId] = useState<string | null>(null);
   const [environment, setEnvironment] = useState<"lab" | "dev" | "prod">("lab");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -455,6 +474,274 @@ function RunTestPageContent() {
   const [execution, setExecution] = useState<ExecutionState | null>(null);
   const [logsExpanded, setLogsExpanded] = useState<boolean>(false);
   const [atomicScenarioHint, setAtomicScenarioHint] = useState<{ name: string; description?: string } | null>(null);
+  const goalCarouselRef = useRef<HTMLDivElement | null>(null);
+  const [showGoalForm, setShowGoalForm] = useState(false);
+  const [showGoalLibrary, setShowGoalLibrary] = useState(false);
+  const [appliedGoalId, setAppliedGoalId] = useState<string | null>(null);
+  const [customGoals, setCustomGoals] = useState<GoalTemplate[]>([]);
+  const [goalForm, setGoalForm] = useState({
+    title: "",
+    description: "",
+    objective: "",
+    scopeHint: "",
+    defaultTestType: "find_detection_coverage" as UiTestType,
+    roles: ["T1", "T2", "T3"] as RoleTier[],
+  });
+  const [goalTtps, setGoalTtps] = useState<string[]>([]);
+  const [goalTelemetry, setGoalTelemetry] = useState<string[]>([]);
+  const [goalTelemetryInput, setGoalTelemetryInput] = useState("");
+  const [recommendedTechnique, setRecommendedTechnique] = useState<string>("");
+  const [availableAtomicTests, setAvailableAtomicTests] = useState<AtomicTestDefinition[]>([]);
+  const [goalRecommendedTests, setGoalRecommendedTests] = useState<Array<{ technique: string; name: string }>>([]);
+
+  const roleTiers: RoleTier[] = ["T1", "T2", "T3"];
+  const roleLabels: Record<RoleTier, string> = {
+    T1: "Tier 1",
+    T2: "Tier 2",
+    T3: "Tier 3",
+  };
+  const roleTooltips: Record<RoleTier, string> = {
+    T1: "Tier 1: Triage/monitoring. Validate alerts, quick checks, escalate.",
+    T2: "Tier 2: Investigation/analysis. Correlate signals, tune detections, root cause.",
+    T3: "Tier 3: Engineering/advanced. Build detections, automate, cover complex TTPs.",
+  };
+  const [activeGoalRoles, setActiveGoalRoles] = useState<RoleTier[]>(roleTiers);
+
+  const goalTemplates: GoalTemplate[] = [
+    {
+      id: "goal-lateral-movement",
+      title: "Validate lateral movement defenses",
+      description: "Prove detection coverage for common lateral movement techniques.",
+      defaultTestType: "find_detection_coverage",
+      scopeHint: "Focus on T1021 (SMB/WinRM/RDP), T1077, T1047, T1550.",
+      objective: "Detect remote execution and credential reuse across hosts.",
+      roles: ["T2", "T3"],
+      techniques: ["T1021", "T1021.001", "T1021.002", "T1021.003", "T1047", "T1077", "T1550"],
+      requiredTelemetry: ["Process creation", "Authentication logs", "Remote service activity", "Network connections"],
+      recommendedTests: [
+        { technique: "T1021.002", name: "SMB/Windows Admin Shares" },
+        { technique: "T1021.006", name: "WinRM Remote Execution" },
+        { technique: "T1047", name: "WMI Remote Process" },
+      ],
+    },
+    {
+      id: "goal-ransomware-telemetry",
+      title: "Test ransomware telemetry coverage",
+      description: "Confirm logs and detections for ransomware-like behaviors.",
+      defaultTestType: "find_detection_coverage",
+      scopeHint: "Focus on T1486, T1489, T1490, T1078, T1003.",
+      objective: "Verify encryption, service impact, and recovery sabotage visibility.",
+      roles: ["T2", "T3"],
+      techniques: ["T1486", "T1489", "T1490", "T1078", "T1003"],
+      requiredTelemetry: ["Process creation", "File activity", "Service control", "Backup/restore events"],
+      recommendedTests: [
+        { technique: "T1486", name: "Data Encrypted for Impact" },
+        { technique: "T1489", name: "Service Stop" },
+        { technique: "T1490", name: "Inhibit System Recovery" },
+      ],
+    },
+    {
+      id: "goal-priv-esc",
+      title: "Validate privilege escalation visibility",
+      description: "Ensure you can detect common privilege escalation paths.",
+      defaultTestType: "find_detection_coverage",
+      scopeHint: "Focus on T1068, T1543, T1548, T1055.",
+      objective: "Catch attempts to gain admin or SYSTEM privileges.",
+      roles: ["T2", "T3"],
+      techniques: ["T1068", "T1543", "T1548", "T1055"],
+      requiredTelemetry: ["Process creation", "Privilege changes", "Service installs", "Token activity"],
+      recommendedTests: [
+        { technique: "T1543", name: "Create/Modify System Service" },
+        { technique: "T1548", name: "Abuse Elevation Control Mechanism" },
+        { technique: "T1055", name: "Process Injection" },
+      ],
+    },
+    {
+      id: "goal-cloud-identity",
+      title: "Test cloud identity abuse",
+      description: "Validate identity abuse and access token misuse scenarios.",
+      defaultTestType: "find_detection_coverage",
+      scopeHint: "Focus on T1550, T1078, T1539, T1606.",
+      objective: "Detect stolen token use and suspicious cloud access.",
+      roles: ["T2", "T3"],
+      techniques: ["T1550", "T1078", "T1539", "T1606"],
+      requiredTelemetry: ["Cloud audit logs", "Authentication events", "Token usage", "API activity"],
+      recommendedTests: [
+        { technique: "T1078", name: "Valid Accounts" },
+        { technique: "T1550", name: "Use of Stolen Access Token" },
+        { technique: "T1606", name: "Forge Web Session Cookie" },
+      ],
+    },
+    {
+      id: "goal-credential-access",
+      title: "Validate credential access defenses",
+      description: "Ensure visibility into common credential dumping and theft.",
+      defaultTestType: "find_detection_coverage",
+      scopeHint: "Focus on T1003 family, T1555, T1552.",
+      objective: "Detect local credential theft and secret discovery.",
+      roles: ["T2", "T3"],
+      techniques: ["T1003", "T1003.001", "T1003.003", "T1003.006", "T1555", "T1552"],
+      requiredTelemetry: ["Process creation", "LSASS access", "Credential store access"],
+      recommendedTests: [
+        { technique: "T1003.001", name: "Dump LSASS" },
+        { technique: "T1555", name: "Credentials from Password Stores" },
+        { technique: "T1552", name: "Unsecured Credentials" },
+      ],
+    },
+    {
+      id: "goal-defense-evasion",
+      title: "Test defense evasion attempts",
+      description: "Validate that tampering, obfuscation, and bypasses are detected.",
+      defaultTestType: "find_detection_coverage",
+      scopeHint: "Focus on T1562, T1027, T1218, T1036.",
+      objective: "Spot attempts to disable, hide, or masquerade.",
+      roles: ["T2", "T3"],
+      techniques: ["T1562", "T1027", "T1218", "T1036"],
+      requiredTelemetry: ["Security control events", "Process creation", "Command-line logging"],
+      recommendedTests: [
+        { technique: "T1562", name: "Impair Defenses" },
+        { technique: "T1027", name: "Obfuscated Files or Information" },
+        { technique: "T1218", name: "Signed Binary Proxy Execution" },
+      ],
+    },
+    {
+      id: "goal-persistence",
+      title: "Validate persistence mechanisms",
+      description: "Ensure you can detect common long-term footholds.",
+      defaultTestType: "find_detection_coverage",
+      scopeHint: "Focus on T1547, T1053, T1543, T1136.",
+      objective: "Detect scheduled tasks, services, and autostart entries.",
+      roles: ["T2", "T3"],
+      techniques: ["T1547", "T1053", "T1543", "T1136"],
+      requiredTelemetry: ["Task scheduler logs", "Service creation", "Registry changes"],
+      recommendedTests: [
+        { technique: "T1053", name: "Scheduled Task/Job" },
+        { technique: "T1547", name: "Boot or Logon Autostart" },
+        { technique: "T1136", name: "Create Account" },
+      ],
+    },
+    {
+      id: "goal-discovery",
+      title: "Test discovery and reconnaissance",
+      description: "Confirm visibility into host and network discovery.",
+      defaultTestType: "find_detection_coverage",
+      scopeHint: "Focus on T1082, T1049, T1018, T1087, T1033.",
+      objective: "Detect enumeration of hosts, users, and environment.",
+      roles: ["T1", "T2"],
+      techniques: ["T1082", "T1049", "T1018", "T1087", "T1033"],
+      requiredTelemetry: ["Process creation", "Network discovery", "User/group queries"],
+      recommendedTests: [
+        { technique: "T1082", name: "System Information Discovery" },
+        { technique: "T1049", name: "System Network Connections Discovery" },
+        { technique: "T1018", name: "Remote System Discovery" },
+      ],
+    },
+    {
+      id: "goal-command-control",
+      title: "Validate command and control signals",
+      description: "Ensure suspicious beaconing and tool transfer is visible.",
+      defaultTestType: "find_detection_coverage",
+      scopeHint: "Focus on T1071, T1095, T1105.",
+      objective: "Detect outbound C2 and payload staging.",
+      roles: ["T2", "T3"],
+      techniques: ["T1071", "T1095", "T1105"],
+      requiredTelemetry: ["Network connections", "DNS/HTTP logs", "Proxy logs"],
+      recommendedTests: [
+        { technique: "T1071", name: "Application Layer Protocol" },
+        { technique: "T1095", name: "Non-Application Layer Protocol" },
+        { technique: "T1105", name: "Ingress Tool Transfer" },
+      ],
+    },
+    {
+      id: "goal-exfiltration",
+      title: "Test data exfiltration visibility",
+      description: "Validate detection of data staging and exfil channels.",
+      defaultTestType: "find_detection_coverage",
+      scopeHint: "Focus on T1074, T1041, T1020.",
+      objective: "Detect staging and transfer of sensitive data.",
+      roles: ["T2", "T3"],
+      techniques: ["T1074", "T1041", "T1020"],
+      requiredTelemetry: ["File activity", "Network flows", "Cloud storage logs"],
+      recommendedTests: [
+        { technique: "T1074", name: "Data Staged" },
+        { technique: "T1041", name: "Exfiltration Over C2 Channel" },
+        { technique: "T1020", name: "Automated Exfiltration" },
+      ],
+    },
+    {
+      id: "goal-impact",
+      title: "Validate impact activity detection",
+      description: "Ensure visibility into disruptive actions.",
+      defaultTestType: "find_detection_coverage",
+      scopeHint: "Focus on T1486, T1490, T1499, T1529.",
+      objective: "Detect disruption, shutdown, and encryption behaviors.",
+      roles: ["T1", "T2", "T3"],
+      techniques: ["T1486", "T1490", "T1499", "T1529"],
+      requiredTelemetry: ["Process creation", "System shutdown events", "Service disruptions"],
+      recommendedTests: [
+        { technique: "T1499", name: "Endpoint Denial of Service" },
+        { technique: "T1529", name: "System Shutdown/Reboot" },
+        { technique: "T1486", name: "Data Encrypted for Impact" },
+      ],
+    },
+    {
+      id: "goal-webapp-abuse",
+      title: "Test web app abuse patterns",
+      description: "Validate visibility into common web exploitation paths.",
+      defaultTestType: "find_detection_coverage",
+      scopeHint: "Focus on T1190, T1505, T1059.",
+      objective: "Detect initial access via public-facing apps.",
+      roles: ["T2", "T3"],
+      techniques: ["T1190", "T1505", "T1059"],
+      requiredTelemetry: ["Web server logs", "WAF alerts", "Process creation"],
+      recommendedTests: [
+        { technique: "T1190", name: "Exploit Public-Facing Application" },
+        { technique: "T1505", name: "Server Software Component" },
+        { technique: "T1059", name: "Command and Scripting Interpreter" },
+      ],
+    },
+  ];
+  const allGoalTemplates = [...goalTemplates, ...customGoals];
+  const filteredGoalTemplates = allGoalTemplates.filter((goal) =>
+    goal.roles.some((role) => activeGoalRoles.includes(role))
+  );
+  const selectedGoal = allGoalTemplates.find((goal) => goal.id === selectedGoalId) || null;
+
+  useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem("purvex.goalTemplates");
+      if (!raw) return;
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        const normalized = parsed.map((goal) => ({
+          ...goal,
+          roles: Array.isArray(goal.roles) && goal.roles.length > 0 ? goal.roles : roleTiers,
+        }));
+        setCustomGoals(normalized);
+      }
+    } catch {
+      // Ignore invalid stored data.
+    }
+  }, []);
+
+  const persistCustomGoals = (next: GoalTemplate[]) => {
+    setCustomGoals(next);
+    try {
+      window.localStorage.setItem("purvex.goalTemplates", JSON.stringify(next));
+    } catch {
+      // Ignore storage errors.
+    }
+  };
+
+  const toggleGoalRole = (role: RoleTier) => {
+    setActiveGoalRoles((prev) => {
+      if (prev.includes(role)) {
+        const next = prev.filter((item) => item !== role);
+        return next.length === 0 ? prev : next;
+      }
+      return [...prev, role];
+    });
+  };
 
   const { run: runTest, isRunning, result, error: runError, setResult } = useRunTest();
   const { hasPermission, canRunTest, canScheduleTest, loading: permissionsLoading } = usePermissions();
@@ -487,6 +774,60 @@ function RunTestPageContent() {
       setCurrentStep(2); // Auto-advance to step 2 (technique selection)
     }
   }, [techniqueFromExplore, preselectedDetectionId]);
+
+  useEffect(() => {
+    if (preselectedDetectionId || techniqueFromExplore || !focus) return;
+    if (focus === "coverage") {
+      setTestType("find_detection_coverage");
+      setCurrentStep(2);
+      return;
+    }
+    if (focus === "telemetry") {
+      setTestType("telemetry_check");
+      setCurrentStep(2);
+      return;
+    }
+    if (focus === "validation") {
+      setTestType("detection_validation");
+      setCurrentStep(2);
+    }
+  }, [focus, preselectedDetectionId, techniqueFromExplore]);
+
+  useEffect(() => {
+    if (!showGoalForm) return;
+    if (mitreTechniques.length > 0) return;
+    (async () => {
+      try {
+        const data = await getMitreTechniques();
+        setMitreTechniques(data);
+      } catch {
+        // Ignore load errors in modal.
+      }
+    })();
+  }, [showGoalForm, mitreTechniques.length]);
+
+  useEffect(() => {
+    if (!showGoalForm || !recommendedTechnique) {
+      setAvailableAtomicTests([]);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const response = await getAtomicTests({ technique_id: recommendedTechnique, limit: 200 });
+        if (!cancelled) {
+          setAvailableAtomicTests(response.items || []);
+        }
+      } catch {
+        if (!cancelled) {
+          setAvailableAtomicTests([]);
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [showGoalForm, recommendedTechnique]);
 
   useEffect(() => {
     async function loadDetections() {
@@ -803,6 +1144,56 @@ function RunTestPageContent() {
     );
   }
 
+  const handleSaveGoal = () => {
+    if (!goalForm.title.trim() || !goalForm.description.trim() || !goalForm.objective.trim()) {
+      setError("Please provide a title, description, and objective for the goal template.");
+      return;
+    }
+    if (goalTtps.length === 0) {
+      setError("Please add at least one TTP for the goal template.");
+      return;
+    }
+
+    const techniques = goalTtps;
+    const requiredTelemetry = goalTelemetry;
+    const recommendedTests = goalRecommendedTests;
+
+    const newGoal: GoalTemplate = {
+      id: `custom-${Date.now()}`,
+      title: goalForm.title.trim(),
+      description: goalForm.description.trim(),
+      objective: goalForm.objective.trim(),
+      scopeHint: goalForm.scopeHint.trim() || "Custom scope",
+      defaultTestType: goalForm.defaultTestType,
+      roles: goalForm.roles.length > 0 ? goalForm.roles : roleTiers,
+      techniques,
+      requiredTelemetry,
+      recommendedTests,
+    };
+
+    const next = [...customGoals, newGoal];
+    persistCustomGoals(next);
+    setSelectedGoalId(newGoal.id);
+    setTestType(newGoal.defaultTestType);
+    setShowGoalForm(false);
+    setGoalForm({
+      title: "",
+      description: "",
+      objective: "",
+      scopeHint: "",
+      defaultTestType: "find_detection_coverage",
+      roles: ["T1", "T2", "T3"],
+    });
+    setGoalTtps([]);
+    setGoalTelemetry([]);
+    setGoalTelemetryInput("");
+    setRecommendedTechnique("");
+    setAvailableAtomicTests([]);
+    setGoalRecommendedTests([]);
+    setError(null);
+    setCurrentStep(2);
+  };
+
   const detectionsForUi = detections.filter((det) => {
     if (techniqueFromExplore && testType === "detection_validation") {
       return det.technique_id === techniqueFromExplore;
@@ -905,14 +1296,6 @@ function RunTestPageContent() {
 
   return (
     <PageContainer>
-      <PageHeader
-        eyebrow="Test orchestration"
-        title="Run Test"
-        subtitle="Choose a validation goal, map a technique, and launch a controlled run against your lab environment."
-        icon={<Target className="h-5 w-5" />}
-        actions={null}
-      />
-
       {/* Step Progress Indicator */}
       <div className="mb-8 flex justify-center">
         <div className="relative w-full max-w-4xl px-6">
@@ -952,7 +1335,7 @@ function RunTestPageContent() {
                     {isCompleted ? (
                       <CheckCircle2 className="h-6 w-6" />
                     ) : (
-                      <span className="text-xl font-display font-bold">{step}</span>
+                      <span className="text-[22px] font-display font-bold">{step}</span>
                     )}
                   </div>
                   <span
@@ -983,21 +1366,22 @@ function RunTestPageContent() {
               <div className="flex items-start justify-between">
                 <div className="space-y-1">
                   <h2 className="text-xl font-display font-semibold text-slate-900 flex items-center gap-2">
-                    <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-indigo-100 text-indigo-700 border border-indigo-200 text-sm font-bold">
+                    <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-indigo-100 text-indigo-700 border border-indigo-200 text-[18px] font-bold">
                       1
                     </span>
                     Select Test Mode
                   </h2>
                   <p className="text-sm text-slate-600 ml-9">
-                    Choose what you want this test run to accomplish
+                    Choose the kind of validation you need
                   </p>
                     </div>
                   </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 ml-9">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 ml-9 pt-3 border-t border-slate-200">
                   <button
                     type="button"
                     onClick={() => {
+                      setSelectedGoalId(null);
                       setTestType("detection_validation");
                       setSelectedDetection("");
                       setSelectedScenario("");
@@ -1045,6 +1429,7 @@ function RunTestPageContent() {
                   <button
                     type="button"
                     onClick={() => {
+                      setSelectedGoalId(null);
                       setTestType("find_detection_coverage");
                       setSelectedDetection("");
                       setSelectedScenario("");
@@ -1092,6 +1477,7 @@ function RunTestPageContent() {
                   <button
                     type="button"
                     onClick={() => {
+                      setSelectedGoalId(null);
                       setTestType("telemetry_check");
                       setSelectedDetection("");
                       setSelectedScenario("");
@@ -1144,7 +1530,7 @@ function RunTestPageContent() {
                 <div className="flex items-start justify-between">
                   <div className="space-y-1">
                     <h2 className="text-xl font-display font-semibold text-slate-900 flex items-center gap-2">
-                      <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-indigo-100 text-indigo-700 border border-indigo-200 text-sm font-bold">
+                      <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-indigo-100 text-indigo-700 border border-indigo-200 text-[18px] font-bold">
                       2
                     </span>
                         {testType === "telemetry_check"
@@ -1161,18 +1547,629 @@ function RunTestPageContent() {
                         : "Select a scenario to verify telemetry"}
                     </p>
                   </div>
-                  {loading && (
-                    <div className="flex items-center gap-2 text-sm text-slate-400">
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                      Loading...
+                {loading && (
+                  <div className="flex items-center gap-2 text-sm text-slate-400">
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Loading...
+                  </div>
+                )}
+              </div>
+
+              <div className="ml-9 rounded-2xl border border-slate-200 bg-white/80 px-4 py-3">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">
+                      Guidance mode
+                    </p>
+                    <p className="text-sm text-slate-700">
+                      Choose a goal template or continue manually.
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setShowGoalLibrary(true)}
+                      className={cn(
+                        "rounded-full border px-3 py-1 text-xs font-semibold transition",
+                        showGoalLibrary
+                          ? "border-indigo-200 bg-white text-indigo-700 shadow-sm"
+                          : "border-slate-200 bg-white text-slate-600 hover:border-indigo-200 hover:text-slate-800"
+                      )}
+                    >
+                      Use goal template
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowGoalLibrary(false);
+                        setSelectedGoalId(null);
+                        setAppliedGoalId(null);
+                        setShowGoalForm(false);
+                      }}
+                      className={cn(
+                        "rounded-full border px-3 py-1 text-xs font-semibold transition",
+                        !showGoalLibrary
+                          ? "border-indigo-200 bg-white text-indigo-700 shadow-sm"
+                          : "border-slate-200 bg-white text-slate-600 hover:border-indigo-200 hover:text-slate-800"
+                      )}
+                    >
+                      Manual selection
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {showGoalLibrary && (
+                <div className="ml-9 space-y-4 rounded-2xl border border-indigo-100 bg-indigo-50/40 px-4 py-4">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div className="flex flex-col gap-2">
+                      <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">
+                        Goal templates
+                      </p>
+                      <div className="flex flex-wrap items-center gap-2">
+                        {roleTiers.map((role) => {
+                          const isActive = activeGoalRoles.includes(role);
+                          return (
+                            <button
+                              key={role}
+                              type="button"
+                              onClick={() => toggleGoalRole(role)}
+                              className={cn(
+                                "rounded-full border px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.2em] transition",
+                                isActive
+                                  ? "border-indigo-200 bg-white text-indigo-700 shadow-sm"
+                                  : "border-slate-200 bg-white text-slate-500 hover:border-indigo-200 hover:text-slate-700"
+                              )}
+                            >
+                              <span className="flex items-center gap-1">
+                                {roleLabels[role]}
+                                <Tooltip content={roleTooltips[role]}>
+                                  <Info className="h-3 w-3 text-slate-400" />
+                                </Tooltip>
+                              </span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="icon-sm"
+                        className="h-8 w-8 border-slate-200 text-slate-700 hover:border-indigo-200 hover:bg-indigo-50"
+                        onClick={() => {
+                          goalCarouselRef.current?.scrollBy({ left: -360, behavior: "smooth" });
+                        }}
+                        aria-label="Scroll goal templates left"
+                      >
+                        <ChevronLeft className="h-4 w-4" />
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="icon-sm"
+                        className="h-8 w-8 border-slate-200 text-slate-700 hover:border-indigo-200 hover:bg-indigo-50"
+                        onClick={() => {
+                          goalCarouselRef.current?.scrollBy({ left: 360, behavior: "smooth" });
+                        }}
+                        aria-label="Scroll goal templates right"
+                      >
+                        <ChevronRight className="h-4 w-4" />
+                      </Button>
+                      {selectedGoalId && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSelectedGoalId(null);
+                          }}
+                          className="text-xs font-semibold text-slate-500 hover:text-slate-800"
+                        >
+                          Clear selection
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                  <div className="relative">
+                    <div
+                      ref={goalCarouselRef}
+                      className="flex gap-4 overflow-x-auto scroll-smooth snap-x snap-mandatory pb-2 pr-2"
+                    >
+                      {!showGoalForm && (
+                        <button
+                          type="button"
+                          onClick={() => setShowGoalForm(true)}
+                          className="relative min-w-[280px] sm:min-w-[320px] md:min-w-[360px] snap-start overflow-hidden p-4 rounded-xl border-2 border-dashed border-slate-300 transition-all text-left group bg-white hover:border-indigo-300 hover:bg-indigo-50/40"
+                        >
+                          <div className="flex items-start gap-3">
+                            <div className="h-10 w-10 rounded-lg flex items-center justify-center bg-indigo-50 text-indigo-700">
+                              <Plus className="h-5 w-5" />
+                            </div>
+                            <div className="flex-1 space-y-1">
+                              <h3 className="font-display font-semibold text-slate-900">Create a goal template</h3>
+                              <p className="text-xs text-slate-600 leading-relaxed">
+                                Add your own goal, objective, and curated TTP list.
+                              </p>
+                              <p className="text-[11px] text-slate-500">Saved locally for now.</p>
+                            </div>
+                          </div>
+                        </button>
+                      )}
+                      {filteredGoalTemplates.map((goal) => {
+                        const isSelected = selectedGoalId === goal.id;
+                        return (
+                          <button
+                            key={goal.id}
+                            type="button"
+                            onClick={() => {
+                              setSelectedGoalId(goal.id);
+                            }}
+                            className={cn(
+                              "relative min-w-[280px] sm:min-w-[320px] md:min-w-[360px] snap-start overflow-hidden p-4 rounded-xl border-2 transition-all text-left group bg-white",
+                              isSelected
+                                ? "border-[#5b7bff] shadow-[0_12px_32px_rgba(77,109,255,0.18)] ring-1 ring-[#4d6dff]/30"
+                                : "border-slate-200 hover:border-[#5b7bff] hover:shadow-[0_10px_24px_rgba(91,123,255,0.12)]"
+                            )}
+                          >
+                            <div
+                              className={cn(
+                                "absolute inset-x-0 top-0 h-1 transition-all",
+                                isSelected ? "bg-[#4d6dff]" : "bg-transparent"
+                              )}
+                            />
+                            <div className="flex items-start gap-3">
+                              <div
+                                className={cn(
+                                  "h-10 w-10 rounded-lg flex items-center justify-center transition-colors",
+                                  isSelected ? "bg-indigo-50 text-indigo-700" : "bg-slate-100 text-slate-500"
+                                )}
+                              >
+                                <Target className="h-5 w-5" />
+                              </div>
+                              <div className="flex-1 space-y-1">
+                                <h3 className="font-display font-semibold text-slate-900">{goal.title}</h3>
+                                <p className="text-xs text-slate-600 leading-relaxed">{goal.description}</p>
+                                <p className="text-[11px] text-slate-700">
+                                  <span className="font-semibold text-slate-800">Objective:</span> {goal.objective}
+                                </p>
+                                <p className="text-[11px] text-slate-500">{goal.scopeHint}</p>
+                                <div className="flex flex-wrap items-center gap-2 pt-1 text-[10px]">
+                                  {goal.roles.map((role) => (
+                                    <span
+                                      key={`${goal.id}-${role}`}
+                                      className="rounded-full border border-slate-200 bg-white px-2 py-0.5 font-semibold uppercase tracking-[0.18em] text-slate-500"
+                                    >
+                                      {roleLabels[role]}
+                                    </span>
+                                  ))}
+                                </div>
+                              </div>
+                              {isSelected && (
+                                <CheckCircle2 className="h-5 w-5 text-indigo-500 flex-shrink-0" />
+                              )}
+                            </div>
+                          </button>
+                        );
+                      })}
+                    </div>
+                    <div className="pointer-events-none absolute inset-y-0 left-0 w-10 bg-gradient-to-r from-indigo-50 via-indigo-50/80 to-transparent" />
+                    <div className="pointer-events-none absolute inset-y-0 right-0 w-10 bg-gradient-to-l from-indigo-50 via-indigo-50/80 to-transparent" />
+                  </div>
+                  <div className="flex items-center justify-center gap-2 pt-1">
+                    {filteredGoalTemplates.map((goal) => (
+                      <span
+                        key={`${goal.id}-dot`}
+                        className={cn(
+                          "h-1.5 w-5 rounded-full transition-colors",
+                          selectedGoalId === goal.id ? "bg-indigo-500" : "bg-slate-200"
+                        )}
+                      />
+                    ))}
+                  </div>
+                  {selectedGoal && (
+                    <div className="rounded-xl border border-indigo-100 bg-white px-4 py-3 text-sm text-slate-700">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="font-semibold text-slate-900">Goal:</span>
+                        <span>{selectedGoal.title}</span>
+                        <span className="text-slate-500">•</span>
+                        <span className="text-slate-600">{selectedGoal.scopeHint}</span>
+                      </div>
+                      <div className="mt-1 text-xs text-slate-600">
+                        Objective: {selectedGoal.objective}
+                      </div>
+                      <div className="mt-3 flex flex-wrap items-center gap-2">
+                        <Button
+                          type="button"
+                          size="sm"
+                          onClick={() => {
+                            if (!selectedGoal) return;
+                            setAppliedGoalId(selectedGoal.id);
+                            setTestType(selectedGoal.defaultTestType);
+                            setSelectedDetection("");
+                            setSelectedScenario("");
+                            setTargetHost("");
+                            setResult(null);
+                            setError(null);
+                            setCurrentStep(2);
+                          }}
+                        >
+                          Apply template to selection
+                        </Button>
+                        <span className="text-xs text-slate-500">
+                          Manual selection stays editable.
+                        </span>
+                      </div>
+                      <div className="mt-2 flex flex-wrap items-center gap-2">
+                        <span className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">
+                          Roles
+                        </span>
+                        {selectedGoal.roles.map((role) => (
+                          <span
+                            key={`${selectedGoal.id}-role-${role}`}
+                            className="inline-flex items-center rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.2em] text-slate-500"
+                          >
+                            {roleLabels[role]}
+                          </span>
+                        ))}
+                      </div>
+                      <div className="mt-2 flex flex-wrap items-center gap-2">
+                        <span className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">
+                          TTPs
+                        </span>
+                        {selectedGoal.techniques.map((technique) => (
+                          <Link
+                            key={technique}
+                            href={`/tests/explore/${technique}`}
+                            className="inline-flex items-center rounded-full border border-indigo-200 bg-white px-2.5 py-1 text-xs font-semibold text-indigo-700 hover:border-indigo-300 hover:bg-indigo-50"
+                          >
+                            {technique}
+                          </Link>
+                        ))}
+                      </div>
+                      <div className="mt-3 flex flex-wrap items-center gap-2">
+                        <span className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">
+                          Required telemetry
+                        </span>
+                        {selectedGoal.requiredTelemetry.map((item) => (
+                          <span
+                            key={item}
+                            className="inline-flex items-center rounded-full border border-slate-200 bg-white px-2.5 py-1 text-xs font-semibold text-slate-700"
+                          >
+                            {item}
+                          </span>
+                        ))}
+                      </div>
+                      <div className="mt-3">
+                        <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">
+                          Recommended tests
+                        </p>
+                        <div className="mt-2 flex flex-wrap gap-2">
+                          {selectedGoal.recommendedTests.map((test) => (
+                            <Link
+                              key={`${test.technique}-${test.name}`}
+                              href={`/tests/explore/${test.technique}?atomic_name=${encodeURIComponent(test.name)}`}
+                              className="inline-flex items-center gap-1 rounded-full border border-indigo-200 bg-white px-2.5 py-1 text-xs font-semibold text-indigo-700 hover:border-indigo-300 hover:bg-indigo-50"
+                            >
+                              <span className="text-indigo-500">{test.technique}</span>
+                              <span className="text-slate-500">•</span>
+                              <span>{test.name}</span>
+                            </Link>
+                          ))}
+                        </div>
+                      </div>
                     </div>
                   )}
                 </div>
+              )}
 
-                {!testType && (
-                  <div className="ml-9 p-4 rounded-lg border border-slate-200 bg-slate-50">
-                    <p className="text-sm text-slate-600">
-                      Select a test mode in Step 1 to continue
+              {showGoalForm && showGoalLibrary && (
+                <div className="ml-9 rounded-2xl border border-slate-200 bg-white/90 p-6 shadow-[0_22px_60px_rgba(15,23,42,0.12)]">
+                  <div className="flex items-start justify-between gap-4">
+                    <div>
+                      <h3 className="text-lg font-display font-semibold text-slate-900">Create goal template</h3>
+                      <p className="text-sm text-slate-600">
+                        Define the objective and TTP scope so analysts know exactly what to run.
+                      </p>
+                    </div>
+                    <Button
+                      variant="outline"
+                      size="icon-sm"
+                      className="h-8 w-8 border-slate-200 text-slate-700 hover:border-indigo-200 hover:bg-indigo-50"
+                      onClick={() => setShowGoalForm(false)}
+                      aria-label="Close goal template form"
+                    >
+                      <X className="h-4 w-4" />
+                    </Button>
+                  </div>
+                  <div className="mt-4 grid gap-4 sm:grid-cols-2">
+                    <div className="space-y-2 sm:col-span-2">
+                      <Label htmlFor="goal-title">Goal title</Label>
+                      <Input
+                        id="goal-title"
+                        className="bg-white text-slate-900 border-slate-200"
+                        value={goalForm.title}
+                        onChange={(e) => setGoalForm((prev) => ({ ...prev, title: e.target.value }))}
+                        placeholder="Validate lateral movement defenses"
+                      />
+                    </div>
+                    <div className="space-y-2 sm:col-span-2">
+                      <Label htmlFor="goal-description">Description</Label>
+                      <Textarea
+                        id="goal-description"
+                        className="bg-white text-slate-900 border-slate-200"
+                        value={goalForm.description}
+                        onChange={(e) => setGoalForm((prev) => ({ ...prev, description: e.target.value }))}
+                        placeholder="Prove detection coverage for common lateral movement techniques."
+                        rows={2}
+                      />
+                    </div>
+                    <div className="space-y-2 sm:col-span-2">
+                      <Label htmlFor="goal-objective">Objective</Label>
+                      <Input
+                        id="goal-objective"
+                        className="bg-white text-slate-900 border-slate-200"
+                        value={goalForm.objective}
+                        onChange={(e) => setGoalForm((prev) => ({ ...prev, objective: e.target.value }))}
+                        placeholder="Detect remote execution and credential reuse across hosts."
+                      />
+                    </div>
+                    <div className="space-y-2 sm:col-span-2">
+                      <Label htmlFor="goal-scope">Scope hint</Label>
+                      <Input
+                        id="goal-scope"
+                        className="bg-white text-slate-900 border-slate-200"
+                        value={goalForm.scopeHint}
+                        onChange={(e) => setGoalForm((prev) => ({ ...prev, scopeHint: e.target.value }))}
+                        placeholder="Focus on T1021, T1047, T1077, T1550."
+                      />
+                    </div>
+                    <div className="space-y-2 sm:col-span-2">
+                      <Label>Target roles</Label>
+                      <div className="flex flex-wrap gap-2">
+                        {roleTiers.map((role) => {
+                          const isActive = goalForm.roles.includes(role);
+                          return (
+                            <button
+                              key={`goal-role-${role}`}
+                              type="button"
+                              onClick={() =>
+                                setGoalForm((prev) => {
+                                  const next = prev.roles.includes(role)
+                                    ? prev.roles.filter((item) => item !== role)
+                                    : [...prev.roles, role];
+                                  return { ...prev, roles: next.length ? next : prev.roles };
+                                })
+                              }
+                              className={cn(
+                                "rounded-full border px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.2em] transition",
+                                isActive
+                                  ? "border-indigo-200 bg-white text-indigo-700 shadow-sm"
+                                  : "border-slate-200 bg-white text-slate-500 hover:border-indigo-200 hover:text-slate-700"
+                              )}
+                            >
+                              <span className="flex items-center gap-1">
+                                {roleLabels[role]}
+                                <Tooltip content={roleTooltips[role]}>
+                                  <Info className="h-3 w-3 text-slate-400" />
+                                </Tooltip>
+                              </span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                      <p className="text-xs text-slate-500">
+                        Templates show by role so analysts see only what they should run.
+                      </p>
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="goal-techniques">TTPs</Label>
+                      <Select
+                        onValueChange={(value: string) => {
+                          if (!goalTtps.includes(value)) {
+                            setGoalTtps((prev) => [...prev, value]);
+                          }
+                        }}
+                      >
+                        <SelectTrigger id="goal-techniques" className="w-full h-11 bg-white border-slate-200 text-slate-900">
+                          <SelectValue placeholder="Add a TTP" />
+                        </SelectTrigger>
+                        <SelectContent className="bg-white border-slate-200 max-h-64">
+                          {mitreTechniques.length === 0 && (
+                            <SelectItem value="loading" disabled>
+                              Loading techniques...
+                            </SelectItem>
+                          )}
+                          {mitreTechniques.map((technique) => (
+                            <SelectItem key={technique.id} value={technique.id}>
+                              {technique.id} · {technique.name}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <div className="flex flex-wrap gap-2">
+                        {goalTtps.map((technique) => (
+                          <span
+                            key={technique}
+                            className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-2.5 py-1 text-xs font-semibold text-slate-700"
+                          >
+                            {technique}
+                            <button
+                              type="button"
+                              onClick={() => setGoalTtps((prev) => prev.filter((t) => t !== technique))}
+                              className="text-slate-400 hover:text-slate-700"
+                              aria-label={`Remove ${technique}`}
+                            >
+                              <X className="h-3 w-3" />
+                            </button>
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="goal-telemetry">Required telemetry</Label>
+                      <div className="flex gap-2">
+                        <Input
+                          id="goal-telemetry"
+                          className="bg-white text-slate-900 border-slate-200"
+                          value={goalTelemetryInput}
+                          onChange={(e) => setGoalTelemetryInput(e.target.value)}
+                          placeholder="Process creation"
+                        />
+                        <Button
+                          type="button"
+                          variant="outline"
+                          className="border-slate-200 text-slate-900 hover:border-indigo-200 hover:bg-indigo-50"
+                          onClick={() => {
+                            const entries = goalTelemetryInput
+                              .split(",")
+                              .map((item) => item.trim())
+                              .filter(Boolean);
+                            if (entries.length === 0) return;
+                            setGoalTelemetry((prev) => Array.from(new Set([...prev, ...entries])));
+                            setGoalTelemetryInput("");
+                          }}
+                        >
+                          Add
+                        </Button>
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        {goalTelemetry.map((item) => (
+                          <span
+                            key={item}
+                            className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-2.5 py-1 text-xs font-semibold text-slate-700"
+                          >
+                            {item}
+                            <button
+                              type="button"
+                              onClick={() => setGoalTelemetry((prev) => prev.filter((t) => t !== item))}
+                              className="text-slate-400 hover:text-slate-700"
+                              aria-label={`Remove ${item}`}
+                            >
+                              <X className="h-3 w-3" />
+                            </button>
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="space-y-2 sm:col-span-2">
+                      <Label htmlFor="goal-tests">Recommended tests</Label>
+                      <div className="grid gap-2 sm:grid-cols-2">
+                        <Select
+                          value={recommendedTechnique}
+                          onValueChange={(value: string) => setRecommendedTechnique(value)}
+                        >
+                          <SelectTrigger className="w-full h-11 bg-white border-slate-200 text-slate-900">
+                            <SelectValue placeholder="Select technique" />
+                          </SelectTrigger>
+                          <SelectContent className="bg-white border-slate-200 max-h-64">
+                            {mitreTechniques.length === 0 && (
+                              <SelectItem value="loading" disabled>
+                                Loading techniques...
+                              </SelectItem>
+                            )}
+                            {mitreTechniques.map((technique) => (
+                              <SelectItem key={technique.id} value={technique.id}>
+                                {technique.id} · {technique.name}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        <Select
+                          onValueChange={(value: string) => {
+                            const [technique, name] = value.split("||");
+                            if (!technique || !name) return;
+                            if (
+                              goalRecommendedTests.some(
+                                (entry) => entry.technique === technique && entry.name === name,
+                              )
+                            ) {
+                              return;
+                            }
+                            setGoalRecommendedTests((prev) => [...prev, { technique, name }]);
+                          }}
+                          disabled={!recommendedTechnique}
+                        >
+                          <SelectTrigger className="w-full h-11 bg-white border-slate-200 text-slate-900">
+                            <SelectValue
+                              placeholder={
+                                recommendedTechnique ? "Add recommended test" : "Choose technique first"
+                              }
+                            />
+                          </SelectTrigger>
+                          <SelectContent className="bg-white border-slate-200 max-h-64">
+                            {availableAtomicTests.length === 0 && (
+                              <SelectItem value="none" disabled>
+                                No tests found for this technique
+                              </SelectItem>
+                            )}
+                            {availableAtomicTests.map((test) => (
+                              <SelectItem key={test.id} value={`${test.technique_id}||${test.name}`}>
+                                {test.name}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        {goalRecommendedTests.map((test) => (
+                          <span
+                            key={`${test.technique}-${test.name}`}
+                            className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-2.5 py-1 text-xs font-semibold text-slate-700"
+                          >
+                            <span className="text-slate-500">{test.technique}</span>
+                            <span>•</span>
+                            <span>{test.name}</span>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setGoalRecommendedTests((prev) =>
+                                  prev.filter(
+                                    (entry) =>
+                                      !(entry.technique === test.technique && entry.name === test.name),
+                                  ),
+                                )
+                              }
+                              className="text-slate-400 hover:text-slate-700"
+                              aria-label={`Remove ${test.technique} ${test.name}`}
+                            >
+                              <X className="h-3 w-3" />
+                            </button>
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="space-y-2 sm:col-span-2">
+                      <Label htmlFor="goal-mode">Default test mode</Label>
+                      <Select
+                        value={goalForm.defaultTestType}
+                        onValueChange={(value: UiTestType) =>
+                          setGoalForm((prev) => ({ ...prev, defaultTestType: value }))
+                        }
+                      >
+                        <SelectTrigger id="goal-mode" className="w-full h-11 bg-white border-slate-200 text-slate-900">
+                          <SelectValue placeholder="Select a default mode" />
+                        </SelectTrigger>
+                        <SelectContent className="bg-white border-slate-200">
+                          <SelectItem value="find_detection_coverage">Explore Coverage Gaps</SelectItem>
+                          <SelectItem value="detection_validation">Validate a Detection</SelectItem>
+                          <SelectItem value="telemetry_check">Verify Telemetry Health</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+                  <div className="mt-5 flex items-center justify-end gap-2">
+                    <Button variant="outline" onClick={() => setShowGoalForm(false)}>
+                      Cancel
+                    </Button>
+                    <Button onClick={handleSaveGoal}>Save goal</Button>
+                  </div>
+                </div>
+              )}
+
+              {!testType && (
+                <div className="ml-9 p-4 rounded-lg border border-slate-200 bg-slate-50">
+                  <p className="text-sm text-slate-600">
+                    Select a test mode in Step 1 to continue
                   </p>
                   </div>
                 )}
@@ -1467,8 +2464,8 @@ function RunTestPageContent() {
                         <p className="text-sm text-slate-700 mb-3">
                         Start from the{" "}
                         <Link
-                          href="/tests"
-                            className="text-indigo-600 hover:text-indigo-700 underline font-medium"
+                          href="/tests/explore"
+                          className="text-indigo-600 hover:text-indigo-700 underline font-medium"
                         >
                           Explore techniques view
                         </Link>{" "}
@@ -1480,7 +2477,7 @@ function RunTestPageContent() {
                           asChild
                       className="border-slate-200 text-slate-900 hover:border-indigo-200 hover:bg-indigo-50"
                     >
-                          <Link href="/tests">
+                          <Link href="/tests/explore">
                             <Search className="h-4 w-4 mr-2" />
                             Explore Techniques
                           </Link>
@@ -1497,7 +2494,7 @@ function RunTestPageContent() {
             <div className="space-y-8 border-t border-slate-200 pt-8">
                 <div className="space-y-2">
                   <h2 className="text-xl font-display font-semibold text-slate-900 flex items-center gap-3">
-                    <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-indigo-100 text-indigo-700 border border-indigo-200 text-sm font-bold">
+                    <span className="flex h-11 w-11 items-center justify-center rounded-lg bg-indigo-100 text-indigo-700 border border-indigo-200 text-[18px] font-bold">
                       3
                     </span>
                     Environment & Target
@@ -1512,6 +2509,11 @@ function RunTestPageContent() {
                   <div className="p-4 rounded-lg border border-slate-200 bg-slate-50 space-y-3">
                     <p className="text-xs uppercase tracking-wider text-slate-600 font-medium">Configuration Summary</p>
                     <div className="flex flex-wrap gap-2">
+                      {selectedGoal && (
+                        <Badge variant="outline" className="bg-indigo-50 text-indigo-700 border-indigo-200">
+                          Goal: {selectedGoal.title}
+                        </Badge>
+                      )}
                       <Badge variant="outline" className="bg-indigo-50 text-indigo-700 border-indigo-200">
                         Mode: {testType === "detection_validation"
                           ? "Validate a Detection"

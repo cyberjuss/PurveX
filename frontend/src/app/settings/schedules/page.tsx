@@ -215,7 +215,7 @@ export default function TestSchedulesPage() {
                 Create Schedule
               </Button>
             </DialogTrigger>
-            <DialogContent className="bg-white border-slate-200 text-slate-900 max-w-2xl">
+            <DialogContent className="max-w-2xl">
               <DialogHeader>
                 <DialogTitle className="text-xl font-semibold text-slate-900">Create Test Schedule</DialogTitle>
                 <DialogDescription className="text-slate-600">
@@ -516,11 +516,11 @@ export default function TestSchedulesPage() {
                           <div className="flex items-center justify-end gap-2">
                             <Dialog open={deleteDialogOpen === schedule.id} onOpenChange={(open) => setDeleteDialogOpen(open ? schedule.id : null)}>
                               <DialogTrigger asChild>
-                                <Button variant="ghost" size="sm" className="h-8 w-8 p-0 hover:bg-red-500/10 hover:text-red-400">
+                                <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
                                   <Trash2 className="h-4 w-4" />
                                 </Button>
                               </DialogTrigger>
-                              <DialogContent className="bg-white border-slate-200">
+                              <DialogContent>
                                 <DialogHeader>
                                   <DialogTitle className="text-slate-900">Delete Schedule</DialogTitle>
                                   <DialogDescription className="text-slate-600">

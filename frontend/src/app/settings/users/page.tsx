@@ -346,7 +346,7 @@ export default function UserManagementPage() {
                     Create User
                   </Button>
                 </DialogTrigger>
-                <DialogContent className="w-full max-w-xl rounded-3xl border border-slate-200 bg-white shadow-2xl px-8 py-6">
+                <DialogContent className="w-full max-w-xl px-8 py-6">
                 <DialogHeader>
                   <DialogTitle className="flex items-center gap-2">
                   <UserPlus className="h-5 w-5" />
@@ -729,7 +729,7 @@ export default function UserManagementPage() {
                                   Password
                                 </Button>
                               </DialogTrigger>
-                              <DialogContent className="w-[480px] max-w-[480px] sm:max-w-[480px] h-[480px] rounded-3xl border border-slate-200 bg-white shadow-2xl flex flex-col items-center justify-between px-6 py-5">
+                              <DialogContent className="w-[480px] max-w-[480px] sm:max-w-[480px] h-[480px] flex flex-col items-center justify-between px-6 py-5">
                                 <div className="w-full">
                                   <DialogTitle className="text-lg font-semibold">Set Password for {user.email}</DialogTitle>
                                   <DialogDescription className="text-sm mt-1">

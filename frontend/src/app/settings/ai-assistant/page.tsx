@@ -14,7 +14,10 @@ import { PageContainer } from "@/components/layout/page-container";
 import { PageHeader } from "@/components/layout/page-header";
 
 interface AIAssistantSettings {
-  ai_provider: string;
+  provider: string;
+  model_name: string;
+  api_base_url: string;
+  analysis_mode: string;
   generate_tuning_suggestions: boolean;
   explain_test_failures: boolean;
   automatically_modify_rules: boolean;
@@ -133,15 +136,51 @@ export default function AIAssistantSettingsPage() {
               Provider
             </p>
             <div className="space-y-2 md:max-w-xs">
-              <Label htmlFor="ai_provider">AI provider</Label>
-              <Select onValueChange={(value: string) => handleSelectChange("ai_provider", value)} value={settings.ai_provider}>
+              <Label htmlFor="provider">AI provider</Label>
+              <Select onValueChange={(value: string) => handleSelectChange("provider", value)} value={settings.provider}>
                 <SelectTrigger>
                   <SelectValue placeholder="Select AI provider" />
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="Local LLaMA">Local LLaMA (Ollama)</SelectItem>
-                  <SelectItem value="OpenAI">OpenAI (coming soon)</SelectItem>
-                  <SelectItem value="Other">Other (coming soon)</SelectItem>
+                  <SelectItem value="OpenAI" disabled>OpenAI (coming soon)</SelectItem>
+                  <SelectItem value="Other" disabled>Other (coming soon)</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="grid gap-3 md:grid-cols-2 md:max-w-xl">
+              <div className="space-y-2">
+                <Label htmlFor="api_base_url">Ollama base URL</Label>
+                <Input
+                  id="api_base_url"
+                  value={settings.api_base_url}
+                  onChange={handleChange}
+                  placeholder="http://localhost:11434"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="model_name">Ollama model</Label>
+                <Input
+                  id="model_name"
+                  value={settings.model_name}
+                  onChange={handleChange}
+                  placeholder="gemma2:2b"
+                />
+              </div>
+            </div>
+            <div className="space-y-2 md:max-w-xs">
+              <Label htmlFor="analysis_mode">Analysis mode</Label>
+              <Select
+                onValueChange={(value: string) => handleSelectChange("analysis_mode", value)}
+                value={settings.analysis_mode}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Select analysis mode" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="fast">Fast (3 events, ~10s)</SelectItem>
+                  <SelectItem value="balanced">Balanced (6 events, ~15s)</SelectItem>
+                  <SelectItem value="deep">Deep (10 events, ~25s)</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -227,7 +266,6 @@ export default function AIAssistantSettingsPage() {
           <Button
             type="submit"
             disabled={isSaving}
-            className="bg-[#7561f6] text-white hover:bg-[#6a53f0] border border-transparent shadow-sm"
           >
             {isSaving ? "Saving…" : "Save AI settings"}
           </Button>

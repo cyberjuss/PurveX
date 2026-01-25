@@ -604,7 +604,7 @@ export default function SettingsPage() {
           setRunnerPage(0);
         }
       }}>
-        <DialogContent className="sm:max-w-[720px] bg-white border border-slate-200">
+        <DialogContent className="sm:max-w-[720px]">
           <div className="rounded-2xl border border-slate-200 bg-gradient-to-br from-slate-50 via-white to-indigo-50 p-6">
             <DialogHeader className="text-left">
               <DialogTitle className="text-2xl font-display font-bold text-slate-900">Runners</DialogTitle>

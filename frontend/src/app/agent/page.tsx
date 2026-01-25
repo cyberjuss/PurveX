@@ -3,7 +3,6 @@
 import { useEffect, useState, useRef, Suspense, useCallback, useMemo } from "react";
 import { useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
-import { Textarea } from "@/components/ui/textarea";
 import {
   apiFetch,
   getDetections,
@@ -15,7 +14,7 @@ import {
 } from "@/lib/api";
 import { formatRelative } from "date-fns";
 import { 
-  Cpu, MessageCircle, Send, Loader2, X, Sparkles, Shield, RefreshCw,
+  Cpu, MessageCircle, Loader2, X, Sparkles, Shield, RefreshCw,
   Search, Activity, BookOpen, Brain, FileText, TrendingUp, Zap, AlertTriangle
 } from "lucide-react";
 import { PageContainer } from "@/components/layout/page-container";
@@ -35,7 +34,7 @@ type QuickAction = {
   description: string;
   icon: React.ComponentType<{ className?: string }>;
   color: "sky" | "emerald" | "amber" | "purple";
-  prompt: string;
+  action: string;
   autoSend?: boolean;
 };
 
@@ -45,16 +44,20 @@ function WatchtowerPageContent() {
   const [tests, setTests] = useState<TestWithDetectionTitle[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [input, setInput] = useState("");
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [sending, setSending] = useState(false);
   const [selectedDetection, setSelectedDetection] = useState<Detection | null>(null);
   const [selectedAlert, setSelectedAlert] = useState<DetectionAlert | null>(null);
+  const [demoMode, setDemoMode] = useState(true);
   const [mounted, setMounted] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const chatContainerRef = useRef<HTMLDivElement>(null);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
+  const requestIdRef = useRef(0);
+  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const AI_REQUEST_TIMEOUT_MS = 20000;
+  const AI_DISABLED = true;
+
 
   const detectionId = searchParams.get("detectionId");
   const alertId = searchParams.get("alertId");
@@ -73,6 +76,32 @@ function WatchtowerPageContent() {
     
     return { totalDetections, testedDetections, totalTests, passRate };
   }, [detections, tests]);
+
+  const portfolioContext = useMemo(() => {
+    if (!detections.length && !tests.length) return "";
+
+    const recentTests = [...tests]
+      .filter(t => t.started_at)
+      .sort((a, b) => new Date(b.started_at || 0).getTime() - new Date(a.started_at || 0).getTime())
+      .slice(0, 5);
+
+    const failingTests = tests
+      .filter(t => (t.result || t.status) && (t.result || t.status) !== "PASS")
+      .slice(0, 5);
+
+    const recentTechniques = Array.from(new Set(
+      recentTests.map(t => t.technique_id).filter(Boolean)
+    )).slice(0, 5);
+
+    return `[Portfolio Context]
+Total detections: ${metrics.totalDetections}
+Detections tested: ${metrics.testedDetections}
+Total tests: ${metrics.totalTests}
+Pass rate: ${metrics.passRate}%
+Recent techniques: ${recentTechniques.length ? recentTechniques.join(", ") : "Not available"}
+Recent tests: ${recentTests.map(t => `${t.id}:${t.result || t.status || "UNKNOWN"}`).join(", ") || "None"}
+Recent failing tests: ${failingTests.map(t => `${t.id}:${t.result || t.status || "UNKNOWN"}`).join(", ") || "None"}`;
+  }, [detections, tests, metrics]);
 
   useEffect(() => {
     setMounted(true);
@@ -93,32 +122,23 @@ function WatchtowerPageContent() {
     return () => clearTimeout(timer);
   }, [messages, mounted]);
 
-  useEffect(() => {
-    if (!mounted || !textareaRef.current) return;
-    
-    requestAnimationFrame(() => {
-      const target = textareaRef.current;
-      if (target) {
-        target.style.height = "auto";
-        const newHeight = Math.min(target.scrollHeight, 200);
-        target.style.height = `${newHeight}px`;
-      }
-    });
-  }, [input, mounted]);
-
   const loadData = useCallback(async (isRefresh = false) => {
-      try {
+    try {
       if (isRefresh) {
         setRefreshing(true);
       } else {
         setLoading(true);
       }
-        setError(null);
-      
-        const [allDetections, recentTests] = await Promise.all([
-          getDetections(),
-          getTests(),
-        ]);
+      setError(null);
+
+      const timeout = new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error("Watchtower took too long to load.")), 8000)
+      );
+
+      const [allDetections, recentTests] = await Promise.race([
+        Promise.all([getDetections(), getTests()]),
+        timeout,
+      ]);
       
         setDetections(allDetections);
         setTests(recentTests);
@@ -158,10 +178,10 @@ function WatchtowerPageContent() {
         } else {
             setMessages([]);
         }
-      } catch (err: any) {
-        setError(err?.message || "Failed to load Watchtower data.");
-      } finally {
-        setLoading(false);
+    } catch (err: any) {
+      setError(err?.message || "Failed to load Watchtower data.");
+    } finally {
+      setLoading(false);
       setRefreshing(false);
     }
   }, [detectionId, alertId]);
@@ -173,39 +193,30 @@ function WatchtowerPageContent() {
   const generalQuickActions: QuickAction[] = useMemo(() => [
     {
       id: "find-issues",
-      title: "Find Issues",
+      title: "Find Coverage Gaps",
       description: "Identify failing tests, coverage gaps, and detections that need attention",
       icon: Search,
       color: "sky",
-      prompt: "What detections need attention? Show me failing tests and coverage gaps.",
+      action: "coverage_gaps",
       autoSend: true,
     },
     {
       id: "health-summary",
       title: "Health Summary",
-      description: "Get a comprehensive overview of your detection portfolio health",
+      description: "Get a concise overview of detection health and recommended actions",
       icon: Activity,
       color: "emerald",
-      prompt: "Summarize the overall detection health and provide recommendations",
+      action: "portfolio_health",
       autoSend: true,
     },
     {
       id: "best-practices",
-      title: "Best Practices",
-      description: "Learn detection engineering best practices and optimization techniques",
+      title: "Improve Coverage",
+      description: "Suggest the top 3 improvements to increase coverage based on existing detections",
       icon: BookOpen,
       color: "amber",
-      prompt: "What are the best practices for writing effective SPL queries and Sigma rules?",
+      action: "coverage_improve",
       autoSend: true,
-    },
-    {
-      id: "ask-anything",
-      title: "Ask Watchtower",
-      description: "Ask any question about your detections, events, or test results",
-      icon: Brain,
-      color: "purple",
-      prompt: "",
-      autoSend: false,
     },
   ], []);
 
@@ -216,62 +227,67 @@ function WatchtowerPageContent() {
       {
         id: "summarize",
         title: "Summarize Detection",
-        description: `Get a complete overview of "${selectedDetection.title}" including events and analysis`,
+        description: `Summarize "${selectedDetection.title}" with clear next steps`,
         icon: FileText,
         color: "sky",
-        prompt: `Summarize the detection "${selectedDetection.title}" (ID: ${selectedDetection.id}) based on its triggered events. Provide a complete overview including: detection purpose, MITRE technique coverage (${selectedDetection.technique_id}), event patterns, test results, and any issues or recommendations.`,
+        action: "detection_summary",
         autoSend: true,
       },
       {
         id: "analyze-tests",
-        title: "Analyze Test Results",
-        description: "Review PASS/FAIL/INCONCLUSIVE results and get actionable recommendations",
+        title: "Explain Test Result",
+        description: "Explain the latest test result and why it passed/failed",
         icon: TrendingUp,
         color: "emerald",
-        prompt: `Analyze the latest test results for "${selectedDetection.title}"`,
+        action: "test_explain",
         autoSend: true,
       },
       {
         id: "improve",
-        title: "Improve Detection Logic",
-        description: "Get optimized SPL queries and enhanced Sigma rules with better performance",
+        title: "Fix Recommendations",
+        description: "Provide concrete fixes and how to validate them",
         icon: Zap,
         color: "amber",
-        prompt: `Suggest improvements to the SPL query and Sigma rule for "${selectedDetection.title}"`,
+        action: "fix_recommendations",
         autoSend: true,
       },
       ...(selectedAlert ? [{
         id: "explain-alert",
         title: "Explain Event",
-        description: "Understand what this event means and get recommended actions",
+        description: "Explain the selected event and recommended action",
         icon: AlertTriangle,
         color: "purple",
-        prompt: `Explain this event: ${selectedAlert.name}. What does it mean and what should I do?`,
+        action: "alert_explain",
         autoSend: true,
       }] : []),
     ] as QuickAction[];
   }, [selectedDetection, selectedAlert]);
 
   const handleQuickAction = useCallback(async (action: QuickAction) => {
-    if (action.autoSend && action.prompt) {
-      setInput(action.prompt);
+    if (AI_DISABLED) {
+      const now = new Date().toISOString();
+      const nextId = messages.length ? messages[messages.length - 1].id + 1 : 1;
+      const assistantMsg: ChatMessage = {
+        id: nextId,
+        role: "assistant",
+        content: "AI analysis is coming soon. For now, run tests to generate real data.",
+        timestamp: now,
+      };
+      setMessages(prev => [...prev, assistantMsg]);
+      return;
+    }
+    if (action.autoSend && action.action) {
       setTimeout(() => {
-        handleSend(action.prompt);
+        handleSend(action);
       }, 100);
     } else {
-      if (textareaRef.current) {
-        textareaRef.current.focus();
-      }
+      // No free-form input in MVP mode.
     }
   }, []);
 
-  const handleSend = useCallback(async (promptOverride?: string) => {
-    const trimmed = promptOverride || input.trim();
-    if (!trimmed || sending) return;
-
-    if (trimmed.toLowerCase() === "/back") {
-      setMessages([]);
-      setInput("");
+  const handleSend = useCallback(async (selectedAction?: QuickAction) => {
+    if (!selectedAction || sending) return;
+    if (AI_DISABLED) {
       return;
     }
 
@@ -281,18 +297,34 @@ function WatchtowerPageContent() {
     const userMsg: ChatMessage = {
       id: nextId,
       role: "user",
-      content: trimmed,
+      content: selectedAction.title,
       timestamp: now,
     };
     
     setMessages(prev => [...prev, userMsg]);
-    if (!promptOverride) setInput("");
     setSending(true);
     
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
     }
     abortControllerRef.current = new AbortController();
+    const requestId = ++requestIdRef.current;
+    if (timeoutRef.current) {
+      clearTimeout(timeoutRef.current);
+    }
+    timeoutRef.current = setTimeout(() => {
+      if (requestIdRef.current !== requestId) return;
+      abortControllerRef.current?.abort();
+      setSending(false);
+      const assistantMsg: ChatMessage = {
+        id: nextId + 1,
+        role: "assistant",
+        content: "⏱️ The AI response timed out. Try a shorter question or use a smaller model.",
+        timestamp: new Date().toISOString(),
+        error: true,
+      };
+      setMessages(prev => [...prev, assistantMsg]);
+    }, AI_REQUEST_TIMEOUT_MS);
     
     setTimeout(() => {
       if (chatContainerRef.current) {
@@ -304,49 +336,20 @@ function WatchtowerPageContent() {
     }, 100);
 
     try {
-      let enhancedPrompt = trimmed;
-      
-      if (selectedDetection) {
-        const relatedTests = tests
-          .filter(t => t.detection_id === selectedDetection.id)
-          .sort((a, b) => new Date(b.started_at).getTime() - new Date(a.started_at).getTime());
-        const latestTest = relatedTests[0];
-
-        enhancedPrompt = `[Detection Context]
-Title: ${selectedDetection.title}
-MITRE Technique: ${selectedDetection.technique_id}
-SIEM Type: ${selectedDetection.siem_type}
-Status: ${selectedDetection.status || "DRAFT"}
-${selectedDetection.description ? `Description: ${selectedDetection.description}\n` : ""}
-${selectedDetection.siem_query ? `SIEM Query:\n${selectedDetection.siem_query}\n` : ""}
-${selectedDetection.sigma_rule ? `Sigma Rule (YAML):\n${selectedDetection.sigma_rule}\n` : ""}
-${latestTest ? `Latest Test Run:\n- Test ID: ${latestTest.id}\n- Started: ${new Date(latestTest.started_at).toLocaleString()}\n- Environment: ${latestTest.environment}\n- Status: ${latestTest.status}\n- Result: ${latestTest.result || latestTest.status}\n- Score: ${typeof latestTest.score === "number" ? latestTest.score : "N/A"}\n` : ""}`;
-
-        if (selectedAlert) {
-          enhancedPrompt += `\n[Alert Context]
-Alert Name: ${selectedAlert.name}
-Time: ${new Date(selectedAlert.time).toLocaleString()}
-Host: ${selectedAlert.host || "N/A"}
-Severity: ${selectedAlert.severity}
-SPL Query: ${selectedAlert.query}
-Raw Event: ${selectedAlert.raw_event}`;
-        }
-
-        enhancedPrompt += `\n\n[User Question]\n${trimmed}\n\nWhen answering, ground your analysis in the latest test run and SIEM query context above.`;
-      }
-      
-      const timeoutId = setTimeout(() => {
-        abortControllerRef.current?.abort();
-      }, 95000);
       
       try {
         const res = (await apiFetch("/assistant/chat", {
           method: "POST",
-          body: JSON.stringify({ prompt: enhancedPrompt }),
+          body: JSON.stringify({
+            action: selectedAction.action,
+            detection_id: selectedDetection?.id || null,
+            alert_id: selectedAlert?.id || null,
+            force_demo: demoMode,
+          }),
           signal: abortControllerRef.current.signal,
         })) as { answer?: string };
-        
-        clearTimeout(timeoutId);
+        if (requestIdRef.current !== requestId) return;
+        if (timeoutRef.current) clearTimeout(timeoutRef.current);
         
         const assistantMsg: ChatMessage = {
           id: nextId + 1,
@@ -366,10 +369,11 @@ Raw Event: ${selectedAlert.raw_event}`;
           }
         }, 100);
       } catch (fetchErr: any) {
-        clearTimeout(timeoutId);
+        if (timeoutRef.current) clearTimeout(timeoutRef.current);
+        if (requestIdRef.current !== requestId) return;
         if (fetchErr.name === "AbortError" || fetchErr.message?.includes("timeout")) {
           throw new Error(
-            "Request timed out. The AI response is taking too long (over 90 seconds). Please try again with a shorter question or use a smaller Ollama model."
+            "Request timed out. The AI response is taking too long. Try a shorter question or use a smaller Ollama model."
           );
         }
         throw fetchErr;
@@ -415,25 +419,30 @@ Raw Event: ${selectedAlert.raw_event}`;
     } finally {
       setSending(false);
       abortControllerRef.current = null;
+      if (timeoutRef.current) {
+        clearTimeout(timeoutRef.current);
+      }
     }
-  }, [input, sending, messages, selectedDetection, selectedAlert, tests]);
+  }, [sending, messages, selectedDetection, selectedAlert, portfolioContext]);
 
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950">
-        <div className="text-center space-y-6">
-          <div className="relative inline-block">
-            <div className="h-20 w-20 rounded-2xl bg-gradient-to-br from-sky-500/20 to-indigo-500/20 border border-sky-500/30 flex items-center justify-center">
-              <Cpu className="h-10 w-10 text-sky-400 animate-pulse" />
-            </div>
-            <Sparkles className="absolute -top-2 -right-2 h-6 w-6 text-emerald-400 animate-ping" />
+      <PageContainer>
+        <div className="rounded-3xl border border-slate-200 bg-[#f9f6f1] p-10 shadow-[0_20px_60px_rgba(15,23,42,0.08)]">
+          <div className="flex items-center gap-6">
+            <div className="relative">
+              <div className="h-16 w-16 rounded-2xl bg-white border border-slate-200 shadow-sm flex items-center justify-center">
+                <Cpu className="h-8 w-8 text-slate-700 animate-pulse" />
+              </div>
+              <Sparkles className="absolute -top-1 -right-1 h-5 w-5 text-amber-400 animate-ping" />
             </div>
             <div>
-            <p className="text-lg font-display font-semibold text-slate-200 mb-2">Booting Watchtower</p>
-            <p className="text-sm text-slate-400">Initializing AI assistant...</p>
+              <p className="text-lg font-display font-semibold text-slate-900">Booting Watchtower</p>
+              <p className="text-sm text-slate-600">Initializing AI assistant…</p>
+            </div>
           </div>
         </div>
-      </div>
+      </PageContainer>
     );
   }
 
@@ -464,9 +473,9 @@ Raw Event: ${selectedAlert.raw_event}`;
   const currentQuickActions = selectedDetection ? detectionQuickActions : generalQuickActions;
 
   return (
-    <div className="w-full h-screen flex flex-col bg-white text-slate-900 overflow-hidden">
+    <div className="w-full min-h-screen flex flex-col bg-white text-slate-900 overflow-y-auto">
       {/* Main Chat Area - Full Width and Height */}
-      <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
+      <div className="flex-1 flex flex-col min-h-0">
             <div 
               ref={chatContainerRef}
           className={cn(
@@ -497,15 +506,17 @@ Raw Event: ${selectedAlert.raw_event}`;
                         <button
                         key={action.id}
                         onClick={() => handleQuickAction(action)}
-                        disabled={sending}
+                        disabled={sending || AI_DISABLED}
                         className={cn(
                           "group relative text-left px-5 py-4 rounded-xl border transition-all duration-200",
-                          "hover:scale-[1.01] hover:shadow-md",
-                          "bg-white border-slate-200 hover:border-indigo-200 hover:bg-indigo-50",
-                          action.color === "sky" && "hover:bg-sky-50",
-                          action.color === "emerald" && "hover:bg-emerald-50",
-                          action.color === "amber" && "hover:bg-amber-50",
-                          action.color === "purple" && "hover:bg-purple-50",
+                          !AI_DISABLED && "hover:scale-[1.01] hover:shadow-md",
+                          "bg-white border-slate-200",
+                          !AI_DISABLED && "hover:border-indigo-200 hover:bg-indigo-50",
+                          !AI_DISABLED && action.color === "sky" && "hover:bg-sky-50",
+                          !AI_DISABLED && action.color === "emerald" && "hover:bg-emerald-50",
+                          !AI_DISABLED && action.color === "amber" && "hover:bg-amber-50",
+                          !AI_DISABLED && action.color === "purple" && "hover:bg-purple-50",
+                          AI_DISABLED && "opacity-60 cursor-not-allowed",
                           "animate-fade-in-scale"
                         )}
                         style={{ animationDelay: `${idx * 50}ms` }}
@@ -532,8 +543,26 @@ Raw Event: ${selectedAlert.raw_event}`;
                         </button>
                     );
                   })}
-                            </div>
-                          </div>
+                </div>
+              </div>
+            )}
+
+            {AI_DISABLED && (
+              <div className="fixed inset-0 z-20 flex items-center justify-center">
+                <div className="absolute inset-0 bg-white/95 backdrop-blur-[2px]" />
+                <div className="relative mx-6 w-full max-w-[72rem] overflow-hidden rounded-[40px] border border-transparent bg-white p-16 text-center shadow-[0_18px_42px_-30px_rgba(15,23,42,0.1)] animate-fade-in-scale">
+                  <div className="relative">
+                    <div className="mx-auto mb-10 flex h-28 w-28 items-center justify-center rounded-[30px] bg-white border border-slate-200 shadow-[0_14px_30px_-18px_rgba(15,23,42,0.15)] animate-pulse">
+                      <Cpu className="h-11 w-11 text-slate-900" />
+                    </div>
+                    <p className="text-xs font-semibold uppercase tracking-[0.45em] text-slate-500">Coming soon</p>
+                    <h3 className="mt-4 text-5xl font-display font-semibold text-slate-900">Watchtower AI</h3>
+                    <p className="mt-6 text-xl text-slate-600">
+                      Premium AI analysis is in progress. For now, run tests to generate real data.
+                    </p>
+                  </div>
+                </div>
+              </div>
             )}
 
             {/* Messages - Full Width Layout */}
@@ -597,63 +626,49 @@ Raw Event: ${selectedAlert.raw_event}`;
           </div>
         </div>
 
-        {/* Input Area - Fixed at Bottom */}
+        {/* Focused Actions Footer */}
         <div className="flex-shrink-0 border-t border-slate-200 bg-white z-10">
           <div className="w-full px-4 py-3 sm:px-6 lg:px-12">
-            <div className="relative max-w-4xl mx-auto">
-              <div className="flex items-end gap-3 bg-white border border-slate-200 rounded-2xl px-4 py-3 shadow-lg">
-                  {messages.length > 0 && (
-                    <button
-                      onClick={() => {
-                        setMessages([]);
-                        setInput("");
-                      if (abortControllerRef.current) {
-                        abortControllerRef.current.abort();
-                      }
-                      }}
-                    className="flex-shrink-0 h-10 w-10 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 flex items-center justify-center transition-colors"
-                    title="New chat"
-                    >
-                    <X className="h-4 w-4 text-slate-600" />
-                    </button>
-                  )}
-                
-                <Textarea
-                  ref={textareaRef}
-                  value={input}
-                  onChange={(e) => setInput(e.target.value)}
-                  placeholder="Ask Watchtower about a detection, alert, or test result..."
-                  className="min-h-[52px] w-full flex-1 bg-transparent text-base text-slate-900 placeholder:text-slate-400 border-0 focus-visible:ring-0 focus-visible:ring-offset-0 resize-none px-0 py-2"
-                    disabled={sending}
-                    onKeyDown={e => {
-                      if (e.key === "Enter" && !e.shiftKey) {
-                        e.preventDefault();
-                        if (!sending && input.trim()) {
-                          handleSend();
-                        }
-                      }
-                    }}
-                    rows={1}
-                    wrap="soft"
-                    autoFocus
-                  />
-                
-                  <Button
-                    size="sm"
-                    disabled={sending || !input.trim()}
-                  className="flex-shrink-0 h-10 w-10 rounded-lg text-white bg-indigo-600 hover:bg-indigo-500 font-semibold shadow-md hover:shadow-lg transition-all disabled:opacity-40 focus-visible:ring-2 focus-visible:ring-indigo-500/70"
-                  onClick={() => handleSend()}
-                  aria-label="Send message to Watchtower AI"
-                >
-                  {sending ? (
-                    <Loader2 className="h-5 w-5 animate-spin" />
-                  ) : (
-                    <Send className="h-5 w-5" />
-                  )}
-                  </Button>
+            <div className="max-w-4xl mx-auto flex items-center justify-between gap-4">
+              <div className="flex items-center gap-3 text-sm text-slate-600">
+                {AI_DISABLED ? (
+                  <span className="text-xs text-slate-500">
+                    AI analysis is coming soon.
+                  </span>
+                ) : (
+                  <>
+                    <label className="flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        className="h-4 w-4 rounded border-slate-300"
+                        checked={demoMode}
+                        onChange={(e) => setDemoMode(e.target.checked)}
+                      />
+                      Demo mode
+                    </label>
+                    <span className="text-xs text-slate-500">
+                      Use sample context instead of live data
+                    </span>
+                  </>
+                )}
               </div>
-      </div>
-    </div>
+              {messages.length > 0 && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    setMessages([]);
+                    if (abortControllerRef.current) {
+                      abortControllerRef.current.abort();
+                    }
+                  }}
+                >
+                  <X className="h-4 w-4 mr-2" />
+                  New analysis
+                </Button>
+              )}
+            </div>
+          </div>
         </div>
       </div>
     </div>
@@ -663,4 +678,3 @@ Raw Event: ${selectedAlert.raw_event}`;
 export default function WatchtowerPage() {
   return <WatchtowerPageContent />;
 }
-

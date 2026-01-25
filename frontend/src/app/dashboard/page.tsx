@@ -384,76 +384,11 @@ export default function DashboardPage() {
             <PageHeader
               title="Security Operations"
               subtitle="Validate detections, run atomic tests, and monitor posture across your environments."
-              actions={
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="border-slate-300 bg-white text-black hover:bg-slate-50"
-                  onClick={() => router.push("/tests/run")}
-                >
-                  <Play className="h-4 w-4 mr-1.5" />
-                  Run test
-                </Button>
-              }
             />
 
             {showOnboarding && (
               <FirstRunOnboarding onDismiss={() => setHideOnboarding(true)} />
             )}
-
-            {/* Quick Actions Section */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <Link href="/settings/test-runner" className="block h-full">
-              <Card className="h-full border border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50 transition-all shadow-sm">
-                <CardContent className="h-full flex items-center justify-between gap-4 px-5 py-5">
-                  <div className="flex items-center gap-3">
-                    <div className="h-10 w-10 rounded-lg bg-sky-50 border border-sky-100 flex items-center justify-center">
-                      <Play className="h-4 w-4 text-sky-500" />
-                    </div>
-                    <div className="space-y-0.5">
-                      <p className="text-sm font-semibold text-slate-900">Install Agent</p>
-                      <p className="text-xs text-slate-500">Connect a new endpoint</p>
-                    </div>
-                  </div>
-                  <ArrowRight className="h-4 w-4 text-slate-400" />
-                </CardContent>
-              </Card>
-            </Link>
-
-            <Link href="/detections/inventory" className="block h-full">
-              <Card className="h-full border border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50 transition-all shadow-sm">
-                <CardContent className="h-full flex items-center justify-between gap-4 px-5 py-6">
-                  <div className="flex items-center gap-3">
-                    <div className="h-12 w-12 rounded-xl bg-indigo-50 border-2 border-indigo-200 flex items-center justify-center shadow-sm">
-                      <Shield className="h-5 w-5 text-indigo-600" />
-                    </div>
-                    <div className="space-y-0.5">
-                      <p className="text-sm font-semibold text-slate-900">Manage Detections</p>
-                      <p className="text-xs text-slate-600">View and create detections</p>
-                    </div>
-                  </div>
-                  <ArrowRight className="h-5 w-5 text-slate-500" />
-                </CardContent>
-              </Card>
-            </Link>
-
-            <Link href="/tests/explore" className="block h-full">
-              <Card className="h-full border border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50 transition-all shadow-sm">
-                <CardContent className="h-full flex items-center justify-between gap-4 px-5 py-6">
-                  <div className="flex items-center gap-3">
-                    <div className="h-12 w-12 rounded-xl bg-cyan-50 border-2 border-cyan-200 flex items-center justify-center shadow-sm">
-                      <Target className="h-5 w-5 text-cyan-600" />
-                    </div>
-                    <div className="space-y-0.5">
-                      <p className="text-sm font-semibold text-slate-900">Explore Techniques</p>
-                      <p className="text-xs text-slate-600">Browse MITRE ATT&CK matrix</p>
-                    </div>
-                  </div>
-                  <ArrowRight className="h-5 w-5 text-slate-500" />
-                </CardContent>
-              </Card>
-            </Link>
-          </div>
 
           {/* System Health & MITRE Coverage Row */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -779,43 +714,69 @@ export default function DashboardPage() {
             </Card>
           </div>
 
-          {/* AI Watchtower Hero */}
-          <div className="relative p-8 rounded-lg bg-white border border-slate-200 shadow-sm">
-              <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-6">
-                <div className="space-y-4 flex-1">
-                  <div className="flex items-center gap-4">
-                  <div className="h-14 w-14 rounded-lg bg-sky-50 flex items-center justify-center">
-                    <Cpu className="h-7 w-7 text-sky-500" />
-                    </div>
-                    <div>
-                      <div className="flex items-center gap-3">
-                      <h2 className="text-2xl font-display font-bold text-black">PurveX AI Watchtower</h2>
-                      <Badge className="bg-emerald-100 text-emerald-700 border-emerald-200">
-                        <div className="h-2 w-2 rounded-full bg-emerald-500 mr-2" />
-                          Live
-                        </Badge>
-                      </div>
-                    <p className="text-sm font-body text-slate-600 mt-1">Continuously monitoring your security posture</p>
-                    </div>
-                  </div>
-                <p className="text-base font-body text-slate-700 leading-relaxed max-w-2xl">
-                    {recommendation}
-                  </p>
-                </div>
-                <div className="flex items-center gap-3">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                  className="text-xs h-8 border-slate-300 bg-white text-slate-700 hover:bg-slate-50"
-                    onClick={() => router.push("/agent")}
-                    aria-label="Open AI Watchtower for insights"
-                  >
-                    <Cpu className="h-3 w-3 mr-1.5" aria-hidden="true" />
-                    Get AI Insights
-                  </Button>
+          {/* Start Here */}
+          <Card className="border border-slate-200 bg-white shadow-sm">
+            <CardHeader className="flex flex-row items-start justify-between gap-4">
+              <div>
+                <CardTitle className="text-lg font-display font-semibold text-slate-900">
+                  Start here
+                </CardTitle>
+                <CardDescription className="text-sm text-slate-600">
+                  Choose one path. We’ll guide the rest.
+                </CardDescription>
               </div>
-            </div>
-          </div>
+              <Badge className="bg-slate-100 text-slate-700 border border-slate-200">
+                3-step flow
+              </Badge>
+            </CardHeader>
+            <CardContent className="grid gap-3 md:grid-cols-3">
+              <button
+                type="button"
+                onClick={() => router.push("/run-test?focus=validation&step=2")}
+                className="group rounded-2xl border border-slate-200 bg-white p-4 text-left transition hover:border-slate-300 hover:shadow-sm"
+              >
+                <div className="flex items-start gap-3">
+                  <div className="h-10 w-10 rounded-xl bg-slate-100 border border-slate-200 flex items-center justify-center">
+                    <ShieldCheck className="h-5 w-5 text-slate-700" />
+                  </div>
+                  <div>
+                    <p className="text-sm font-semibold text-slate-900">Validate a detection</p>
+                    <p className="text-xs text-slate-600">Pick a rule and confirm it fires.</p>
+                  </div>
+                </div>
+              </button>
+              <button
+                type="button"
+                onClick={() => router.push("/run-test?focus=coverage&step=2")}
+                className="group rounded-2xl border border-slate-200 bg-white p-4 text-left transition hover:border-slate-300 hover:shadow-sm"
+              >
+                <div className="flex items-start gap-3">
+                  <div className="h-10 w-10 rounded-xl bg-slate-100 border border-slate-200 flex items-center justify-center">
+                    <Target className="h-5 w-5 text-slate-700" />
+                  </div>
+                  <div>
+                    <p className="text-sm font-semibold text-slate-900">Find coverage gaps</p>
+                    <p className="text-xs text-slate-600">Choose a TTP and see what should detect it.</p>
+                  </div>
+                </div>
+              </button>
+              <button
+                type="button"
+                onClick={() => router.push("/run-test?focus=telemetry&step=2")}
+                className="group rounded-2xl border border-slate-200 bg-white p-4 text-left transition hover:border-slate-300 hover:shadow-sm"
+              >
+                <div className="flex items-start gap-3">
+                  <div className="h-10 w-10 rounded-xl bg-slate-100 border border-slate-200 flex items-center justify-center">
+                    <ScanLine className="h-5 w-5 text-slate-700" />
+                  </div>
+                  <div>
+                    <p className="text-sm font-semibold text-slate-900">Check telemetry health</p>
+                    <p className="text-xs text-slate-600">Verify logs are arriving before you test.</p>
+                  </div>
+                </div>
+              </button>
+            </CardContent>
+          </Card>
 
           {/* Alert Banner */}
           {needsAttention && firstFailure && (
@@ -835,7 +796,6 @@ export default function DashboardPage() {
                 <div className="flex gap-3">
                   <Button 
                     variant="outline" 
-                    className="border-amber-500/50 text-amber-200 hover:bg-amber-500/20" 
                     asChild
                   >
                     <Link href={`/tests/${firstFailure.id}`} aria-label={`View details for test ${firstFailure.id}`}>
@@ -844,7 +804,6 @@ export default function DashboardPage() {
                     </Link>
                   </Button>
                   <Button 
-                    className="bg-sky-600 text-white hover:bg-sky-500 font-semibold" 
                     onClick={() => router.push("/run-test")}
                     aria-label="Rerun the failed test"
                   >

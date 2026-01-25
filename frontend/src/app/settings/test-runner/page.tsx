@@ -55,6 +55,8 @@ ENV="lab"
 HOSTNAME=""
 PORT="22"
 USERNAME="${"${USER:-purvex}"}"
+OWNER_NAME="${"${PURVEX_OWNER_NAME:-}"}"
+OWNER_EMAIL="${"${PURVEX_OWNER_EMAIL:-}"}"
 ENV_SET="false"
 if [ -n "${"${PURVEX_ENV:-}"}" ]; then
     ENV_SET="true"
@@ -115,6 +117,17 @@ fi
 if [ -z "$HOSTNAME" ]; then
     HOSTNAME=$(hostname 2>/dev/null || echo "unknown")
 fi
+if [ -z "$OWNER_NAME" ]; then
+    OWNER_NAME="$USERNAME"
+fi
+read -r -p "Owner name [${OWNER_NAME}]: " OWNER_NAME_INPUT
+if [ -n "$OWNER_NAME_INPUT" ]; then
+    OWNER_NAME="$OWNER_NAME_INPUT"
+fi
+read -r -p "Owner email (optional) [${OWNER_EMAIL}]: " OWNER_EMAIL_INPUT
+if [ -n "$OWNER_EMAIL_INPUT" ]; then
+    OWNER_EMAIL="$OWNER_EMAIL_INPUT"
+fi
 
 get_local_ip() {
     if command -v ip >/dev/null 2>&1; then
@@ -143,7 +156,9 @@ REGISTRATION_DATA=$(cat <<EOF
   "allowed_test_types": "[\\"Atomic only\\"]",
   "max_concurrent_tests": 1,
   "heartbeat_interval_seconds": 5,
-  "alert_offline_minutes": 5
+  "alert_offline_minutes": 5,
+  "owner_name": "$OWNER_NAME",
+  "owner_email": "$OWNER_EMAIL"
 }
 EOF
 )
@@ -153,6 +168,7 @@ echo "Registering agent:"
 echo "  Hostname: $HOSTNAME"
 echo "  IP Address: $LOCAL_IP"
 echo "  Environment: $ENV"
+echo "  Owner: $OWNER_NAME"
 echo ""
 
 URL="\${api_base}/settings/environment-runners"
@@ -350,7 +366,9 @@ param(
     [string]$Env = "lab",
     [string]$Hostname = $env:COMPUTERNAME,
     [int]$Port = 22,
-    [string]$Username = $env:USERNAME
+    [string]$Username = $env:USERNAME,
+    [string]$OwnerName = $env:PURVEX_OWNER_NAME,
+    [string]$OwnerEmail = $env:PURVEX_OWNER_EMAIL
 )
 
 $envProvided = $PSBoundParameters.ContainsKey('Env') -or (-not [string]::IsNullOrEmpty($env:PURVEX_ENV))
@@ -374,6 +392,18 @@ if ([string]::IsNullOrEmpty($Token) -or $Token -eq $TokenPlaceholder) {
     Write-Host "❌ ERROR: Registration token is required." -ForegroundColor Red
     Write-Host "   Provide it via -Token or set PURVEX_API_TOKEN." -ForegroundColor Yellow
     exit 1
+}
+
+if ([string]::IsNullOrEmpty($OwnerName)) {
+    $OwnerName = $Username
+}
+$ownerNameInput = Read-Host "Owner name (default: $OwnerName)"
+if (-not [string]::IsNullOrEmpty($ownerNameInput)) {
+    $OwnerName = $ownerNameInput
+}
+$ownerEmailInput = Read-Host "Owner email (optional)"
+if (-not [string]::IsNullOrEmpty($ownerEmailInput)) {
+    $OwnerEmail = $ownerEmailInput
 }
 
 function Get-LocalIP {
@@ -401,6 +431,8 @@ $RegistrationData = @{
     max_concurrent_tests = 1
     heartbeat_interval_seconds = 5
     alert_offline_minutes = 5
+    owner_name = $OwnerName
+    owner_email = $OwnerEmail
 } | ConvertTo-Json
 
 Write-Host "Connecting to PurveX at: $ApiUrl" -ForegroundColor Cyan
@@ -408,6 +440,7 @@ Write-Host "Registering agent:" -ForegroundColor Cyan
 Write-Host "  Hostname: $Hostname" -ForegroundColor White
 Write-Host "  IP Address: $LocalIP" -ForegroundColor White
 Write-Host "  Environment: $Env" -ForegroundColor White
+Write-Host "  Owner: $OwnerName" -ForegroundColor White
 Write-Host ""
 
 $Url = "$($ApiUrl.TrimEnd('/'))/settings/environment-runners"
@@ -583,6 +616,17 @@ def register_agent(api_url: str, api_token: str, environment: str, hostname: Opt
         hostname = get_hostname()
     if not username:
         username = os.getenv('USER') or os.getenv('USERNAME') or 'purvex'
+    owner_name = os.getenv('PURVEX_OWNER_NAME') or username
+    owner_email = os.getenv('PURVEX_OWNER_EMAIL') or ""
+    try:
+        owner_name_input = input(f"Owner name [{owner_name}]: ").strip()
+        if owner_name_input:
+            owner_name = owner_name_input
+        owner_email_input = input("Owner email (optional): ").strip()
+        if owner_email_input:
+            owner_email = owner_email_input
+    except Exception:
+        pass
     
     registration_data = {
         "environment_name": environment,
@@ -598,7 +642,9 @@ def register_agent(api_url: str, api_token: str, environment: str, hostname: Opt
         "allowed_test_types": '["Atomic only"]',
         "max_concurrent_tests": 1,
         "heartbeat_interval_seconds": 5,
-        "alert_offline_minutes": 5
+        "alert_offline_minutes": 5,
+        "owner_name": owner_name,
+        "owner_email": owner_email
     }
     
     url = f"{api_url.rstrip('/')}/settings/environment-runners"
@@ -614,6 +660,7 @@ def register_agent(api_url: str, api_token: str, environment: str, hostname: Opt
     print(f"  Hostname  : {hostname}")
     print(f"  IP Address: {get_local_ip()}")
     print(f"  Environment: {environment}")
+    print(f"  Owner     : {owner_name}")
     print()
     
     try:
@@ -771,6 +818,8 @@ export default function TestRunnerSettingsPage() {
     max_concurrent_tests: 1,
     heartbeat_interval_seconds: 5,
     alert_offline_minutes: 5,
+    owner_name: "",
+    owner_email: "",
   });
   const [isSaving, setIsSaving] = useState(false);
   const router = useRouter();
@@ -894,6 +943,8 @@ export default function TestRunnerSettingsPage() {
         max_concurrent_tests: 1,
         heartbeat_interval_seconds: 5,
         alert_offline_minutes: 5,
+        owner_name: "",
+        owner_email: "",
       });
       setShowAddForm(false);
       setEditingConfig(null);
@@ -1094,15 +1145,15 @@ export default function TestRunnerSettingsPage() {
                 className={cn(
                   "group relative px-4 py-3 text-sm font-medium transition-all duration-200 rounded-xl flex items-center gap-3 border-2",
                   connectionType === "agent"
-                    ? "bg-[#f5f7ff] text-[#4d6dff] border-[#5b7bff] shadow-[0_0_0_3px_rgba(91,123,255,0.18)]"
-                    : "bg-white text-slate-600 border-slate-200 hover:bg-[#f5f7ff] hover:border-[#5b7bff] hover:text-[#4d6dff] hover:shadow-md"
+                    ? "bg-white text-slate-900 border-slate-900 shadow-sm"
+                    : "bg-white text-slate-700 border-slate-200 hover:border-slate-300 hover:shadow-sm"
                 )}
               >
                 <div className={cn(
                   "h-10 w-10 rounded-lg flex items-center justify-center transition-all duration-200 shadow-sm",
                   connectionType === "agent" 
-                    ? "bg-[#5b7bff] text-white shadow-[0_8px_18px_rgba(91,123,255,0.35)]" 
-                    : "bg-slate-100 text-slate-500 group-hover:bg-indigo-50 group-hover:text-indigo-600"
+                    ? "bg-white text-slate-700 border border-slate-200" 
+                    : "bg-white text-slate-600 border border-slate-200"
                 )}>
                   <ServerCog className="h-5 w-5" />
                 </div>
@@ -1111,7 +1162,7 @@ export default function TestRunnerSettingsPage() {
                   <span className="text-[11px] text-slate-500 mt-0.5 block">Register with script</span>
                 </div>
                 {connectionType === "agent" && (
-                  <div className="absolute top-2 right-2 h-2 w-2 rounded-full bg-[#5b7bff] animate-pulse"></div>
+                  <div className="absolute top-2 right-2 h-2 w-2 rounded-full bg-slate-900"></div>
                 )}
               </button>
               <button
@@ -1136,15 +1187,15 @@ export default function TestRunnerSettingsPage() {
                 className={cn(
                   "group relative px-4 py-3 text-sm font-medium transition-all duration-200 rounded-xl flex items-center gap-3 border-2",
                   connectionType === "ssh"
-                    ? "bg-gradient-to-br from-indigo-50 via-purple-50 to-indigo-50 text-indigo-700 border-indigo-300 shadow-lg ring-2 ring-indigo-100"
-                    : "bg-white text-slate-600 border-slate-200 hover:bg-[#f5f7ff] hover:border-[#5b7bff] hover:text-[#4d6dff] hover:shadow-md"
+                    ? "bg-white text-slate-900 border-slate-900 shadow-sm"
+                    : "bg-white text-slate-700 border-slate-200 hover:border-slate-300 hover:shadow-sm"
                 )}
               >
                 <div className={cn(
                   "h-10 w-10 rounded-lg flex items-center justify-center transition-all duration-200 shadow-sm",
                   connectionType === "ssh" 
-                    ? "bg-gradient-to-br from-indigo-500 to-purple-600 text-white shadow-md" 
-                    : "bg-slate-100 text-slate-500 group-hover:bg-indigo-50 group-hover:text-indigo-600"
+                    ? "bg-white text-slate-700 border border-slate-200" 
+                    : "bg-white text-slate-600 border border-slate-200"
                 )}>
                   <Terminal className="h-5 w-5" />
                 </div>
@@ -1153,7 +1204,7 @@ export default function TestRunnerSettingsPage() {
                   <span className="text-[11px] text-slate-500 mt-0.5 block">Manual configuration</span>
                 </div>
                 {connectionType === "ssh" && (
-                  <div className="absolute top-2 right-2 h-2 w-2 rounded-full bg-indigo-500 animate-pulse"></div>
+                  <div className="absolute top-2 right-2 h-2 w-2 rounded-full bg-slate-900"></div>
                 )}
               </button>
             </div>
@@ -1580,6 +1631,25 @@ export default function TestRunnerSettingsPage() {
                         <Input id="allowed_test_types" value={formData.allowed_test_types} onChange={handleFormChange} />
                       </div>
                     </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <p className="text-[11px] uppercase tracking-[0.2em] text-slate-400">
+                      Ownership
+                    </p>
+                    <div className="grid gap-4 md:grid-cols-2">
+                      <div className="space-y-2">
+                        <Label htmlFor="owner_name">Owner name</Label>
+                        <Input id="owner_name" value={formData.owner_name || ""} onChange={handleFormChange} placeholder="Jane Smith" />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="owner_email">Owner email</Label>
+                        <Input id="owner_email" value={formData.owner_email || ""} onChange={handleFormChange} placeholder="jane@company.com" />
+                      </div>
+                    </div>
+                    <p className="text-[11px] text-muted-foreground">
+                      Defaults to the runner installer unless an admin assigns someone else.
+                    </p>
                   </div>
 
                   <div className="space-y-2">

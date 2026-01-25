@@ -46,6 +46,8 @@ ENV="lab"
 HOSTNAME=""
 PORT="22"
 USERNAME="${"${USER:-purvex}"}"
+OWNER_NAME="${"${PURVEX_OWNER_NAME:-}"}"
+OWNER_EMAIL="${"${PURVEX_OWNER_EMAIL:-}"}"
 ENV_SET="false"
 if [ -n "${"${PURVEX_ENV:-}"}" ]; then
     ENV_SET="true"
@@ -106,6 +108,17 @@ fi
 if [ -z "$HOSTNAME" ]; then
     HOSTNAME=$(hostname 2>/dev/null || echo "unknown")
 fi
+if [ -z "$OWNER_NAME" ]; then
+    OWNER_NAME="$USERNAME"
+fi
+read -r -p "Owner name [${OWNER_NAME}]: " OWNER_NAME_INPUT
+if [ -n "$OWNER_NAME_INPUT" ]; then
+    OWNER_NAME="$OWNER_NAME_INPUT"
+fi
+read -r -p "Owner email (optional) [${OWNER_EMAIL}]: " OWNER_EMAIL_INPUT
+if [ -n "$OWNER_EMAIL_INPUT" ]; then
+    OWNER_EMAIL="$OWNER_EMAIL_INPUT"
+fi
 
 get_local_ip() {
     if command -v ip >/dev/null 2>&1; then
@@ -134,7 +147,9 @@ REGISTRATION_DATA=$(cat <<EOF
   "allowed_test_types": "[\\"Atomic only\\"]",
   "max_concurrent_tests": 1,
   "heartbeat_interval_seconds": 5,
-  "alert_offline_minutes": 5
+  "alert_offline_minutes": 5,
+  "owner_name": "$OWNER_NAME",
+  "owner_email": "$OWNER_EMAIL"
 }
 EOF
 )
@@ -144,6 +159,7 @@ echo "Registering agent:"
 echo "  Hostname: $HOSTNAME"
 echo "  IP Address: $LOCAL_IP"
 echo "  Environment: $ENV"
+echo "  Owner: $OWNER_NAME"
 echo ""
 
 URL="\${api_base}/settings/environment-runners"
@@ -341,7 +357,9 @@ param(
     [string]$Env = "lab",
     [string]$Hostname = $env:COMPUTERNAME,
     [int]$Port = 22,
-    [string]$Username = $env:USERNAME
+    [string]$Username = $env:USERNAME,
+    [string]$OwnerName = $env:PURVEX_OWNER_NAME,
+    [string]$OwnerEmail = $env:PURVEX_OWNER_EMAIL
 )
 
 $envProvided = $PSBoundParameters.ContainsKey('Env') -or (-not [string]::IsNullOrEmpty($env:PURVEX_ENV))
@@ -365,6 +383,18 @@ if ([string]::IsNullOrEmpty($Token) -or $Token -eq $TokenPlaceholder) {
     Write-Host "❌ ERROR: Registration token is required." -ForegroundColor Red
     Write-Host "   Provide it via -Token or set PURVEX_API_TOKEN." -ForegroundColor Yellow
     exit 1
+}
+
+if ([string]::IsNullOrEmpty($OwnerName)) {
+    $OwnerName = $Username
+}
+$ownerNameInput = Read-Host "Owner name (default: $OwnerName)"
+if (-not [string]::IsNullOrEmpty($ownerNameInput)) {
+    $OwnerName = $ownerNameInput
+}
+$ownerEmailInput = Read-Host "Owner email (optional)"
+if (-not [string]::IsNullOrEmpty($ownerEmailInput)) {
+    $OwnerEmail = $ownerEmailInput
 }
 
 function Get-LocalIP {
@@ -392,6 +422,8 @@ $RegistrationData = @{
     max_concurrent_tests = 1
     heartbeat_interval_seconds = 5
     alert_offline_minutes = 5
+    owner_name = $OwnerName
+    owner_email = $OwnerEmail
 } | ConvertTo-Json
 
 Write-Host "Connecting to PurveX at: $ApiUrl" -ForegroundColor Cyan
@@ -399,6 +431,7 @@ Write-Host "Registering agent:" -ForegroundColor Cyan
 Write-Host "  Hostname: $Hostname" -ForegroundColor White
 Write-Host "  IP Address: $LocalIP" -ForegroundColor White
 Write-Host "  Environment: $Env" -ForegroundColor White
+Write-Host "  Owner: $OwnerName" -ForegroundColor White
 Write-Host ""
 
 $Url = "$($ApiUrl.TrimEnd('/'))/settings/environment-runners"
@@ -573,6 +606,17 @@ def register_agent(api_url: str, api_token: str, environment: str, hostname: Opt
         hostname = get_hostname()
     if not username:
         username = os.getenv('USER') or os.getenv('USERNAME') or 'purvex'
+    owner_name = os.getenv('PURVEX_OWNER_NAME') or username
+    owner_email = os.getenv('PURVEX_OWNER_EMAIL') or ""
+    try:
+        owner_name_input = input(f"Owner name [{owner_name}]: ").strip()
+        if owner_name_input:
+            owner_name = owner_name_input
+        owner_email_input = input("Owner email (optional): ").strip()
+        if owner_email_input:
+            owner_email = owner_email_input
+    except Exception:
+        pass
     
     registration_data = {
         "environment_name": environment,
@@ -588,7 +632,9 @@ def register_agent(api_url: str, api_token: str, environment: str, hostname: Opt
         "allowed_test_types": '["Atomic only"]',
         "max_concurrent_tests": 1,
         "heartbeat_interval_seconds": 5,
-        "alert_offline_minutes": 5
+        "alert_offline_minutes": 5,
+        "owner_name": owner_name,
+        "owner_email": owner_email
     }
     
     url = f"{api_url.rstrip('/')}/settings/environment-runners"
@@ -604,6 +650,7 @@ def register_agent(api_url: str, api_token: str, environment: str, hostname: Opt
     print(f"  Hostname  : {hostname}")
     print(f"  IP Address: {get_local_ip()}")
     print(f"  Environment: {environment}")
+    print(f"  Owner     : {owner_name}")
     print()
     
     try:
@@ -1487,7 +1534,7 @@ function LabPageContent() {
                       }
                     }}
                     disabled={tokenLoading || !userToken}
-                    className="bg-emerald-600 hover:bg-emerald-700 text-white"
+                    variant="outline"
                   >
                     <Download className="h-4 w-4 mr-2" />
                     Download Script
@@ -1498,7 +1545,7 @@ function LabPageContent() {
           </Dialog>
 
           <Dialog open={!!deleteEndpoint} onOpenChange={(open) => !open && setDeleteEndpoint(null)}>
-            <DialogContent className="sm:max-w-[420px] bg-white border border-slate-200 rounded-2xl">
+            <DialogContent className="sm:max-w-[420px]">
               <DialogHeader>
                 <DialogTitle className="text-lg font-semibold text-slate-900">
                   Remove endpoint
@@ -1515,7 +1562,7 @@ function LabPageContent() {
                   Cancel
                 </Button>
                 <Button
-                  className="bg-red-600 hover:bg-red-700 text-white"
+                  variant="outline"
                   onClick={() => {
                     if (!deleteEndpoint) return;
                     handleDeleteEndpoint(deleteEndpoint.id);
@@ -1529,7 +1576,7 @@ function LabPageContent() {
           </Dialog>
 
           <Dialog open={!!pauseEndpoint} onOpenChange={(open) => !open && setPauseEndpoint(null)}>
-            <DialogContent className="sm:max-w-[420px] bg-white border border-slate-200 rounded-2xl">
+            <DialogContent className="sm:max-w-[420px]">
               <DialogHeader>
                 <DialogTitle className="text-lg font-semibold text-slate-900">
                   Pause agent
@@ -1546,7 +1593,7 @@ function LabPageContent() {
                   Cancel
                 </Button>
                 <Button
-                  className="bg-slate-900 hover:bg-slate-800 text-white"
+                  variant="outline"
                   onClick={() => {
                     if (!pauseEndpoint) return;
                     handlePauseEndpoint(pauseEndpoint.id);
@@ -1560,7 +1607,7 @@ function LabPageContent() {
           </Dialog>
 
           <Dialog open={!!resumeEndpoint} onOpenChange={(open) => !open && setResumeEndpoint(null)}>
-            <DialogContent className="sm:max-w-[420px] bg-white border border-slate-200 rounded-2xl">
+            <DialogContent className="sm:max-w-[420px]">
               <DialogHeader>
                 <DialogTitle className="text-lg font-semibold text-slate-900">
                   Resume agent
@@ -1577,7 +1624,7 @@ function LabPageContent() {
                   Cancel
                 </Button>
                 <Button
-                  className="bg-emerald-600 hover:bg-emerald-700 text-white"
+                  variant="outline"
                   onClick={() => {
                     if (!resumeEndpoint) return;
                     handleResumeEndpoint(resumeEndpoint.id);

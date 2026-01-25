@@ -23,6 +23,12 @@ interface TestingPolicySettings {
   business_hours_start: string;
   business_hours_end: string;
   only_prod_during_maintenance_windows: boolean;
+  retention_pass_days_lab: number;
+  retention_fail_days_lab: number;
+  retention_pass_days_dev: number;
+  retention_fail_days_dev: number;
+  retention_pass_days_prod: number;
+  retention_fail_days_prod: number;
 }
 
 export default function TestingPolicySettingsPage() {
@@ -187,13 +193,14 @@ export default function TestingPolicySettingsPage() {
                     value={settings.allowed_environments}
                     onChange={handleChange}
                     placeholder='["lab", "dev"]'
+                    className="bg-white text-slate-900 border-slate-200"
                   />
                   <p className="text-xs text-slate-500">Example: ["lab", "dev"]. Use caution with "prod".</p>
                 </div>
                 <div className="grid gap-3 md:grid-cols-2">
                   <div className="space-y-2">
                     <Label htmlFor="default_marker_prefix">Marker prefix</Label>
-                    <Input id="default_marker_prefix" value={settings.default_marker_prefix} onChange={handleChange} required />
+                    <Input id="default_marker_prefix" value={settings.default_marker_prefix} onChange={handleChange} required className="bg-white text-slate-900 border-slate-200" />
                   </div>
                   <label className="flex items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700">
                     <span>Include environment + timestamp</span>
@@ -213,7 +220,7 @@ export default function TestingPolicySettingsPage() {
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="tag_test_alerts">SOC tag</Label>
-                  <Input id="tag_test_alerts" value={settings.tag_test_alerts} onChange={handleChange} required />
+                  <Input id="tag_test_alerts" value={settings.tag_test_alerts} onChange={handleChange} required className="bg-white text-slate-900 border-slate-200" />
                   <p className="text-xs text-slate-500">Example: Purvex_Test = true</p>
                 </div>
                 <div className="space-y-3">
@@ -252,14 +259,74 @@ export default function TestingPolicySettingsPage() {
                 <div className="grid gap-3 md:grid-cols-2">
                   <div className="space-y-2">
                     <Label htmlFor="business_hours_start">Start time</Label>
-                    <Input id="business_hours_start" type="time" value={settings.business_hours_start} onChange={handleChange} />
+                    <Input id="business_hours_start" type="time" value={settings.business_hours_start} onChange={handleChange} className="bg-white text-slate-900 border-slate-200" />
                   </div>
                   <div className="space-y-2">
                     <Label htmlFor="business_hours_end">End time</Label>
-                    <Input id="business_hours_end" type="time" value={settings.business_hours_end} onChange={handleChange} />
+                    <Input id="business_hours_end" type="time" value={settings.business_hours_end} onChange={handleChange} className="bg-white text-slate-900 border-slate-200" />
                   </div>
                 </div>
               )}
+            </div>
+
+            <div className="rounded-2xl border border-slate-200 bg-slate-50/60 p-5 space-y-4">
+              <div className="space-y-1">
+                <p className="text-xs uppercase tracking-[0.24em] text-slate-400">Retention</p>
+                <h3 className="text-lg font-display font-semibold text-slate-900">Test result retention</h3>
+                <p className="text-sm text-slate-600">
+                  Keep PASS results shorter and FAIL/INCONCLUSIVE longer by environment.
+                </p>
+              </div>
+              <div className="grid gap-4 lg:grid-cols-3">
+                {[
+                  {
+                    label: "Lab",
+                    passKey: "retention_pass_days_lab",
+                    failKey: "retention_fail_days_lab",
+                  },
+                  {
+                    label: "Dev",
+                    passKey: "retention_pass_days_dev",
+                    failKey: "retention_fail_days_dev",
+                  },
+                  {
+                    label: "Prod",
+                    passKey: "retention_pass_days_prod",
+                    failKey: "retention_fail_days_prod",
+                  },
+                ].map((row) => (
+                  <div key={row.label} className="rounded-xl border border-slate-200 bg-white p-4 space-y-3">
+                    <div className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">
+                      {row.label}
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor={row.passKey}>PASS retention (days)</Label>
+                      <Input
+                        id={row.passKey}
+                        type="number"
+                        min={1}
+                        value={(settings as any)[row.passKey] ?? ""}
+                        onChange={handleChange}
+                        className="bg-white text-slate-900 border-slate-200"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor={row.failKey}>FAIL/INCONCLUSIVE retention (days)</Label>
+                      <Input
+                        id={row.failKey}
+                        type="number"
+                        min={1}
+                        value={(settings as any)[row.failKey] ?? ""}
+                        onChange={handleChange}
+                        className="bg-white text-slate-900 border-slate-200"
+                      />
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <p className="text-xs text-slate-500">
+                Defaults: Lab 7/30, Dev 30/90, Prod 90/180 (PASS/FAIL).
+              </p>
             </div>
 
             <div className="flex items-center justify-end">

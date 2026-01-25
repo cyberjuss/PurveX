@@ -6,7 +6,7 @@ import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Database, PlusCircle, Edit, Trash, TestTube, PlugZap } from "lucide-react";
+import { Database, PlusCircle, Edit, Trash, TestTube, PlugZap, Server } from "lucide-react";
 import { apiFetch } from "@/lib/api";
 import { usePermissions } from "@/hooks/usePermissions";
 import { Permission } from "@/lib/permissions";
@@ -401,7 +401,7 @@ export default function SiemSettingsPage() {
             {hasPermission(Permission.SETTINGS_SIEM_MANAGE) && connections.length > 0 && (
               <Button
                 onClick={handleToggleForm}
-                className="mt-4 w-fit bg-slate-950 text-white hover:bg-slate-900 shadow-lg shadow-slate-900/20 rounded-full px-6"
+                className="mt-4 w-fit px-6"
               >
                 <PlusCircle className="mr-2 h-4 w-4" />
                 {showAddForm ? "Cancel" : "Add SIEM connection"}
@@ -621,7 +621,6 @@ export default function SiemSettingsPage() {
                     <Button
                       type="submit"
                       disabled={isSaving}
-                      className="bg-slate-950 text-white hover:bg-slate-900"
                     >
                       {isSaving ? "Saving…" : "Save connection"}
                     </Button>
@@ -668,7 +667,7 @@ export default function SiemSettingsPage() {
                 {hasPermission(Permission.SETTINGS_SIEM_MANAGE) && (
                   <Button
                     onClick={handleToggleForm}
-                    className="bg-slate-950 text-white hover:bg-slate-900 shadow-lg shadow-slate-900/20 rounded-full px-6"
+                    className="rounded-full px-6"
                   >
                     <PlusCircle className="mr-2 h-4 w-4" />
                     Add connection
@@ -684,11 +683,16 @@ export default function SiemSettingsPage() {
                   className="border border-slate-200 bg-white shadow-[0_18px_40px_-32px_rgba(15,23,42,0.45)] transition-all duration-300 hover:-translate-y-1 hover:shadow-[0_24px_50px_-34px_rgba(15,23,42,0.55)]"
                 >
                   <CardContent className="pt-5 pb-5 space-y-4">
-                    <div className="flex items-start justify-between gap-3">
-                      <div>
-                        <p className="text-[11px] uppercase tracking-[0.28em] text-slate-500">SIEM Connection</p>
-                        <h4 className="text-lg font-semibold text-slate-900 mt-1">{conn.name}</h4>
-                        <p className="text-xs text-slate-600 mt-1">{conn.siem_type}</p>
+                    <div className="flex items-start justify-between gap-4">
+                      <div className="flex items-start gap-3">
+                        <div className="h-11 w-11 rounded-2xl border border-slate-200 bg-slate-50 flex items-center justify-center">
+                          <Server className="h-5 w-5 text-slate-600" />
+                        </div>
+                        <div>
+                          <p className="text-[11px] uppercase tracking-[0.28em] text-slate-500">SIEM Connection</p>
+                          <h4 className="text-lg font-semibold text-slate-900 mt-1">{conn.name}</h4>
+                          <p className="text-xs text-slate-600 mt-1">{conn.siem_type}</p>
+                        </div>
                       </div>
                       <div className="flex flex-col items-end gap-2">
                         <span
@@ -719,30 +723,36 @@ export default function SiemSettingsPage() {
                       </div>
                     </div>
 
-                    <div className="grid gap-3 text-xs text-slate-700 md:grid-cols-2">
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="text-slate-500">URL</span>
-                        <span className="font-mono text-[11px] text-slate-700 truncate max-w-[65%]">
-                          {conn.url}
-                        </span>
+                    <div className="grid gap-3 rounded-2xl border border-slate-200 bg-slate-50/60 p-3 text-xs text-slate-700 md:grid-cols-3">
+                      <div>
+                        <p className="text-[10px] uppercase tracking-[0.2em] text-slate-500">URL</p>
+                        <p className="mt-1 font-mono text-[11px] text-slate-700 truncate">{conn.url}</p>
                       </div>
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="text-slate-500">Auth</span>
-                        <span className="inline-flex items-center rounded-full border border-slate-200 px-2 py-0.5 text-[10px] text-slate-600">
+                      <div>
+                        <p className="text-[10px] uppercase tracking-[0.2em] text-slate-500">Auth</p>
+                        <span className="mt-1 inline-flex items-center rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[10px] text-slate-600">
                           {conn.auth_type}
                         </span>
                       </div>
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="text-slate-500">Last validated</span>
-                        <span className="text-[11px] text-slate-700">
+                      <div>
+                        <p className="text-[10px] uppercase tracking-[0.2em] text-slate-500">Last validated</p>
+                        <p className="mt-1 text-[11px] text-slate-700">
                           {conn.last_validated_at
                             ? new Date(conn.last_validated_at).toLocaleString()
                             : "Not yet"}
-                        </span>
+                        </p>
                       </div>
                     </div>
 
-                    <div className="flex flex-wrap items-center gap-2 pt-2">
+                    <div className="flex flex-wrap items-center gap-2 pt-1">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => handleTestConnection(conn.id)}
+                        className="border-slate-200 text-slate-700 hover:bg-slate-50"
+                      >
+                        Test connection
+                      </Button>
                       <Button
                         variant="outline"
                         size="sm"
@@ -753,14 +763,6 @@ export default function SiemSettingsPage() {
                       >
                         <Edit className="h-4 w-4 mr-1.5" />
                         Edit
-                      </Button>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => handleTestConnection(conn.id)}
-                        className="border-slate-200 text-slate-700 hover:bg-slate-50"
-                      >
-                        Test connection
                       </Button>
                       <Button
                         variant="destructive"

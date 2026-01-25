@@ -102,6 +102,14 @@ export default function ScoringSettingsPage() {
           </p>
         </CardHeader>
         <CardContent className="pt-4 space-y-6">
+          <div className="rounded-2xl border border-white/10 bg-white/5 px-5 py-4 text-sm text-slate-200">
+            <p className="text-[11px] uppercase tracking-[0.28em] text-slate-400">How scoring works</p>
+            <ul className="mt-3 space-y-1 text-slate-200">
+              <li>• Uses the latest test score when available (0–100).</li>
+              <li>• If no test score exists, falls back to base scores for PASS / FAIL / INCONCLUSIVE.</li>
+              <li>• Recent tests weigh more than stale tests to keep health current.</li>
+            </ul>
+          </div>
           <form onSubmit={handleSubmit} className="space-y-6">
           <div className="space-y-2">
             <p className="text-[11px] uppercase tracking-[0.2em] text-slate-400">

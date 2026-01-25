@@ -25,6 +25,8 @@ import {
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Label } from "@/components/ui/label";
+import { Input } from "@/components/ui/input";
 import {
   Detection,
   type DetectionAlert,
@@ -48,6 +50,10 @@ import {
   Sparkles,
   UserPlus,
   Loader2,
+  Crown,
+  Users,
+  MapPin,
+  ShieldCheck,
 } from "lucide-react";
 import { useToast } from "@/components/ui/toast";
 
@@ -91,6 +97,7 @@ function getResultBadgeClass(result?: string) {
 export default function DetectionDetailPage() {
   const params = useParams();
   const detectionId = (params as { id?: string }).id;
+  const evidenceComingSoon = true;
 
   const [detection, setDetection] = useState<Detection | null>(null);
   const [tests, setTests] = useState<TestWithDetectionTitle[]>([]);
@@ -387,6 +394,9 @@ export default function DetectionDetailPage() {
           <TabsTrigger value="lifecycle" className="text-xs md:text-sm text-black data-[state=active]:text-black data-[state=active]:bg-slate-50">
             Lifecycle
           </TabsTrigger>
+          <TabsTrigger value="ownership" className="text-xs md:text-sm text-black data-[state=active]:text-black data-[state=active]:bg-slate-50">
+            Ownership
+          </TabsTrigger>
         </TabsList>
 
         <TabsContent value="overview" className="space-y-4">
@@ -540,171 +550,16 @@ export default function DetectionDetailPage() {
                   Pull a minimal evidence bundle from notables (no raw logs).
                 </CardDescription>
               </div>
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={fetchEvidence}
-                disabled={evidenceLoading || !selectedSiemId}
-                className="border-slate-200 text-slate-700 hover:bg-slate-50 inline-flex items-center gap-2"
-              >
-                {evidenceLoading ? (
-                  <>
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                    Fetching…
-                  </>
-                ) : (
-                  "Fetch evidence"
-                )}
-              </Button>
+              <Badge className="bg-slate-100 text-slate-700 border border-slate-200">
+                Coming soon
+              </Badge>
             </CardHeader>
             <CardContent className="space-y-3">
-              {siemConnections.length === 0 ? (
-                <p className="text-sm text-slate-700">
-                  No Splunk ES connection configured yet. Add one in Settings → SIEM.
-                </p>
-              ) : (
-                <>
-                  <div className="grid gap-3 md:grid-cols-3">
-                    <div className="space-y-1">
-                      <Label>Connection</Label>
-                      <Select
-                        value={selectedSiemId ? String(selectedSiemId) : ""}
-                        onValueChange={(value) => {
-                          setSelectedSiemId(Number(value));
-                          setEvidenceData(null);
-                          setEvidenceError(null);
-                        }}
-                      >
-                        <SelectTrigger className="bg-white text-slate-900 border-slate-200">
-                          <SelectValue placeholder="Select connection" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {siemConnections.map((conn) => (
-                            <SelectItem key={conn.id} value={String(conn.id)}>
-                              {conn.name}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div className="space-y-1">
-                      <Label>Earliest</Label>
-                      <Input
-                        value={evidenceFilters.earliest}
-                        onChange={(e) => setEvidenceFilters((prev) => ({ ...prev, earliest: e.target.value }))}
-                        placeholder="-2m"
-                        className="bg-white text-slate-900 border-slate-200"
-                      />
-                    </div>
-                    <div className="space-y-1">
-                      <Label>Latest</Label>
-                      <Input
-                        value={evidenceFilters.latest}
-                        onChange={(e) => setEvidenceFilters((prev) => ({ ...prev, latest: e.target.value }))}
-                        placeholder="now"
-                        className="bg-white text-slate-900 border-slate-200"
-                      />
-                    </div>
-                    <div className="space-y-1">
-                      <Label>Host</Label>
-                      <Input
-                        value={evidenceFilters.host}
-                        onChange={(e) => setEvidenceFilters((prev) => ({ ...prev, host: e.target.value }))}
-                        placeholder="host"
-                        className="bg-white text-slate-900 border-slate-200"
-                      />
-                    </div>
-                    <div className="space-y-1">
-                      <Label>User</Label>
-                      <Input
-                        value={evidenceFilters.user}
-                        onChange={(e) => setEvidenceFilters((prev) => ({ ...prev, user: e.target.value }))}
-                        placeholder="user"
-                        className="bg-white text-slate-900 border-slate-200"
-                      />
-                    </div>
-                    <div className="space-y-1">
-                      <Label>Dest</Label>
-                      <Input
-                        value={evidenceFilters.dest}
-                        onChange={(e) => setEvidenceFilters((prev) => ({ ...prev, dest: e.target.value }))}
-                        placeholder="dest"
-                        className="bg-white text-slate-900 border-slate-200"
-                      />
-                    </div>
-                    <div className="space-y-1">
-                      <Label>Src</Label>
-                      <Input
-                        value={evidenceFilters.src}
-                        onChange={(e) => setEvidenceFilters((prev) => ({ ...prev, src: e.target.value }))}
-                        placeholder="src"
-                        className="bg-white text-slate-900 border-slate-200"
-                      />
-                    </div>
-                    <div className="space-y-1">
-                      <Label>Limit</Label>
-                      <Input
-                        value={evidenceFilters.limit}
-                        onChange={(e) => setEvidenceFilters((prev) => ({ ...prev, limit: e.target.value }))}
-                        placeholder="50"
-                        className="bg-white text-slate-900 border-slate-200"
-                      />
-                    </div>
-                  </div>
-
-                  {evidenceError && (
-                    <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
-                      {evidenceError}
-                    </div>
-                  )}
-
-                  {evidenceData?.deep_link && (
-                    <a
-                      href={evidenceData.deep_link}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="text-xs text-sky-700 underline hover:text-sky-800"
-                    >
-                      Open in Splunk
-                    </a>
-                  )}
-
-                  {evidenceData?.items?.length ? (
-                    <div className="rounded-lg border border-slate-200 overflow-hidden">
-                      <div className="max-h-56 overflow-auto">
-                        <table className="min-w-full text-xs text-slate-900">
-                          <thead className="bg-slate-50 text-slate-600">
-                            <tr>
-                              <th className="px-2 py-2 text-left">Time</th>
-                              <th className="px-2 py-2 text-left">Host</th>
-                              <th className="px-2 py-2 text-left">User</th>
-                              <th className="px-2 py-2 text-left">Dest</th>
-                              <th className="px-2 py-2 text-left">Src</th>
-                              <th className="px-2 py-2 text-left">Signature</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {evidenceData.items.map((item, idx) => (
-                              <tr key={`${idx}`} className="border-t border-slate-200">
-                                <td className="px-2 py-2 text-slate-700">{item.event_time || "-"}</td>
-                                <td className="px-2 py-2">{item.host || "-"}</td>
-                                <td className="px-2 py-2">{item.user || "-"}</td>
-                                <td className="px-2 py-2">{item.dest || "-"}</td>
-                                <td className="px-2 py-2">{item.src || "-"}</td>
-                                <td className="px-2 py-2 text-slate-700">{item.signature || "-"}</td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
-                    </div>
-                  ) : (
-                    <p className="text-xs text-slate-600">
-                      No evidence returned yet. Adjust filters and fetch.
-                    </p>
-                  )}
-                </>
-              )}
+              {evidenceComingSoon ? (
+                <div className="rounded-2xl border border-slate-200 bg-slate-50 p-5 text-sm text-slate-700">
+                  Evidence collection is coming soon. Connect your SIEM and run a test to enable evidence bundles.
+                </div>
+              ) : null}
             </CardContent>
           </Card>
         </TabsContent>
@@ -865,7 +720,7 @@ export default function DetectionDetailPage() {
                       Assign Owner
                     </Button>
                   </DialogTrigger>
-                  <DialogContent className="bg-white border border-slate-200 shadow-2xl w-[400px] h-[400px] mx-4 rounded-2xl p-6 flex flex-col">
+                  <DialogContent className="w-[400px] h-[400px] mx-4 p-6 flex flex-col">
                     <DialogHeader className="text-left flex-shrink-0">
                       <DialogTitle className="text-xl font-display font-semibold text-slate-900 mb-2">Assign Owner</DialogTitle>
                       <DialogDescription className="text-sm text-slate-600 leading-relaxed">
@@ -919,7 +774,6 @@ export default function DetectionDetailPage() {
                       <Button
                         onClick={handleAssignOwner}
                         disabled={assigningOwner || !selectedOwner}
-                        className="bg-indigo-600 text-white hover:bg-indigo-500 shadow-md hover:shadow-lg transition-all"
                       >
                         {assigningOwner ? (
                           <>
@@ -1073,6 +927,125 @@ export default function DetectionDetailPage() {
                   <span>
                     Rule versioning and full DAC history will appear here in a future release.
                   </span>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+        </TabsContent>
+
+        <TabsContent value="ownership" className="space-y-4">
+          <Card className="relative overflow-hidden border border-slate-200 bg-white text-slate-900 shadow-[0_24px_60px_-46px_rgba(15,23,42,0.22)]">
+            <div className="pointer-events-none absolute -top-20 -right-12 h-56 w-56 rounded-full bg-sky-200/30 blur-3xl" />
+            <div className="pointer-events-none absolute -bottom-20 -left-16 h-52 w-52 rounded-full bg-indigo-200/20 blur-3xl" />
+            <CardHeader className="relative">
+              <div className="flex flex-wrap items-center justify-between gap-4">
+                <div>
+                  <CardTitle className="flex items-center gap-3 text-base text-slate-900">
+                    <span className="inline-flex h-9 w-9 items-center justify-center rounded-2xl bg-white text-slate-700 border border-slate-200">
+                      <Crown className="h-4 w-4" />
+                    </span>
+                    <span>Asset Ownership Map</span>
+                  </CardTitle>
+                  <CardDescription className="mt-1 text-sm text-slate-600">
+                    Premium ownership context to make gaps instantly actionable.
+                  </CardDescription>
+                </div>
+                <span className="rounded-full border border-slate-200 bg-white px-3 py-1 text-[10px] uppercase tracking-[0.35em] text-slate-600">
+                  Premium
+                </span>
+              </div>
+            </CardHeader>
+            <CardContent className="relative">
+              <div className="grid gap-6 lg:grid-cols-[1.1fr_0.9fr]">
+                <div className="space-y-4">
+                  <div className="rounded-2xl border border-slate-200 bg-white/90 p-4 shadow-sm">
+                    <div className="flex items-center gap-2 text-[11px] uppercase tracking-[0.28em] text-slate-500">
+                      <Users className="h-3.5 w-3.5 text-slate-600" />
+                      Runner ownership
+                    </div>
+                    <p className="mt-2 text-sm text-slate-700">
+                      Who owns the endpoint where tests execute?
+                    </p>
+                    <div className="mt-4 grid gap-3 text-sm text-slate-900">
+                      <div>
+                        <Label className="text-slate-500">Runner endpoint</Label>
+                        <Input
+                          placeholder="e.g., lab-runner-01"
+                          className="mt-2 border-slate-200 bg-white text-slate-900 placeholder:text-slate-400"
+                        />
+                      </div>
+                      <div>
+                        <Label className="text-slate-500">Owning team</Label>
+                        <Input
+                          placeholder="SOC Platform, SecEng, IT Ops"
+                          className="mt-2 border-slate-200 bg-white text-slate-900 placeholder:text-slate-400"
+                        />
+                      </div>
+                      <div>
+                        <Label className="text-slate-500">Escalation path (optional)</Label>
+                        <Input
+                          placeholder="SOC L2 → On-call → Security Eng"
+                          className="mt-2 border-slate-200 bg-white text-slate-900 placeholder:text-slate-400"
+                        />
+                      </div>
+                    </div>
+                    <p className="mt-3 text-xs text-slate-500">
+                      Use this to route runner outages or test failures to the correct team.
+                    </p>
+                  </div>
+
+                  <div className="rounded-2xl border border-slate-200 bg-white/90 p-4 shadow-sm">
+                    <div className="flex items-center gap-2 text-[11px] uppercase tracking-[0.28em] text-slate-500">
+                      <MapPin className="h-3.5 w-3.5 text-sky-500" />
+                      Coverage & telemetry
+                    </div>
+                    <div className="mt-3 flex flex-wrap gap-2 text-xs text-slate-800">
+                      {["DC-01", "VDI-Cluster", "Identity Core", "Cloud IAM", "Prod Apps"].map((item) => (
+                        <span
+                          key={item}
+                          className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5"
+                        >
+                          {item}
+                        </span>
+                      ))}
+                    </div>
+                    <div className="mt-4 space-y-2 text-sm text-slate-900">
+                      {[
+                        "SIEM: Splunk (prod-security)",
+                        "EDR: CrowdStrike (east)",
+                        "Telemetry: Windows Event + Sysmon",
+                      ].map((item) => (
+                        <div key={item} className="flex items-center justify-between">
+                          <span>{item}</span>
+                          <span className="text-[11px] text-emerald-600">Live</span>
+                        </div>
+                      ))}
+                    </div>
+                    <div className="mt-3 text-xs text-slate-500">
+                      Last verified: 2 days ago · SLA: 4h response
+                    </div>
+                  </div>
+                </div>
+
+                <div className="space-y-4">
+                  <div className="rounded-2xl border border-slate-200 bg-white/90 p-4 shadow-sm">
+                    <div className="text-[11px] uppercase tracking-[0.28em] text-slate-500">
+                      Recommended owner actions
+                    </div>
+                    <div className="mt-3 space-y-3 text-sm text-slate-900">
+                      {[
+                        "Confirm logs for T1021 coverage in staging.",
+                        "Re-run latest tests after patch window.",
+                        "Review field mappings for authentication logs.",
+                      ].map((item) => (
+                        <div key={item} className="flex items-start gap-2">
+                          <span className="mt-1.5 h-1.5 w-1.5 rounded-full bg-sky-500" />
+                          <span>{item}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
                 </div>
               </div>
             </CardContent>

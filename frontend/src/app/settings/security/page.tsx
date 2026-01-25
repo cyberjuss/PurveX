@@ -215,7 +215,7 @@ export default function SecuritySettingsPage() {
 
       {/* Disable 2FA Dialog */}
       <Dialog open={showDisableDialog} onOpenChange={setShowDisableDialog}>
-        <DialogContent className="max-w-md rounded-2xl border border-slate-200 bg-white">
+        <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle>Disable Two-Factor Authentication</DialogTitle>
             <DialogDescription>
