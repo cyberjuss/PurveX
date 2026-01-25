@@ -11,6 +11,8 @@ import { Copy as CopyIcon } from "lucide-react";
 import {
   type AtomicTestDefinition,
   type MitreTechnique,
+  getAtomicCatalogStatus,
+  downloadAtomicCatalog,
   getAtomicTests,
   getMitreTechniques,
 } from "@/lib/api";
@@ -27,6 +29,8 @@ export default function TechniqueExplorePage() {
   const [search, setSearch] = useState("");
   const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({});
   const [editCommands, setEditCommands] = useState<Record<string, string>>({});
+  const [catalogStatus, setCatalogStatus] = useState<{ installed: boolean; count: number; path: string } | null>(null);
+  const [installing, setInstalling] = useState(false);
 
   const totalAtomics = atomics.length;
   const uniquePlatforms = Array.from(new Set(atomics.flatMap((t) => t.platforms || [])));
@@ -97,6 +101,12 @@ export default function TechniqueExplorePage() {
         if (!cancelled) {
           setError("We couldn\u2019t load Atomic tests for this technique. Please try again.");
           setAtomics([]);
+          try {
+            const status = await getAtomicCatalogStatus();
+            if (!cancelled) setCatalogStatus(status);
+          } catch {
+            if (!cancelled) setCatalogStatus(null);
+          }
         }
       } finally {
         if (!cancelled) {
@@ -109,6 +119,20 @@ export default function TechniqueExplorePage() {
       cancelled = true;
     };
   }, [techniqueId, search]);
+
+  async function handleDownloadCatalog() {
+    setInstalling(true);
+    try {
+      await downloadAtomicCatalog();
+      const status = await getAtomicCatalogStatus();
+      setCatalogStatus(status);
+      setError(null);
+    } catch {
+      setError("We couldn\u2019t download the Atomic catalog. Please try again.");
+    } finally {
+      setInstalling(false);
+    }
+  }
 
   return (
     <div className="max-w-7xl mx-auto px-6 py-8 space-y-6">
@@ -155,7 +179,20 @@ export default function TechniqueExplorePage() {
         <CardContent className="space-y-3">
           {loading && <p className="text-xs text-slate-600">Loading atomic tests...</p>}
           {error && !loading && (
-            <p className="text-xs text-red-600">{error}</p>
+            <div className="space-y-2 rounded-xl border border-slate-200 bg-white p-3">
+              <p className="text-xs text-red-600">{error}</p>
+              <p className="text-[11px] text-slate-600">
+                Atomic Red Team catalog is not installed on this host yet.
+              </p>
+              {catalogStatus?.path && (
+                <p className="text-[11px] text-slate-500">
+                  Expected location: <span className="text-slate-700">{catalogStatus.path}</span>
+                </p>
+              )}
+              <Button type="button" onClick={handleDownloadCatalog} disabled={installing} className="h-8 px-3 text-[11px]">
+                {installing ? "Downloading catalog..." : "Download test catalog"}
+              </Button>
+            </div>
           )}
           {!loading && !error && atomics.length === 0 && (
             <p className="text-xs text-slate-600">

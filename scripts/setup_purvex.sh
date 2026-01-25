@@ -7,6 +7,8 @@ MIN_NODE_MAJOR="20"
 MIN_NODE_MINOR="9"
 MIN_NODE_PATCH="0"
 OLLAMA_MODEL_DEFAULT="${OLLAMA_MODEL_NAME:-gemma2:2b}"
+ATOMIC_DATA_DIR="${PURVEX_ATOMIC_DATA_DIR:-${HOME}/.purvex/atomic-red-team}"
+ATOMIC_TARBALL_URL="${PURVEX_ATOMIC_TARBALL_URL:-https://github.com/redcanaryco/atomic-red-team/archive/refs/heads/master.tar.gz}"
 
 echo "Checking required tooling..."
 
@@ -189,6 +191,58 @@ ensure_ollama() {
     ollama pull "${OLLAMA_MODEL_DEFAULT}" || true
   fi
 }
+
+ensure_atomic_catalog() {
+  if [ -d "${ATOMIC_DATA_DIR}/atomics" ]; then
+    echo "Atomic catalog already present at ${ATOMIC_DATA_DIR}."
+    return 0
+  fi
+
+  if ! prompt_yes_no "Download Atomic Red Team catalog now? (~2-5GB)"; then
+    echo "Skipping Atomic catalog download."
+    return 0
+  fi
+
+  if ! command -v curl >/dev/null 2>&1; then
+    echo "curl not found."
+    if command -v apt-get >/dev/null 2>&1; then
+      if prompt_yes_no "Install curl with apt-get?"; then
+        sudo apt-get update
+        sudo apt-get install -y curl
+      else
+        echo "Install curl and rerun."
+        return 1
+      fi
+    else
+      echo "Install curl and rerun."
+      return 1
+    fi
+  fi
+
+  tmp_dir="$(mktemp -d)"
+  tar_path="${tmp_dir}/atomic-red-team.tar.gz"
+  echo "Downloading Atomic Red Team catalog..."
+  curl -L --retry 5 --retry-delay 2 -o "${tar_path}" "${ATOMIC_TARBALL_URL}"
+  tar -xzf "${tar_path}" -C "${tmp_dir}"
+  extracted_dir="$(find "${tmp_dir}" -maxdepth 1 -type d -name 'atomic-red-team-*' | head -n 1)"
+  if [ -z "${extracted_dir}" ]; then
+    echo "Atomic catalog download did not contain expected folder."
+    return 1
+  fi
+  mkdir -p "$(dirname "${ATOMIC_DATA_DIR}")"
+  if [ -d "${ATOMIC_DATA_DIR}" ]; then
+    if prompt_yes_no "Replace existing Atomic catalog at ${ATOMIC_DATA_DIR}?"; then
+      rm -rf "${ATOMIC_DATA_DIR}"
+    else
+      echo "Keeping existing catalog."
+      return 0
+    fi
+  fi
+  mv "${extracted_dir}" "${ATOMIC_DATA_DIR}"
+  echo "Atomic catalog installed at ${ATOMIC_DATA_DIR}."
+}
+
+ensure_atomic_catalog
 
 echo "Setting up backend venv and dependencies..."
 cd "${ROOT_DIR}/backend"

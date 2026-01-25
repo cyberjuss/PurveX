@@ -136,6 +136,16 @@ class Settings(BaseSettings):
     # Deployment environment hint ("dev", "staging", "prod") used for safety checks.
     DEPLOYMENT_ENV: str = os.getenv("PURVEX_ENV", "dev")
 
+    # Atomic Red Team catalog storage
+    ATOMIC_DATA_DIR: str = os.getenv(
+        "PURVEX_ATOMIC_DATA_DIR",
+        str(Path.home() / ".purvex" / "atomic-red-team"),
+    )
+    ATOMIC_TARBALL_URL: str = os.getenv(
+        "PURVEX_ATOMIC_TARBALL_URL",
+        "https://github.com/redcanaryco/atomic-red-team/archive/refs/heads/master.tar.gz",
+    )
+
     # Pydantic v2 settings configuration
     model_config = SettingsConfigDict(
         env_file=".env",

@@ -3,7 +3,8 @@
 import { useEffect, useState } from "react";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { AtomicTestDefinition, getAtomicTests } from "@/lib/api";
+import { AtomicTestDefinition, getAtomicCatalogStatus, downloadAtomicCatalog, getAtomicTests } from "@/lib/api";
+import { Button } from "@/components/ui/button";
 
 interface AtomicTestPickerProps {
   selectedAtomicId: string | null;
@@ -15,6 +16,9 @@ export function AtomicTestPicker({ selectedAtomicId, onChange }: AtomicTestPicke
   const [items, setItems] = useState<AtomicTestDefinition[]>([]);
   const [loading, setLoading] = useState(false);
   const [unavailable, setUnavailable] = useState(false);
+  const [catalogStatus, setCatalogStatus] = useState<{ installed: boolean; count: number; path: string } | null>(null);
+  const [installing, setInstalling] = useState(false);
+  const [refreshTick, setRefreshTick] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -31,6 +35,12 @@ export function AtomicTestPicker({ selectedAtomicId, onChange }: AtomicTestPicke
         if (!cancelled) {
           setUnavailable(true);
           setItems([]);
+          try {
+            const status = await getAtomicCatalogStatus();
+            if (!cancelled) setCatalogStatus(status);
+          } catch {
+            if (!cancelled) setCatalogStatus(null);
+          }
         }
       } finally {
         if (!cancelled) {
@@ -42,7 +52,21 @@ export function AtomicTestPicker({ selectedAtomicId, onChange }: AtomicTestPicke
     return () => {
       cancelled = true;
     };
-  }, [search]);
+  }, [search, refreshTick]);
+
+  async function handleDownloadCatalog() {
+    setInstalling(true);
+    try {
+      await downloadAtomicCatalog();
+      setUnavailable(false);
+      setCatalogStatus(await getAtomicCatalogStatus());
+      setRefreshTick((prev) => prev + 1);
+    } catch {
+      setUnavailable(true);
+    } finally {
+      setInstalling(false);
+    }
+  }
 
   return (
     <Card className="elite-card ">
@@ -68,10 +92,24 @@ export function AtomicTestPicker({ selectedAtomicId, onChange }: AtomicTestPicke
       </CardHeader>
       <CardContent className="space-y-2 max-h-72 overflow-y-auto">
         {unavailable && (
-          <p className="text-xs text-slate-400">
-            Atomic catalog API is not configured yet. Your admin can enable it in the backend when
-            ready.
-          </p>
+          <div className="space-y-2 rounded-lg border border-slate-700 bg-slate-900/70 p-3">
+            <p className="text-xs text-slate-300">
+              Atomic Red Team catalog is not installed yet.
+            </p>
+            {catalogStatus?.path && (
+              <p className="text-[11px] text-slate-400">
+                Expected location: <span className="text-slate-200">{catalogStatus.path}</span>
+              </p>
+            )}
+            <Button
+              type="button"
+              onClick={handleDownloadCatalog}
+              disabled={installing}
+              className="h-8 px-3 text-[11px]"
+            >
+              {installing ? "Downloading catalog..." : "Download test catalog"}
+            </Button>
+          </div>
         )}
         {!unavailable && loading && (
           <p className="text-xs text-slate-400">Loading atomic tests…</p>
@@ -120,5 +158,4 @@ export function AtomicTestPicker({ selectedAtomicId, onChange }: AtomicTestPicke
     </Card>
   );
 }
-
 

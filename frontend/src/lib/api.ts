@@ -766,16 +766,27 @@ export async function getAtomicTests(params?: {
     ][]
   ).toString();
 
-  try {
-    return await apiFetch(`/atomic/tests${query ? `?${query}` : ""}`, { cache: "no-store" });
-  } catch (err) {
-    logClientError("Atomic catalog endpoint unavailable", err);
-    return { items: [], total: 0 };
-  }
+  return apiFetch(`/atomic/tests${query ? `?${query}` : ""}`, { cache: "no-store" });
 }
 
 export async function getAtomicTest(id: string): Promise<AtomicTestDefinition> {
   return apiFetch(`/atomic/tests/${id}`, { cache: "no-store" });
+}
+
+export interface AtomicCatalogStatus {
+  installed: boolean;
+  count: number;
+  path: string;
+}
+
+export async function getAtomicCatalogStatus(): Promise<AtomicCatalogStatus> {
+  return apiFetch("/atomic/catalog/status", { cache: "no-store" });
+}
+
+export async function downloadAtomicCatalog(): Promise<AtomicCatalogStatus> {
+  return apiFetch("/atomic/catalog/download", {
+    method: "POST",
+  });
 }
 
 // --- Settings API Functions ---
@@ -923,4 +934,3 @@ export async function cleanupAuditEvents(days?: number): Promise<{ deleted: numb
     method: "POST",
   });
 }
-
