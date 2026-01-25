@@ -21,6 +21,9 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     """
     
     async def dispatch(self, request: Request, call_next):
+        # Disable rate limiting in dev to avoid local DB lock storms.
+        if not IS_PRODUCTION:
+            return await call_next(request)
         response: Response = await call_next(request)
         
         # Content Security Policy
@@ -109,6 +112,9 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         self._store: dict[str, list[float]] = {}
     
     async def dispatch(self, request: Request, call_next):
+        # Disable rate limiting in non-production environments.
+        if not IS_PRODUCTION:
+            return await call_next(request)
         # Skip rate limiting for health checks
         if request.url.path in ["/health", "/ready"]:
             return await call_next(request)
@@ -226,4 +232,3 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
             response.headers["X-Process-Time"] = f"{process_time:.3f}"
         
         return response
-

@@ -281,6 +281,8 @@ class EnvironmentRunnerConfig(Base):
     runner_token_hash = Column(String, nullable=True)
     runner_token_last_rotated_at = Column(DateTime(timezone=True), nullable=True)
     runner_token_expires_at = Column(DateTime(timezone=True), nullable=True)
+    owner_name = Column(String, nullable=True)
+    owner_email = Column(String, nullable=True)
 
 
 class AgentCommand(Base):
@@ -326,6 +328,12 @@ class TestingPolicy(Base):
     business_hours_end = Column(String, default="17:00")
     only_prod_during_maintenance_windows = Column(Boolean, default=False)
     test_data_retention_days = Column(Integer, default=90)
+    retention_pass_days_lab = Column(Integer, default=7)
+    retention_fail_days_lab = Column(Integer, default=30)
+    retention_pass_days_dev = Column(Integer, default=30)
+    retention_fail_days_dev = Column(Integer, default=90)
+    retention_pass_days_prod = Column(Integer, default=90)
+    retention_fail_days_prod = Column(Integer, default=180)
 
 
 class DetectionScoring(Base):
@@ -333,7 +341,14 @@ class DetectionScoring(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     organization_id = Column(Integer, ForeignKey("organizations.id"), nullable=False, index=True)
-    base_scoring_explanation = Column(Text, default="PASS with logs → base 80, FAIL with logs → base 30, INCONCLUSIVE → base 50")
+    base_scoring_explanation = Column(
+        Text,
+        default=(
+            "Score = last test score if available. If not, use base scores "
+            "(PASS 80, FAIL 30, INCONCLUSIVE 50). Recent tests weigh more "
+            "than stale tests."
+        ),
+    )
     pass_log_base_score = Column(Integer, default=80)
     fail_log_base_score = Column(Integer, default=30)
     inconclusive_base_score = Column(Integer, default=50)
@@ -352,13 +367,14 @@ class AIAssistantSettings(Base):
     id = Column(Integer, primary_key=True, index=True)
     organization_id = Column(Integer, ForeignKey("organizations.id"), nullable=False, index=True)
     provider = Column(String, default="Local LLaMA")
-    model_name = Column(String, default="llama3.1")
+    model_name = Column(String, default="gemma2:2b")
     api_base_url = Column(String, default="http://localhost:11434")
     api_key = Column(Text, nullable=True)  # Encrypted in production
     generate_tuning_suggestions = Column(Boolean, default=True)
     explain_test_failures = Column(Boolean, default=True)
     max_tokens = Column(Integer, default=2000)
     temperature = Column(Integer, default=7)  # 0-10 scale
+    analysis_mode = Column(String, default="fast")
 
 
 class SandboxEnvironment(Base):

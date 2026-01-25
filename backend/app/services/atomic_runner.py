@@ -190,30 +190,79 @@ async def execute_test_pipeline(test_id: int, expected_org_id: int):
                 logger.warning("Error applying test data retention: %s", retention_err)
 
             # 10. Call analyze_detection (AI assistant) to enrich the test artifact.
+            existing_artifact = None
             if detection is not None:
-                ai_result = await anyio.to_thread.run_sync(
-                    analyze_detection, test, detection, sample_events
-                )
-                logger.info("Test %s AI analysis completed.", test_id)
+                existing_artifact = None
+                try:
+                    artifact_result = await db.execute(
+                        select(models.TestArtifact).where(models.TestArtifact.test_id == test.id)
+                    )
+                    existing_artifact = artifact_result.scalar_one_or_none()
+                except Exception:
+                    existing_artifact = None
+
+                if existing_artifact and existing_artifact.ai_explanation:
+                    ai_result = {
+                        "ai_explanation": existing_artifact.ai_explanation,
+                        "ai_suggested_rule": existing_artifact.ai_suggested_rule,
+                        "ai_root_cause_category": existing_artifact.ai_root_cause_category,
+                        "ai_confidence_score": existing_artifact.ai_confidence_score,
+                    }
+                    logger.info("Test %s AI analysis loaded from cache.", test_id)
+                else:
+                    ai_settings = None
+                    try:
+                        settings_result = await db.execute(
+                            select(models.AIAssistantSettings).where(
+                                models.AIAssistantSettings.organization_id == test.organization_id
+                            )
+                        )
+                        ai_settings = settings_result.scalar_one_or_none()
+                        if not ai_settings:
+                            ai_settings = models.AIAssistantSettings(
+                                organization_id=test.organization_id
+                            )
+                            db.add(ai_settings)
+                            await db.commit()
+                            await db.refresh(ai_settings)
+                    except Exception:
+                        ai_settings = None
+
+                    ai_result = await anyio.to_thread.run_sync(
+                        analyze_detection, test, detection, sample_events, ai_settings
+                    )
+                    logger.info("Test %s AI analysis completed.", test_id)
             else:
                 ai_result = {}
 
-            # 11. Create a TestArtifact with command, sample events, and AI output.
+            # 11. Create or update a TestArtifact with command, sample events, and AI output.
             # CRITICAL: Set organization_id from test to enforce tenant isolation.
-            artifact = models.TestArtifact(
-                organization_id=test.organization_id,
-                test_id=test.id,
-                atomic_command=command_str,
-                siem_sample_events=json.dumps(sample_events) if sample_events else "[]",
-                ai_explanation=ai_result.get("ai_explanation"),
-                ai_suggested_rule=ai_result.get("ai_suggested_rule"),
-                ai_root_cause_category=ai_result.get("ai_root_cause_category"),
-                ai_confidence_score=ai_result.get("ai_confidence_score"),
-            )
-            db.add(artifact)
-            await db.commit()
-            await db.refresh(artifact)
-            logger.info("Test artifact for %s created.", test_id)
+            if existing_artifact:
+                existing_artifact.atomic_command = command_str
+                existing_artifact.siem_sample_events = json.dumps(sample_events) if sample_events else "[]"
+                existing_artifact.ai_explanation = ai_result.get("ai_explanation")
+                existing_artifact.ai_suggested_rule = ai_result.get("ai_suggested_rule")
+                existing_artifact.ai_root_cause_category = ai_result.get("ai_root_cause_category")
+                existing_artifact.ai_confidence_score = ai_result.get("ai_confidence_score")
+                db.add(existing_artifact)
+                await db.commit()
+                await db.refresh(existing_artifact)
+                logger.info("Test artifact for %s updated.", test_id)
+            else:
+                artifact = models.TestArtifact(
+                    organization_id=test.organization_id,
+                    test_id=test.id,
+                    atomic_command=command_str,
+                    siem_sample_events=json.dumps(sample_events) if sample_events else "[]",
+                    ai_explanation=ai_result.get("ai_explanation"),
+                    ai_suggested_rule=ai_result.get("ai_suggested_rule"),
+                    ai_root_cause_category=ai_result.get("ai_root_cause_category"),
+                    ai_confidence_score=ai_result.get("ai_confidence_score"),
+                )
+                db.add(artifact)
+                await db.commit()
+                await db.refresh(artifact)
+                logger.info("Test artifact for %s created.", test_id)
 
         except Exception as e:
             logger.error("Error in test pipeline for test ID %s: %s", test_id, e)

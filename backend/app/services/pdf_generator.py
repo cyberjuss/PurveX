@@ -68,30 +68,65 @@ def derive_health_state(detection: Dict[str, Any]) -> str:
     return "UNKNOWN"
 
 
-def calculate_health_score(detections: List[Dict[str, Any]]) -> int:
-    """Calculate overall health score (0-100) based on detection states."""
+def _recency_weight(last_tested_at: Optional[str]) -> float:
+    """Apply a gentle recency weight so stale tests contribute less."""
+    if not last_tested_at:
+        return 0.0
+    try:
+        tested_at = datetime.fromisoformat(last_tested_at.replace("Z", "+00:00"))
+    except Exception:
+        return 0.0
+    age_days = max(0, (datetime.utcnow() - tested_at).days)
+    if age_days <= 7:
+        return 1.0
+    if age_days <= 30:
+        return 0.8
+    if age_days <= 90:
+        return 0.6
+    return 0.4
+
+
+def calculate_health_score(
+    detections: List[Dict[str, Any]],
+    scoring_settings: Optional[Dict[str, Any]] = None,
+) -> int:
+    """Calculate overall health score (0-100) using last_score + recency weighting."""
     if not detections:
         return 0
-    
-    healthy = sum(1 for d in detections if derive_health_state(d) == "HEALTHY")
-    total_tested = sum(1 for d in detections if d.get("last_tested_at"))
-    
-    if total_tested == 0:
-        return 0
-    
-    # Weight: Healthy = 100, Failed = 30, Missing telemetry = 20, Unknown = 0
-    score = 0
+
+    scoring_settings = scoring_settings or {}
+    pass_base = int(scoring_settings.get("pass_log_base_score", 80))
+    fail_base = int(scoring_settings.get("fail_log_base_score", 30))
+    inconclusive_base = int(scoring_settings.get("inconclusive_base_score", 50))
+
+    total_weight = 0.0
+    weighted_sum = 0.0
+
     for d in detections:
-        state = derive_health_state(d)
-        if state == "HEALTHY":
-            score += 100
-        elif state == "DETECTION_FAILED":
-            score += 30
-        elif state == "TELEMETRY_MISSING":
-            score += 20
-        # UNKNOWN adds 0
-    
-    return int(score / len(detections))
+        base_score = d.get("last_score")
+        if base_score is None:
+            state = derive_health_state(d)
+            if state == "HEALTHY":
+                base_score = pass_base
+            elif state == "DETECTION_FAILED":
+                base_score = fail_base
+            elif state == "TELEMETRY_MISSING":
+                base_score = inconclusive_base
+            else:
+                base_score = 0
+
+        weight = _recency_weight(d.get("last_tested_at"))
+        if weight == 0:
+            # If no recency signal, treat as low-confidence.
+            weight = 0.2
+
+        weighted_sum += float(base_score) * weight
+        total_weight += weight
+
+    if total_weight == 0:
+        return 0
+
+    return int(round(weighted_sum / total_weight))
 
 
 def get_mitre_coverage(detections: List[Dict[str, Any]], mitre_techniques: List[Dict[str, Any]]) -> Dict[str, Any]:

@@ -614,6 +614,10 @@ async def create_environment_runner(
     sanitized_data.pop("runner_token_hash", None)
     sanitized_data.pop("runner_token_last_rotated_at", None)
     sanitized_data.pop("runner_token_expires_at", None)
+    if not sanitized_data.get("owner_email") and current_user.email:
+        sanitized_data["owner_email"] = current_user.email
+    if not sanitized_data.get("owner_name"):
+        sanitized_data["owner_name"] = current_user.username or current_user.email
     
     org_id = require_org_id(current_user)
     token_record = None
@@ -1375,6 +1379,16 @@ async def get_ai_assistant_settings(
         # Create default AI settings for this organization
         ai_settings = models.AIAssistantSettings(organization_id=org_id)
         db.add(ai_settings)
+        await db.commit()
+        await db.refresh(ai_settings)
+    else:
+        # Ensure default local model is set for Ollama deployments.
+        if not ai_settings.model_name or ai_settings.model_name.strip() == "":
+            ai_settings.model_name = settings.OLLAMA_MODEL_NAME
+        if ai_settings.provider in {"Local LLaMA", "Local Llama", "Ollama"} and ai_settings.model_name == "llama3.1":
+            ai_settings.model_name = settings.OLLAMA_MODEL_NAME
+        if not ai_settings.analysis_mode:
+            ai_settings.analysis_mode = "fast"
         await db.commit()
         await db.refresh(ai_settings)
     return ai_settings

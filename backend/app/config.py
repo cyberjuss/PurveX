@@ -1,9 +1,12 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from dotenv import load_dotenv
+from pathlib import Path
 import os
 from typing import Optional, List
 
-load_dotenv()
+# Always load the repo-root .env regardless of current working directory.
+ROOT_ENV = Path(__file__).resolve().parents[2] / ".env"
+load_dotenv(dotenv_path=ROOT_ENV)
 
 class Settings(BaseSettings):
     project_name: str = "PurveX"
@@ -95,7 +98,11 @@ class Settings(BaseSettings):
     AUDIT_RETENTION_INTERVAL_HOURS: int = 24
 
     # Detection Scoring & Health Settings (MVP)
-    BASE_SCORING_EXPLANATION: str = "PASS with logs → base 80, FAIL with logs → base 30, INCONCLUSIVE → base 50"
+    BASE_SCORING_EXPLANATION: str = (
+        "Score = last test score if available. If not, use base scores "
+        "(PASS 80, FAIL 30, INCONCLUSIVE 50). Recent tests weigh more "
+        "than stale tests."
+    )
     PASS_LOG_BASE_SCORE: int = 80
     FAIL_LOG_BASE_SCORE: int = 30
     INCONCLUSIVE_BASE_SCORE: int = 50
@@ -116,7 +123,7 @@ class Settings(BaseSettings):
 
     # AI Assistant Settings (MVP)
     OLLAMA_API_BASE_URL: str = "http://localhost:11434"
-    OLLAMA_MODEL_NAME: str = "llama3.1"  # Default local model
+    OLLAMA_MODEL_NAME: str = "gemma2:2b"  # Default local model
     OPENAI_API_KEY: Optional[str] = None # Kept as an optional env var
     AI_PROVIDER: str = "Local LLaMA"
     GENERATE_TUNING_SUGGESTIONS: bool = True

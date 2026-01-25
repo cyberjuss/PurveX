@@ -13,48 +13,6 @@ logger = logging.getLogger("purvex.atomic")
 router = APIRouter(prefix="/atomic", tags=["atomic"])
 
 
-# Small built-in sample set used when a full Atomic Red Team checkout
-# isn't available on disk.
-SAMPLE_ATOMIC_TESTS: List[AtomicTestDefinition] = [
-    AtomicTestDefinition(
-        id="T1059.001-1",
-        technique_id="T1059.001",
-        name="Suspicious PowerShell execution",
-        description="Runs a base64-encoded PowerShell payload tagged with a PurveX marker.",
-        platforms=["windows"],
-        is_safe=True,
-        args=[
-            AtomicArgSpec(
-                name="command",
-                label="PowerShell command",
-                type="string",
-                required=False,
-                default='powershell.exe -NoProfile -EncodedCommand <base64>',
-                description="Override to match your lab environment.",
-            )
-        ],
-    ),
-    AtomicTestDefinition(
-        id="T1047-1",
-        technique_id="T1047",
-        name="WMI process execution",
-        description="Executes a simple process via WMI to exercise process creation logging.",
-        platforms=["windows"],
-        is_safe=True,
-        args=[],
-    ),
-    AtomicTestDefinition(
-        id="T1566.001-1",
-        technique_id="T1566.001",
-        name="Phishing link delivered via email",
-        description="Simulates delivery of a phishing link to exercise email and proxy detections.",
-        platforms=["windows", "cloud"],
-        is_safe=True,
-        args=[],
-    ),
-]
-
-
 def _load_atomic_tests() -> List[AtomicTestDefinition]:
     """
     Load Atomic Red Team tests from a local checkout of the official repo.
@@ -80,10 +38,10 @@ def _load_atomic_tests() -> List[AtomicTestDefinition]:
 
     if not atomic_root.exists():
         logger.warning(
-            "Atomic Red Team repo not found at %s – using built-in sample catalog.",
+            "Atomic Red Team repo not found at %s – Atomic catalog unavailable.",
             atomic_root,
         )
-        return SAMPLE_ATOMIC_TESTS
+        return []
 
     tests: List[AtomicTestDefinition] = []
 
@@ -154,28 +112,35 @@ def _load_atomic_tests() -> List[AtomicTestDefinition]:
                 )
 
     if not tests:
-        logger.warning(
-            "No Atomic tests were loaded from %s – falling back to sample catalog.",
-            atomic_root,
-        )
-        return SAMPLE_ATOMIC_TESTS
+        logger.warning("No Atomic tests were loaded from %s.", atomic_root)
+        return []
 
     logger.info("Loaded %d Atomic Red Team tests from %s", len(tests), atomic_root)
     return tests
 
 
-# Load atomic tests at module import time, but gracefully fall back to samples on error
+# Load atomic tests at module import time.
 try:
     ATOMIC_TESTS: List[AtomicTestDefinition] = _load_atomic_tests()
 except Exception as e:
     logger.error(
-        "Failed to load Atomic Red Team tests: %s. Falling back to sample catalog.",
+        "Failed to load Atomic Red Team tests: %s.",
         e,
         exc_info=True,
     )
-    ATOMIC_TESTS: List[AtomicTestDefinition] = SAMPLE_ATOMIC_TESTS
+    ATOMIC_TESTS: List[AtomicTestDefinition] = []
 
 
+def _ensure_atomic_catalog_loaded() -> None:
+    if ATOMIC_TESTS:
+        return
+    raise HTTPException(
+        status_code=503,
+        detail=(
+            "Atomic Red Team catalog not installed. Clone the official repo to "
+            "backend/data/atomic-red-team and try again."
+        ),
+    )
 
 @router.get("/tests", response_model=dict)
 async def list_atomic_tests(
@@ -188,10 +153,9 @@ async def list_atomic_tests(
     """
     Lightweight Atomic catalog.
 
-    In a real deployment this would be backed by a local clone of the
-    Atomic Red Team repo or a customer-provided catalog. For the MVP we
-    return a small, hard-coded sample set so the UI can be exercised.
+    Backed by a local clone of the Atomic Red Team repo.
     """
+    _ensure_atomic_catalog_loaded()
     items = ATOMIC_TESTS
 
     if technique_id:
@@ -225,9 +189,9 @@ async def list_atomic_tests(
 
 @router.get("/tests/{atomic_id}", response_model=AtomicTestDefinition)
 async def get_atomic_test(atomic_id: str):
+    _ensure_atomic_catalog_loaded()
     for t in ATOMIC_TESTS:
         if t.id == atomic_id:
             return t
     raise HTTPException(status_code=404, detail="Atomic test not found")
-
 

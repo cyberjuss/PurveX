@@ -1,21 +1,32 @@
 # This file contains AI assistant related functionalities.
 import requests
 import json
-from typing import Dict, List
+from typing import Dict, List, Optional
 from loguru import logger
 
 from .. import models
 from ..config import settings
 
 
-def call_llm(prompt: str) -> str:
+def call_llm(
+    prompt: str,
+    *,
+    provider: Optional[str] = None,
+    api_base_url: Optional[str] = None,
+    model_name: Optional[str] = None,
+    timeout_seconds: int = 10,
+) -> str:
     """Call the local Llama (Ollama) instance with a given prompt.
 
     Uses settings.OLLAMA_API_BASE_URL and settings.OLLAMA_MODEL_NAME so you
     can change models / endpoints via configuration.
     """
-    base_url = settings.OLLAMA_API_BASE_URL.rstrip("/")
-    model_name = settings.OLLAMA_MODEL_NAME
+    provider = provider or settings.AI_PROVIDER
+    if provider not in {"Local LLaMA", "Local Llama", "Ollama"}:
+        return "AI analysis is disabled because the provider is not supported in this deployment."
+
+    base_url = (api_base_url or settings.OLLAMA_API_BASE_URL).rstrip("/")
+    model_name = model_name or settings.OLLAMA_MODEL_NAME
 
     # If policy forbids sending raw logs outside the environment, only allow
     # localhost/127.0.0.1 as the LLM endpoint.
@@ -41,7 +52,7 @@ def call_llm(prompt: str) -> str:
     }
 
     try:
-        response = requests.post(ollama_api_url, headers=headers, data=json.dumps(data), timeout=120)
+        response = requests.post(ollama_api_url, headers=headers, data=json.dumps(data), timeout=timeout_seconds)
         response.raise_for_status()
         result = response.json()
         return result["message"]["content"]
@@ -49,7 +60,61 @@ def call_llm(prompt: str) -> str:
         logger.error(f"Error calling Ollama LLM at %s: %s", ollama_api_url, e)
         return "Error communicating with AI assistant."
 
-def analyze_detection(test: models.Test, detection: models.Detection, events_sample: List[Dict]) -> Dict:
+def _fallback_analysis(
+    test: models.Test,
+    detection: models.Detection,
+    events_sample: List[Dict],
+) -> Dict:
+    has_logs = bool(events_sample)
+    if not has_logs:
+        category = "ENVIRONMENT"
+        explanation = (
+            "No qualifying telemetry was found for this test run, so the result is inconclusive. "
+            "This usually indicates a logging or collection gap rather than a rule logic issue."
+        )
+        next_steps = [
+            "Verify the endpoint agent/log forwarder is running on the target host.",
+            "Confirm the correct index/sourcetype receives process/authentication events.",
+            f"Re-run the test after confirming logs include marker {test.marker}.",
+        ]
+    elif (test.result or "").upper() in {"FAIL", "FAIL_RULE_VISIBILITY"}:
+        category = "RULE_LOGIC"
+        explanation = (
+            "Telemetry is present but the detection did not fire. This points to a rule or field-mapping gap."
+        )
+        next_steps = [
+            "Compare the detection query fields to the sample events and adjust field names.",
+            "Validate any filters/thresholds that could suppress this behavior.",
+            "Re-run the test after tuning the rule to confirm coverage.",
+        ]
+    else:
+        category = "OTHER"
+        explanation = (
+            "The test outcome does not map cleanly to a single root cause. Review the sample events and query."
+        )
+        next_steps = [
+            "Check that required telemetry sources are enabled for this technique.",
+            "Validate parsing/normalization for key fields used in the rule.",
+            "Re-run the test to confirm the result is repeatable.",
+        ]
+
+    explanation_block = (
+        f"Explanation:\n- {explanation}\n- Next steps: " + "; ".join(next_steps)
+    )
+    return {
+        "ai_explanation": explanation_block,
+        "ai_suggested_rule": "No changes suggested.",
+        "ai_root_cause_category": category,
+        "ai_confidence_score": 40,
+    }
+
+
+def analyze_detection(
+    test: models.Test,
+    detection: models.Detection,
+    events_sample: List[Dict],
+    ai_settings: Optional[models.AIAssistantSettings] = None,
+) -> Dict:
     """Analyzes a detection test result using the AI assistant.
     """
     # Optionally scrub sensitive fields (IPs, hostnames, usernames) before
@@ -72,7 +137,19 @@ def analyze_detection(test: models.Test, detection: models.Detection, events_sam
                     clone[key] = "[REDACTED]"
             scrubbed_events.append(clone)
 
-    events_str = json.dumps(scrubbed_events, indent=2)
+    mode = (getattr(ai_settings, "analysis_mode", None) or "fast").lower()
+    if mode == "deep":
+        max_events = 10
+        timeout_seconds = 25
+    elif mode == "balanced":
+        max_events = 6
+        timeout_seconds = 15
+    else:
+        max_events = 3
+        timeout_seconds = 10
+
+    limited_events = scrubbed_events[:max_events]
+    events_str = json.dumps(limited_events, indent=2)
 
     # Prompt is intentionally concrete and workflow-aware so the AI behaves like
     # a senior detection engineer reviewing a PurveX Watchtower run, not a
@@ -136,7 +213,16 @@ Root Cause Category: Choose ONE of:
 Confidence: An integer from 0 to 100 representing how confident you are in your explanation and root cause.
 """
 
-    llm_response = call_llm(prompt)
+    llm_response = call_llm(
+        prompt,
+        provider=getattr(ai_settings, "provider", None),
+        api_base_url=getattr(ai_settings, "api_base_url", None),
+        model_name=getattr(ai_settings, "model_name", None),
+        timeout_seconds=timeout_seconds,
+    )
+
+    if not llm_response or llm_response.startswith("Error communicating"):
+        return _fallback_analysis(test, detection, events_sample)
 
     # Parse the LLM response
     ai_explanation = ""

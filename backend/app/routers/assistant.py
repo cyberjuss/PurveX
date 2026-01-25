@@ -1,13 +1,18 @@
 from __future__ import annotations
 
 import os
-from typing import Literal
+from typing import Literal, Optional
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from ..routers.auth import get_current_user
+from ..config import settings
+from ..db import get_db
+from ..utils.tenant import require_org_id
+from sqlalchemy import select, desc, func
+from .. import models
 
 
 router = APIRouter(prefix="/assistant", tags=["assistant"])
@@ -18,7 +23,11 @@ class AssistantRequest(BaseModel):
 
   # Full prompt we want to send to the LLM. In a future iteration we can
   # extend this with structured fields like `alert`, `detection`, `test`, etc.
-  prompt: str = Field(..., description="User message to send to the LLM.")
+  prompt: Optional[str] = Field(None, description="User message to send to the LLM.")
+  action: Optional[str] = Field(None, description="Action ID for structured Watchtower analysis.")
+  detection_id: Optional[str] = None
+  alert_id: Optional[int] = None
+  force_demo: Optional[bool] = False
 
 
 class AssistantResponse(BaseModel):
@@ -29,10 +38,240 @@ class AssistantResponse(BaseModel):
 
 MAX_PROMPT_CHARS = 10000  # Basic guard against extremely large prompts.
 
+ACTION_TEMPLATES: dict[str, str] = {
+  "portfolio_health": (
+    "You are Watchtower for PurveX. Use the Portfolio Context to answer.\n"
+    "Format:\n"
+    "Summary: 2-3 sentences.\n"
+    "Findings:\n- bullet\n- bullet\n"
+    "Root cause: choose one of LOGGING_PIPELINE | RULE_LOGIC | FIELD_MISMATCH | THRESHOLDING | OTHER (confidence: low|medium|high)\n"
+    "Next steps:\n1) step\n2) step\n3) step\n"
+  ),
+  "coverage_gaps": (
+    "Identify top coverage gaps from Portfolio Context.\n"
+    "Format: Summary, Findings (2 bullets), Root cause, Next steps (1-3)."
+  ),
+  "coverage_improve": (
+    "Recommend the top 3 coverage improvements based on Portfolio Context.\n"
+    "Format: Summary, Findings (2 bullets), Root cause, Next steps (1-3)."
+  ),
+  "detection_summary": (
+    "Summarize the detection and latest test outcome. Keep it concise.\n"
+    "Format: Summary, Findings (2 bullets), Root cause, Next steps (1-3)."
+  ),
+  "test_explain": (
+    "Explain the latest test result and why it passed/failed. Identify missing telemetry if any.\n"
+    "Format: Summary, Findings (2 bullets), Root cause, Next steps (1-3)."
+  ),
+  "fix_recommendations": (
+    "Provide concrete fixes to improve this detection and how to validate.\n"
+    "Format: Summary, Findings (2 bullets), Root cause, Next steps (1-3)."
+  ),
+  "alert_explain": (
+    "Explain the selected alert/event and recommended actions.\n"
+    "Format: Summary, Findings (2 bullets), Root cause, Next steps (1-3)."
+  ),
+}
 
-OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434")
-# Default to llama3.1 (Ollama accepts both "llama3.1" and "llama3.1:latest")
-OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.1")
+STATIC_DEMO_CONTEXT = (
+  "[Portfolio Context]\n"
+  "Total detections: 12\n"
+  "Total tests: 24\n"
+  "Pass rate: 62%\n"
+  "Recent techniques: T1059.001, T1021.001, T1110, T1003\n"
+  "Recent tests: 241:T1059.001:PASS, 240:T1021.001:FAIL, 239:T1110:INCONCLUSIVE\n"
+  "Recent failing tests: 240:T1021.001:FAIL, 239:T1110:INCONCLUSIVE\n"
+  "\n[Detection Context]\n"
+  "Title: PowerShell Command Execution\n"
+  "MITRE Technique: T1059.001\n"
+  "SIEM Type: splunk\n"
+  "Status: ACTIVE\n"
+  "Description: Detects suspicious PowerShell execution patterns.\n"
+  "SIEM Query:\nindex=windows EventCode=4104 (ScriptBlockText=\"*EncodedCommand*\" OR ScriptBlockText=\"*ExecutionPolicy Bypass*\")\n"
+  "Latest Test Run:\n- Test ID: 241\n- Started: 2026-01-25T10:30:00Z\n- Environment: lab\n- Status: completed\n- Result: FAIL\n- Score: 45\n"
+)
+
+def _truncate(value: Optional[str], max_len: int) -> str:
+  if not value:
+    return ""
+  if len(value) <= max_len:
+    return value
+  return value[:max_len] + "\n... (truncated)"
+
+async def _build_portfolio_context(db, org_id: int) -> str:
+  det_count = (await db.execute(select(func.count()).select_from(models.Detection).where(models.Detection.organization_id == org_id))).scalar() or 0
+  test_count = (await db.execute(select(func.count()).select_from(models.Test).where(models.Test.organization_id == org_id))).scalar() or 0
+  pass_count = (await db.execute(
+    select(func.count()).select_from(models.Test)
+    .where(models.Test.organization_id == org_id, models.Test.result == "PASS")
+  )).scalar() or 0
+  pass_rate = int(round((pass_count / test_count) * 100)) if test_count else 0
+
+  recent_tests_result = await db.execute(
+    select(models.Test)
+    .where(models.Test.organization_id == org_id)
+    .order_by(desc(models.Test.started_at))
+    .limit(5)
+  )
+  recent_tests = recent_tests_result.scalars().all()
+  recent_test_lines = [
+    f"{t.id}:{t.technique_id}:{t.result or t.status or 'UNKNOWN'}"
+    for t in recent_tests
+  ]
+  recent_techniques = list(dict.fromkeys([t.technique_id for t in recent_tests if t.technique_id]))[:5]
+
+  failing_tests_result = await db.execute(
+    select(models.Test)
+    .where(models.Test.organization_id == org_id)
+    .order_by(desc(models.Test.started_at))
+    .limit(10)
+  )
+  failing_tests = [
+    t for t in failing_tests_result.scalars().all()
+    if (t.result or t.status) and (t.result or t.status) != "PASS"
+  ][:5]
+  failing_lines = [f"{t.id}:{t.technique_id}:{t.result or t.status or 'UNKNOWN'}" for t in failing_tests]
+
+  return (
+    "[Portfolio Context]\n"
+    f"Total detections: {det_count}\n"
+    f"Total tests: {test_count}\n"
+    f"Pass rate: {pass_rate}%\n"
+    f"Recent techniques: {', '.join(recent_techniques) if recent_techniques else 'Not available'}\n"
+    f"Recent tests: {', '.join(recent_test_lines) if recent_test_lines else 'None'}\n"
+    f"Recent failing tests: {', '.join(failing_lines) if failing_lines else 'None'}\n"
+  )
+
+async def _build_detection_context(db, org_id: int, detection_id: Optional[str]) -> str:
+  if not detection_id:
+    # fall back to most recent detection with a test
+    detection_result = await db.execute(
+      select(models.Detection)
+      .where(models.Detection.organization_id == org_id)
+      .limit(1)
+    )
+    detection = detection_result.scalars().first()
+  else:
+    detection_result = await db.execute(
+      select(models.Detection)
+      .where(models.Detection.organization_id == org_id, models.Detection.id == detection_id)
+    )
+    detection = detection_result.scalars().first()
+
+  if not detection:
+    return ""
+
+  # Prefer tests tied to the detection; fallback to tests matching technique_id.
+  test_result = await db.execute(
+    select(models.Test)
+    .where(
+      models.Test.organization_id == org_id,
+      (models.Test.detection_id == detection.id) | (models.Test.technique_id == detection.technique_id),
+    )
+    .order_by(desc(models.Test.started_at))
+    .limit(1)
+  )
+  latest_test = test_result.scalars().first()
+
+  artifact = None
+  if latest_test:
+    art_result = await db.execute(
+      select(models.TestArtifact)
+      .where(models.TestArtifact.organization_id == org_id, models.TestArtifact.test_id == latest_test.id)
+      .limit(1)
+    )
+    artifact = art_result.scalars().first()
+
+  context = (
+    "[Detection Context]\n"
+    f"Title: {detection.title}\n"
+    f"MITRE Technique: {detection.technique_id}\n"
+    f"SIEM Type: {detection.siem_type}\n"
+    f"Status: {detection.status or 'DRAFT'}\n"
+  )
+  if detection.description:
+    context += f"Description: {_truncate(detection.description, 600)}\n"
+  if detection.siem_query:
+    context += f"SIEM Query:\n{_truncate(detection.siem_query, 2000)}\n"
+  if detection.sigma_rule:
+    context += f"Sigma Rule:\n{_truncate(detection.sigma_rule, 2000)}\n"
+  if latest_test:
+    context += (
+      "Latest Test Run:\n"
+      f"- Test ID: {latest_test.id}\n"
+      f"- Started: {latest_test.started_at}\n"
+      f"- Environment: {latest_test.environment}\n"
+      f"- Status: {latest_test.status}\n"
+      f"- Result: {latest_test.result or latest_test.status}\n"
+      f"- Score: {latest_test.score if latest_test.score is not None else 'N/A'}\n"
+    )
+  if artifact and artifact.siem_sample_events:
+    context += f"Sample Events:\n{_truncate(artifact.siem_sample_events, 1500)}\n"
+  return context
+
+def _fallback_action_response(action: Optional[str], context: str) -> str:
+  # Minimal, deterministic fallback when Ollama is unavailable/slow.
+  lines = context.splitlines()
+  total_det = next((l.split(": ", 1)[1] for l in lines if l.startswith("Total detections: ")), "Not provided")
+  total_tests = next((l.split(": ", 1)[1] for l in lines if l.startswith("Total tests: ")), "Not provided")
+  pass_rate = next((l.split(": ", 1)[1] for l in lines if l.startswith("Pass rate: ")), "Not provided")
+  failing = next((l.split(": ", 1)[1] for l in lines if l.startswith("Recent failing tests: ")), "Not provided")
+  title = next((l.split(": ", 1)[1] for l in lines if l.startswith("Title: ")), "Detection")
+  result = next((l.split(": ", 1)[1] for l in lines if l.startswith("- Result: ")), "Not provided")
+
+  summary = (
+    f"Summary: Portfolio has {total_det} detections and {total_tests} tests with a pass rate of {pass_rate}."
+    if action in {"portfolio_health", "coverage_gaps", "coverage_improve"}
+    else f"Summary: {title} latest test result is {result}."
+  )
+  findings = [
+    f"- Recent failing tests: {failing}",
+    "- Review telemetry coverage and query logic for failures.",
+  ]
+  root = "Root cause: OTHER (confidence: low)"
+  steps = [
+    "1) Verify required telemetry is enabled for key techniques.",
+    "2) Re-run the latest test after any fixes.",
+    "3) Update detection queries or field mappings if needed.",
+  ]
+  return "\n".join([summary, "Findings:"] + findings + [root, "Next steps:"] + steps)
+
+async def _build_demo_context(db, org_id: int) -> str:
+  portfolio = await _build_portfolio_context(db, org_id)
+  detection = await _build_detection_context(db, org_id, None)
+  if portfolio or detection:
+    return f"{portfolio}\n{detection}".strip()
+  return os.getenv("PURVEX_DEMO_CONTEXT") or STATIC_DEMO_CONTEXT
+
+
+def _ollama_base_url() -> str:
+  return os.getenv("OLLAMA_BASE_URL") or settings.OLLAMA_API_BASE_URL
+
+def _ollama_model() -> str:
+  return os.getenv("OLLAMA_MODEL") or os.getenv("OLLAMA_MODEL_NAME") or settings.OLLAMA_MODEL_NAME
+
+def _ollama_options(is_action: bool = False) -> dict:
+  # Favor speed over long outputs for the Watchtower chat.
+  # These can be tuned via env vars without code changes.
+  def _get_int(name: str, default: int) -> int:
+    try:
+      return int(os.getenv(name, str(default)))
+    except ValueError:
+      return default
+
+  if is_action:
+    return {
+      "num_predict": _get_int("OLLAMA_NUM_PREDICT", 64),
+      "num_ctx": _get_int("OLLAMA_NUM_CTX", 512),
+      "temperature": float(os.getenv("OLLAMA_TEMPERATURE", "0.2")),
+      "top_p": float(os.getenv("OLLAMA_TOP_P", "0.9")),
+    }
+  return {
+    "num_predict": _get_int("OLLAMA_NUM_PREDICT", 256),
+    "num_ctx": _get_int("OLLAMA_NUM_CTX", 2048),
+    "temperature": float(os.getenv("OLLAMA_TEMPERATURE", "0.2")),
+    "top_p": float(os.getenv("OLLAMA_TOP_P", "0.9")),
+  }
 
 WATCHTOWER_SYSTEM_PROMPT = os.getenv(
   "WATCHTOWER_SYSTEM_PROMPT",
@@ -89,11 +328,54 @@ When this context is present, you MUST:
 """.strip(),
 )
 
+ACTION_SYSTEM_PROMPT = os.getenv(
+  "WATCHTOWER_ACTION_SYSTEM_PROMPT",
+  "You are PurveX Watchtower. Follow the requested format exactly and keep answers concise."
+)
+
+def _action_system_prompt() -> str:
+  return f"{ACTION_SYSTEM_PROMPT}\n\n{PURVEX_KNOWLEDGE_PACK}"
+
+PURVEX_KNOWLEDGE_PACK = """
+You are PurveX Watchtower, a focused detection-engineering assistant.
+
+PurveX glossary:
+- Goal template: predefined objective + scope for a test campaign.
+- TTP: MITRE technique/sub-technique identifier (e.g., T1059.001).
+- Environment: lab/dev/prod target where tests run.
+- Runner/Agent: execution component that runs tests in an environment.
+- Test mode: validation flow (e.g., coverage validation vs. explore).
+- Required telemetry: log sources/fields needed to validate a detection.
+- Evidence pack: exportable proof bundle (test metadata + events + outcome).
+- Coverage gap: a detection lacks recent PASS or required telemetry.
+- Retest loop: fix → re-run → verify outcome.
+
+PurveX concepts:
+- Detection: a detection definition (SPL or Sigma) mapped to a MITRE technique.
+- Test: an executed validation run (often Atomic Red Team) that checks telemetry and detection logic.
+- Test Artifact: captured command, sample SIEM events, and AI notes.
+- Results: PASS = detection logic matched expected telemetry, FAIL = detection logic missed expected telemetry, INCONCLUSIVE = telemetry missing or insufficient.
+- Coverage gap: a detection exists but fails or has no recent PASS in the target environment.
+
+PurveX goals:
+- Validate coverage per technique and environment.
+- Identify missing telemetry vs. flawed detection logic.
+- Provide clear, actionable next steps and retest guidance.
+
+Telemetry expectations (typical):
+- Process creation, authentication, network, file, registry.
+
+Output rules:
+- Use only provided context (do not invent hosts, fields, thresholds, or telemetry).
+- If data is missing, say "Not provided in context."
+""".strip()
+
 
 @router.post("/chat", response_model=AssistantResponse)
 async def chat_with_assistant(
   payload: AssistantRequest,
   user = Depends(get_current_user),
+  db = Depends(get_db),
 ) -> AssistantResponse:
   """Proxy a chat prompt to the configured LLM (e.g. Ollama) and return its answer.
 
@@ -102,40 +384,70 @@ async def chat_with_assistant(
   """
   # SECURITY: Sanitize prompt input
   from ..utils.security import sanitize_string
+  if not payload.prompt and not payload.action:
+    raise HTTPException(status_code=400, detail="Prompt or action is required.")
+
   sanitized_prompt = sanitize_string(payload.prompt or "", max_length=MAX_PROMPT_CHARS)
-  if not sanitized_prompt:
+  action = payload.action
+  if not sanitized_prompt and not action:
     raise HTTPException(status_code=400, detail="Prompt cannot be empty")
   
   # Basic safety check – ensure the backend has an LLM endpoint configured.
-  if not OLLAMA_BASE_URL:
+  ollama_base_url = _ollama_base_url()
+  ollama_model = _ollama_model()
+
+  if not ollama_base_url:
     raise HTTPException(status_code=503, detail="LLM backend is not configured.")
+
+  # Build context pack when action is provided (preferred MVP path).
+  if action:
+    org_id = require_org_id(user)
+    if payload.force_demo:
+      context = await _build_demo_context(db, org_id)
+    else:
+      if action in {"portfolio_health", "coverage_gaps", "coverage_improve"}:
+        context = await _build_portfolio_context(db, org_id)
+      else:
+        context = await _build_detection_context(db, org_id, payload.detection_id)
+      if not context:
+        # Demo fallback so the MVP can be validated before real data exists.
+        context = await _build_demo_context(db, org_id)
+    action_prompt = ACTION_TEMPLATES.get(action, "")
+    sanitized_prompt = (
+      f"{action_prompt}\n"
+      f"{context}\n"
+      f"[User Question]\n{payload.prompt or action}\n"
+    )
 
   # Simple size limit to prevent extremely large prompts from overloading the LLM.
   if len(sanitized_prompt) > MAX_PROMPT_CHARS:
     raise HTTPException(
       status_code=400,
-      detail=f"Prompt is too long ({len(payload.prompt)} characters). Please shorten the question or narrow the context.",
+      detail=f"Prompt is too long ({len(sanitized_prompt)} characters). Please shorten the question or narrow the context.",
     )
 
   try:
     # Try /api/chat first (newer Ollama API), fallback to /api/generate (older API)
-    chat_url = f"{OLLAMA_BASE_URL}/api/chat"
-    generate_url = f"{OLLAMA_BASE_URL}/api/generate"
+    chat_url = f"{ollama_base_url}/api/chat"
+    generate_url = f"{ollama_base_url}/api/generate"
     
     # Allow more time for local models to load/generate on first use.
     # This is especially important for larger models like llama3.1.
-    async with httpx.AsyncClient(timeout=120.0) as client:
+    timeout_seconds = 20.0 if action else 30.0
+    async with httpx.AsyncClient(timeout=timeout_seconds) as client:
       # Try the newer chat API first
       try:
+        system_prompt = _action_system_prompt() if action else WATCHTOWER_SYSTEM_PROMPT
         request_payload = {
-          "model": OLLAMA_MODEL,
+          "model": ollama_model,
           "messages": [
-            {"role": "system", "content": WATCHTOWER_SYSTEM_PROMPT},
+            {"role": "system", "content": system_prompt},
             {"role": "user", "content": sanitized_prompt},
           ],
+          "options": _ollama_options(is_action=bool(action)),
           "stream": False,
         }
-        print(f"[Watchtower] Calling Ollama chat API: {chat_url} with model: {OLLAMA_MODEL}")
+        print(f"[Watchtower] Calling Ollama chat API: {chat_url} with model: {ollama_model}")
         resp = await client.post(chat_url, json=request_payload)
         resp.raise_for_status()
         data = resp.json()
@@ -149,8 +461,9 @@ async def chat_with_assistant(
           resp = await client.post(
             generate_url,
             json={
-              "model": OLLAMA_MODEL,
-              "prompt": f"{WATCHTOWER_SYSTEM_PROMPT}\n\nUser: {sanitized_prompt}\nAssistant:",
+              "model": ollama_model,
+              "prompt": f"{_action_system_prompt() if action else WATCHTOWER_SYSTEM_PROMPT}\n\nUser: {sanitized_prompt}\nAssistant:",
+              "options": _ollama_options(is_action=bool(action)),
               "stream": False,
             },
           )
@@ -160,15 +473,24 @@ async def chat_with_assistant(
           answer = (data.get("response") or "").strip()
         except Exception as gen_err:
           # If both APIs fail, raise with details
-          raise HTTPException(
-            status_code=502,
-            detail=f"Both Ollama chat and generate APIs failed. Chat error: {chat_err}. Generate error: {gen_err}. Check that Ollama is running and the model '{OLLAMA_MODEL}' is available."
-          ) from gen_err
+          if action:
+            answer = _fallback_action_response(action, sanitized_prompt)
+          else:
+            raise HTTPException(
+              status_code=502,
+              detail=(
+                "Both Ollama chat and generate APIs failed. "
+                f"Chat error: {repr(chat_err)}. Generate error: {repr(gen_err)}. "
+                f"Check that Ollama is running and the model '{ollama_model}' is available."
+              )
+            ) from gen_err
       
       if not answer:
         answer = "The language model did not return any content. Please check that Ollama is running and the model is available."
       return AssistantResponse(answer=answer)
   except httpx.TimeoutException as exc:
+    if action:
+      return AssistantResponse(answer=_fallback_action_response(action, sanitized_prompt))
     raise HTTPException(
       status_code=504,
       detail=(
@@ -178,11 +500,15 @@ async def chat_with_assistant(
       ),
     ) from exc
   except httpx.ConnectError as exc:
+    if action:
+      return AssistantResponse(answer=_fallback_action_response(action, sanitized_prompt))
     raise HTTPException(
       status_code=503,
-      detail=f"Cannot connect to Ollama at {OLLAMA_BASE_URL}. Is Ollama running? Error: {exc}"
+      detail=f"Cannot connect to Ollama at {ollama_base_url}. Is Ollama running? Error: {exc}"
     ) from exc
   except httpx.HTTPError as exc:
+    if action:
+      return AssistantResponse(answer=_fallback_action_response(action, sanitized_prompt))
     raise HTTPException(status_code=502, detail=f"Error calling LLM backend: {exc}") from exc
   except HTTPException:
     # Re-raise HTTPExceptions as-is
@@ -193,5 +519,3 @@ async def chat_with_assistant(
       status_code=500,
       detail=f"Unexpected error in Watchtower assistant: {str(exc)}. Check backend logs for details."
     ) from exc
-
-
