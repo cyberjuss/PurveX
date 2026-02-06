@@ -1,13 +1,13 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Image from "next/image";
-import { getApiBaseCandidates } from "@/lib/api";
+import { getApiBaseCandidates, getBootstrapStatus } from "@/lib/api";
 import TwoFactorVerify from "@/components/auth/TwoFactorVerify";
 import { Loader2, Shield, AlertCircle, User, Lock, Eye, EyeOff } from "lucide-react";
 
-export default function LoginPage() {
+function LoginPageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [username, setUsername] = useState("");
@@ -41,6 +41,24 @@ export default function LoginPage() {
     const seen = window.localStorage.getItem("purvex_seen_login") === "1";
     setIsReturning(seen);
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function checkBootstrap() {
+      try {
+        const status = await getBootstrapStatus();
+        if (!cancelled && status.needs_admin) {
+          router.replace("/setup");
+        }
+      } catch {
+        // Ignore bootstrap checks if backend is unavailable.
+      }
+    }
+    checkBootstrap();
+    return () => {
+      cancelled = true;
+    };
+  }, [router]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -440,5 +458,13 @@ export default function LoginPage() {
         </div>
       </div>
     </div>
+  );
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense fallback={<div className="min-h-screen bg-slate-950" />}>
+      <LoginPageContent />
+    </Suspense>
   );
 }

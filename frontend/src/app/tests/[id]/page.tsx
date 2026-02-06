@@ -36,7 +36,7 @@ import {
   ShieldCheck,
 } from "lucide-react";
 
-function formatDate(value?: string) {
+function formatDate(value?: string | null) {
   if (!value) return "N/A";
   try {
     return format(new Date(value), "yyyy-MM-dd HH:mm:ss 'UTC'");
@@ -173,7 +173,7 @@ export default function TestDetailPage() {
       <PageHeader
         eyebrow="Execution detail"
         title={`Test #${data.id}`}
-        subtitle={`${detection?.title || "No Detection"} · ${data.technique_id || "Unknown"} · ${data.environment.toUpperCase()}`}
+        subtitle={`${detection?.title || "No Detection"} · ${data.technique_id || "Unknown"} · ${(data.environment || "unknown").toUpperCase()}`}
         icon={<Activity className="h-5 w-5" />}
         actions={
           <Badge className={getResultBadgeClass(data.result || data.status)}>
@@ -226,7 +226,7 @@ export default function TestDetailPage() {
             </div>
             <div>
               <div className="text-xs text-slate-500 uppercase tracking-[0.2em]">Environment</div>
-              <div className="mt-1 text-slate-700">{data.environment.toUpperCase()}</div>
+              <div className="mt-1 text-slate-700">{(data.environment || "unknown").toUpperCase()}</div>
             </div>
             <div>
               <div className="text-xs text-slate-500 uppercase tracking-[0.2em]">Endpoint</div>

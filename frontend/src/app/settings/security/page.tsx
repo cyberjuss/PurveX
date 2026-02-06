@@ -33,7 +33,7 @@ export default function SecuritySettingsPage() {
       setLoading(true);
       const status = await get2FAStatus();
       setTwoFactorEnabled(status.enabled);
-      setHasBackupCodes(status.has_backup_codes);
+      setHasBackupCodes(Boolean(status.has_backup_codes));
     } catch (err: any) {
       setError(err.message || "Failed to load 2FA status");
     } finally {

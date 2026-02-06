@@ -288,11 +288,7 @@ export function InteractiveGuide({ isOpen, onClose }: InteractiveGuideProps) {
         },
       ],
       beforeShowPromise: () => {
-        return waitForElement("[data-tour='tests-header']", "/tests", 2000).then((element) => {
-          if (!element) {
-            return Promise.resolve();
-          }
-        });
+        return waitForElement("[data-tour='tests-header']", "/tests", 2000);
       },
     });
 

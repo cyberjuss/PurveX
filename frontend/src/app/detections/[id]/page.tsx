@@ -57,7 +57,7 @@ import {
 } from "lucide-react";
 import { useToast } from "@/components/ui/toast";
 
-function formatDate(value?: string) {
+function formatDate(value?: string | null) {
   if (!value) return "N/A";
   try {
     return format(new Date(value), "yyyy-MM-dd HH:mm:ss 'UTC'");
@@ -66,7 +66,7 @@ function formatDate(value?: string) {
   }
 }
 
-function getStatusBadgeClass(status?: string) {
+function getStatusBadgeClass(status?: string | null) {
   switch (status) {
     case "ACTIVE":
       return "bg-emerald-100 text-emerald-700 border border-emerald-300";

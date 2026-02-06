@@ -195,7 +195,9 @@ export default function AuditLogPage() {
 
   // Get unique actions and resource types for filters
   const uniqueActions = Array.from(new Set(events.map(e => e.action))).sort();
-  const uniqueResourceTypes = Array.from(new Set(events.map(e => e.resource_type).filter(Boolean))).sort();
+  const uniqueResourceTypes = Array.from(
+    new Set(events.map((e) => e.resource_type).filter((type): type is string => Boolean(type)))
+  ).sort();
 
   return (
     <PageContainer>

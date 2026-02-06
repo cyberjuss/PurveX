@@ -20,7 +20,7 @@ type ResultFilter = "all" | "PASS" | "FAIL" | "INCONCLUSIVE" | "PENDING" | "RUNN
 type EnvFilter = "all" | "lab" | "dev" | "prod";
 type TimeFilter = "all" | "24h" | "7d" | "30d";
 
-function formatDuration(start?: string, end?: string) {
+function formatDuration(start?: string | null, end?: string | null) {
   if (!start || !end) return "—";
   const startMs = new Date(start).getTime();
   const endMs = new Date(end).getTime();

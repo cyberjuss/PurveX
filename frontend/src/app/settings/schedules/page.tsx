@@ -477,7 +477,7 @@ export default function TestSchedulesPage() {
                               schedule.environment === "prod" && "bg-red-500/20 text-red-300 border-red-500/40"
                             )}
                           >
-                            {schedule.environment.toUpperCase()}
+                            {(schedule.environment || "unknown").toUpperCase()}
                           </Badge>
                         </TableCell>
                         <TableCell className="text-slate-700 text-sm py-4">

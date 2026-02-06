@@ -115,6 +115,9 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         # Disable rate limiting in non-production environments.
         if not IS_PRODUCTION:
             return await call_next(request)
+        allow_local = os.getenv("ALLOW_RATE_LIMIT_LOCALHOST", "0").lower() in {"1", "true", "yes"}
+        if allow_local and request.client and request.client.host in {"127.0.0.1", "::1", "localhost"}:
+            return await call_next(request)
         # Skip rate limiting for health checks
         if request.url.path in ["/health", "/ready"]:
             return await call_next(request)

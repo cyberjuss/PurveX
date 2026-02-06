@@ -122,7 +122,7 @@ const uiToBackendMode: Record<UiTestType, TestRunMode> = {
   telemetry_check: "TELEMETRY_CHECK",
 };
 
-function parseSampleEvents(artifact?: { siem_sample_events?: string }): unknown[] {
+function parseSampleEvents(artifact?: { siem_sample_events?: string | null } | null): unknown[] {
   if (!artifact?.siem_sample_events) return [];
   try {
     const parsed = JSON.parse(artifact.siem_sample_events);
@@ -226,6 +226,7 @@ function useRunTest() {
         techniqueId?: string | null;
         environment: "lab" | "dev" | "prod";
         mode: TestRunMode;
+        endpoint?: string | null;
       },
       callbacks?: RunCallbacks
     ) => {
@@ -239,6 +240,7 @@ function useRunTest() {
           techniqueId: params.techniqueId ?? null,
           environment: params.environment,
           mode: params.mode,
+          endpoint: params.endpoint,
         });
 
         callbacks?.onStart?.(created);
@@ -862,7 +864,7 @@ function RunTestPageContent() {
 
     async function loadAtomicScenarioHint() {
       try {
-        const baseTechniqueId = techniqueFromExplore.split(".")[0];
+        const baseTechniqueId = (techniqueFromExplore || "").split(".")[0];
         const response = await getAtomicTests({ technique_id: baseTechniqueId, limit: 1 });
         if (cancelled) return;
         const first = response.items?.[0];
@@ -1111,7 +1113,7 @@ function RunTestPageContent() {
             prev
               ? {
                   ...prev,
-                  id: created.id || prev.id,
+                  id: created.id ? String(created.id) : prev.id,
                 }
               : prev
           );
@@ -1767,80 +1769,85 @@ function RunTestPageContent() {
                     ))}
                   </div>
                   {selectedGoal && (
-                    <div className="rounded-xl border border-indigo-100 bg-white px-4 py-3 text-sm text-slate-700">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className="font-semibold text-slate-900">Goal:</span>
-                        <span>{selectedGoal.title}</span>
-                        <span className="text-slate-500">•</span>
-                        <span className="text-slate-600">{selectedGoal.scopeHint}</span>
-                      </div>
-                      <div className="mt-1 text-xs text-slate-600">
-                        Objective: {selectedGoal.objective}
-                      </div>
-                      <div className="mt-3 flex flex-wrap items-center gap-2">
-                        <Button
-                          type="button"
-                          size="sm"
-                          onClick={() => {
-                            if (!selectedGoal) return;
-                            setAppliedGoalId(selectedGoal.id);
-                            setTestType(selectedGoal.defaultTestType);
-                            setSelectedDetection("");
-                            setSelectedScenario("");
-                            setTargetHost("");
-                            setResult(null);
-                            setError(null);
-                            setCurrentStep(2);
-                          }}
-                        >
-                          Apply template to selection
-                        </Button>
-                        <span className="text-xs text-slate-500">
-                          Manual selection stays editable.
-                        </span>
-                      </div>
-                      <div className="mt-2 flex flex-wrap items-center gap-2">
-                        <span className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">
-                          Roles
-                        </span>
-                        {selectedGoal.roles.map((role) => (
-                          <span
-                            key={`${selectedGoal.id}-role-${role}`}
-                            className="inline-flex items-center rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.2em] text-slate-500"
+                    <div className="rounded-2xl border border-indigo-100 bg-gradient-to-br from-white via-white to-indigo-50/50 px-5 py-4 text-sm text-slate-700 shadow-[0_12px_35px_rgba(15,23,42,0.06)]">
+                      <div className="flex flex-wrap items-start justify-between gap-3">
+                        <div className="space-y-1">
+                          <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500">Goal</p>
+                          <p className="text-base font-semibold text-slate-900">{selectedGoal.title}</p>
+                          <p className="text-xs text-slate-600">{selectedGoal.scopeHint}</p>
+                        </div>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <Button
+                            type="button"
+                            size="sm"
+                            className="bg-indigo-600 text-white hover:bg-indigo-700"
+                            onClick={() => {
+                              if (!selectedGoal) return;
+                              setAppliedGoalId(selectedGoal.id);
+                              setTestType(selectedGoal.defaultTestType);
+                              setSelectedDetection("");
+                              setSelectedScenario("");
+                              setTargetHost("");
+                              setResult(null);
+                              setError(null);
+                              setCurrentStep(2);
+                            }}
                           >
-                            {roleLabels[role]}
-                          </span>
-                        ))}
+                            Apply template
+                          </Button>
+                          <span className="text-xs text-slate-500">Manual selection stays editable.</span>
+                        </div>
                       </div>
-                      <div className="mt-2 flex flex-wrap items-center gap-2">
-                        <span className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">
-                          TTPs
-                        </span>
-                        {selectedGoal.techniques.map((technique) => (
-                          <Link
-                            key={technique}
-                            href={`/tests/explore/${technique}`}
-                            className="inline-flex items-center rounded-full border border-indigo-200 bg-white px-2.5 py-1 text-xs font-semibold text-indigo-700 hover:border-indigo-300 hover:bg-indigo-50"
-                          >
-                            {technique}
-                          </Link>
-                        ))}
+                      <div className="mt-4 text-xs text-slate-600">
+                        <span className="font-semibold text-slate-700">Objective:</span>{" "}
+                        {selectedGoal.objective}
                       </div>
-                      <div className="mt-3 flex flex-wrap items-center gap-2">
-                        <span className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">
-                          Required telemetry
-                        </span>
-                        {selectedGoal.requiredTelemetry.map((item) => (
-                          <span
-                            key={item}
-                            className="inline-flex items-center rounded-full border border-slate-200 bg-white px-2.5 py-1 text-xs font-semibold text-slate-700"
-                          >
-                            {item}
-                          </span>
-                        ))}
+                      <div className="mt-4 grid gap-4 sm:grid-cols-2">
+                        <div className="space-y-2">
+                          <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500">Roles</p>
+                          <div className="flex flex-wrap gap-2">
+                            {selectedGoal.roles.map((role) => (
+                              <span
+                                key={`${selectedGoal.id}-role-${role}`}
+                                className="inline-flex items-center rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-500"
+                              >
+                                {roleLabels[role]}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                        <div className="space-y-2">
+                          <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500">TTPs</p>
+                          <div className="flex flex-wrap gap-2">
+                            {selectedGoal.techniques.map((technique) => (
+                              <Link
+                                key={technique}
+                                href={`/tests/explore/${technique}`}
+                                className="inline-flex items-center rounded-full border border-indigo-200 bg-white px-2.5 py-1 text-xs font-semibold text-indigo-700 hover:border-indigo-300 hover:bg-indigo-50"
+                              >
+                                {technique}
+                              </Link>
+                            ))}
+                          </div>
+                        </div>
+                        <div className="space-y-2 sm:col-span-2">
+                          <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500">
+                            Required telemetry
+                          </p>
+                          <div className="flex flex-wrap gap-2">
+                            {selectedGoal.requiredTelemetry.map((item) => (
+                              <span
+                                key={item}
+                                className="inline-flex items-center rounded-full border border-slate-200 bg-white px-2.5 py-1 text-xs font-semibold text-slate-700"
+                              >
+                                {item}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
                       </div>
-                      <div className="mt-3">
-                        <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">
+                      <div className="mt-4">
+                        <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500">
                           Recommended tests
                         </p>
                         <div className="mt-2 flex flex-wrap gap-2">
@@ -2970,5 +2977,9 @@ function RunTestPageContent() {
 }
 
 export default function RunTestPage() {
-  return <RunTestPageContent />;
+  return (
+    <Suspense fallback={<div className="min-h-screen bg-slate-950" />}>
+      <RunTestPageContent />
+    </Suspense>
+  );
 }

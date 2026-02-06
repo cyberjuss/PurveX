@@ -5,6 +5,7 @@ from fastapi import Request, HTTPException, status
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import Response
 import logging
+import os
 
 logger = logging.getLogger("purvex.api.production")
 
@@ -21,6 +22,9 @@ class HTTPSEnforcementMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         # Only enforce in production
         if self.enforce_https:
+            allow_local_http = os.getenv("ALLOW_HTTP_LOCALHOST", "0").lower() in {"1", "true", "yes"}
+            if allow_local_http and request.client and request.client.host in {"127.0.0.1", "::1", "localhost"}:
+                return await call_next(request)
             # Check if request is over HTTPS
             # In production behind a proxy, check X-Forwarded-Proto header
             scheme = request.headers.get("X-Forwarded-Proto", request.url.scheme)
@@ -72,4 +76,3 @@ class RequestSizeLimitMiddleware(BaseHTTPMiddleware):
         # The application server (uvicorn/gunicorn) should handle this
         response = await call_next(request)
         return response
-

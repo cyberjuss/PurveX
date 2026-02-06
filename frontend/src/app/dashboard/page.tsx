@@ -271,7 +271,7 @@ export default function DashboardPage() {
     id: test.id,
     status: test.result || test.status,
     title: `${test.detection_title}`,
-    subtitle: `${test.technique_id} · ${test.environment.toUpperCase()}`,
+    subtitle: `${test.technique_id} · ${(test.environment || "UNKNOWN").toUpperCase()}`,
     time: formatRelative(new Date(test.started_at), new Date()),
   }));
 
@@ -789,7 +789,7 @@ export default function DashboardPage() {
                   <div>
                     <p className="font-display font-bold text-amber-200 text-lg">Action Required: Test #{firstFailure.id} Failed</p>
                     <p className="text-sm font-body text-amber-300/80 mt-1">
-                      {firstFailure.detection_title} · {firstFailure.environment.toUpperCase()}
+                      {firstFailure.detection_title} · {(firstFailure.environment || "UNKNOWN").toUpperCase()}
                     </p>
                   </div>
                 </div>

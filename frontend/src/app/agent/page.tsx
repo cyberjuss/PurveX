@@ -151,7 +151,7 @@ Recent failing tests: ${failingTests.map(t => `${t.id}:${t.result || t.status ||
           const relatedTests = recentTests
             .filter(t => t.detection_id === det.id)
             .sort((a, b) => 
-              new Date(b.started_at).getTime() - new Date(a.started_at).getTime()
+              new Date(b.started_at ?? 0).getTime() - new Date(a.started_at ?? 0).getTime()
             );
             
             if (alertId) {
@@ -676,5 +676,9 @@ Recent failing tests: ${failingTests.map(t => `${t.id}:${t.result || t.status ||
 }
 
 export default function WatchtowerPage() {
-  return <WatchtowerPageContent />;
+  return (
+    <Suspense fallback={<div className="min-h-screen bg-slate-950" />}>
+      <WatchtowerPageContent />
+    </Suspense>
+  );
 }

@@ -107,7 +107,8 @@ export function AlertValidationViewer({
     }
   };
 
-  const parseRawEvent = (rawEvent: string) => {
+  const parseRawEvent = (rawEvent?: string) => {
+    if (!rawEvent) return null;
     try {
       return JSON.parse(rawEvent);
     } catch {

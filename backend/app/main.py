@@ -1,4 +1,5 @@
 import asyncio
+import json
 import logging
 import os
 import sys
@@ -476,6 +477,19 @@ async def create_db_and_tables():
 # Production environment check
 IS_PRODUCTION = settings.DEPLOYMENT_ENV.lower() == "prod"
 
+def parse_cors_origins(raw_value: str) -> list[str]:
+    if not raw_value:
+        return []
+    value = raw_value.strip()
+    if value.startswith("["):
+        try:
+            parsed = json.loads(value)
+            if isinstance(parsed, list):
+                return [str(origin).strip() for origin in parsed if str(origin).strip()]
+        except json.JSONDecodeError:
+            pass
+    return [origin.strip() for origin in value.split(",") if origin.strip()]
+
 # Security middleware (add first, processes responses last)
 app.add_middleware(SecurityHeadersMiddleware)
 if os.getenv("PURVEX_ENV", "dev").lower() == "prod":
@@ -500,8 +514,7 @@ app.add_middleware(CSRFProtectionMiddleware)
 if IS_PRODUCTION:
     # In production, only allow explicitly configured origins
     # If CORS_ORIGINS is not set, default to empty list (no CORS allowed)
-    production_origins = os.getenv("CORS_ORIGINS", "").split(",") if os.getenv("CORS_ORIGINS") else []
-    production_origins = [origin.strip() for origin in production_origins if origin.strip()]
+    production_origins = parse_cors_origins(os.getenv("CORS_ORIGINS", ""))
     
     if not production_origins:
         logger.warning(

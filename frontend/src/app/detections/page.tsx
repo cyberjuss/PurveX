@@ -305,7 +305,7 @@ function DetectionsPageContent() {
   }
 
   // Helper functions - must be defined before filteredDetections
-  const statusNormalized = (status?: string) =>
+  const statusNormalized = (status?: string | null) =>
     (status || "DRAFT").toUpperCase();
 
   const AT_RISK_THRESHOLD_DAYS = 30;
@@ -1504,5 +1504,9 @@ function DetectionsPageContent() {
 }
 
 export default function DetectionsPage() {
-  return <DetectionsPageContent />;
+  return (
+    <Suspense fallback={<div className="min-h-screen bg-slate-950" />}>
+      <DetectionsPageContent />
+    </Suspense>
+  );
 }

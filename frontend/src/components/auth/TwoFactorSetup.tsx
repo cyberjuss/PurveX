@@ -32,9 +32,9 @@ export default function TwoFactorSetup({ onComplete, onCancel }: TwoFactorSetupP
       setLoading(true);
       setError(null);
       const data = await get2FASetup();
-      setQrUri(data.qr_code_uri);
-      setSecret(data.secret);
-      setBackupCodes(data.backup_codes);
+      setQrUri(data.qr_code_uri || data.qr_code || "");
+      setSecret(data.secret || "");
+      setBackupCodes(data.backup_codes || []);
     } catch (err: any) {
       setError(err.message || "Failed to load 2FA setup");
     } finally {

@@ -27,6 +27,16 @@ class TokenData(BaseModel):
     email: Optional[str] = None
 
 
+class BootstrapStatus(BaseModel):
+    needs_admin: bool
+
+
+class BootstrapAdminCreate(BaseModel):
+    username: str
+    password: str
+    email: Optional[str] = None
+
+
 class DetectionBase(BaseModel):
     technique_id: str = Field(..., max_length=50)
     title: str = Field(..., max_length=500)

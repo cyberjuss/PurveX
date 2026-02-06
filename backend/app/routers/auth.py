@@ -23,8 +23,98 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 DBSession = Annotated[AsyncSession, Depends(get_db)]
 
 async def get_user_by_email(db: AsyncSession, email: str) -> models.User | None:
-    result = await db.execute(select(models.User).where(models.User.email == email))
+    # Accept either email or username as the login identifier.
+    result = await db.execute(
+        select(models.User).where(
+            (models.User.email == email) | (models.User.username == email)
+        )
+    )
     return result.scalars().first()
+
+
+async def _get_or_create_org(db: AsyncSession) -> models.Organization:
+    result = await db.execute(select(models.Organization))
+    org = result.scalars().first()
+    if org:
+        return org
+    org = models.Organization(
+        name=app_settings.ORGANIZATION_NAME,
+        primary_contact_email=app_settings.PRIMARY_CONTACT_EMAIL,
+        timezone=app_settings.DEFAULT_TIMEZONE,
+        locale=app_settings.DEFAULT_LOCALE,
+        default_environment_names=app_settings.DEFAULT_ENVIRONMENT_NAMES,
+        compliance_mode_flags=app_settings.COMPLIANCE_MODE_FLAGS,
+    )
+    db.add(org)
+    await db.commit()
+    await db.refresh(org)
+    return org
+
+
+async def _ensure_admin_role(db: AsyncSession, user: models.User, org_id: int) -> None:
+    try:
+        from ..services.rbac import Role as RoleEnum
+    except Exception:
+        return
+    role_result = await db.execute(select(models.Role).where(models.Role.name == RoleEnum.ADMINISTRATOR.value))
+    admin_role = role_result.scalar_one_or_none()
+    if not admin_role:
+        return
+    existing_role = await db.execute(
+        select(models.UserRole).where(
+            models.UserRole.user_id == user.id,
+            models.UserRole.role_id == admin_role.id,
+            models.UserRole.organization_id == org_id,
+        )
+    )
+    if existing_role.scalar_one_or_none():
+        return
+    db.add(
+        models.UserRole(
+            user_id=user.id,
+            role_id=admin_role.id,
+            organization_id=org_id,
+        )
+    )
+    await db.commit()
+
+
+@router.get("/bootstrap/status", response_model=schemas.BootstrapStatus)
+async def bootstrap_status(db: DBSession):
+    result = await db.execute(select(models.User).where(models.User.is_admin == True))
+    admin = result.scalars().first()
+    return {"needs_admin": admin is None}
+
+
+@router.post("/bootstrap", response_model=schemas.UserRead)
+async def bootstrap_admin(user_in: schemas.BootstrapAdminCreate, db: DBSession):
+    result = await db.execute(select(models.User).where(models.User.is_admin == True))
+    admin = result.scalars().first()
+    if admin:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="An admin user already exists.",
+        )
+
+    is_valid, error_msg = validate_password_complexity(user_in.password)
+    if not is_valid:
+        raise HTTPException(status_code=400, detail=error_msg)
+
+    org = await _get_or_create_org(db)
+    email = user_in.email or user_in.username
+    user = models.User(
+        username=user_in.username,
+        email=email,
+        hashed_password=hash_password(user_in.password),
+        is_admin=True,
+        is_active=True,
+        organization_id=org.id,
+    )
+    db.add(user)
+    await db.commit()
+    await db.refresh(user)
+    await _ensure_admin_role(db, user, org.id)
+    return user
 
 # SECURITY: Disable public registration - only allow via admin interface
 # This endpoint should be removed or restricted to admin-only in production
@@ -134,7 +224,7 @@ async def login(
         # Use same error message to prevent user enumeration
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Incorrect email or password",
+            detail="Incorrect username or password",
         )
 
     # SECURITY: Check if account is locked.

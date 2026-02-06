@@ -1,4 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
+import { randomBytes } from "crypto";
 
 // Security middleware: applies hardened headers to all routes.
 
@@ -15,7 +16,7 @@ export default function proxy(request: NextRequest) {
   if (request.nextUrl.pathname.startsWith("/api")) {
     const ip =
       request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
-      request.ip ||
+      (request as any).ip ||
       "unknown";
 
     const now = Date.now();
@@ -34,7 +35,14 @@ export default function proxy(request: NextRequest) {
     }
   }
 
-  const res = NextResponse.next();
+  const nonce = randomBytes(16).toString("base64");
+  const requestHeaders = new Headers(request.headers);
+  requestHeaders.set("x-nonce", nonce);
+  const res = NextResponse.next({
+    request: {
+      headers: requestHeaders,
+    },
+  });
 
   // Relax CSP in dev so Next.js dev runtime (inline bootstraps, ws) can run.
   const csp = isDev
@@ -51,19 +59,22 @@ export default function proxy(request: NextRequest) {
         "form-action 'self'",
       ].join("; ")
     : [
-    "default-src 'self'",
-    "script-src 'self'",
-    "style-src 'self' 'unsafe-inline'",
-    "img-src 'self' data: blob:",
-    "font-src 'self' data:",
-    "connect-src 'self'",
-    "object-src 'none'",
-    "frame-ancestors 'none'",
-    "base-uri 'self'",
-    "form-action 'self'",
-  ].join("; ");
+        "default-src 'self'",
+        `script-src 'self' 'nonce-${nonce}' 'strict-dynamic' https: http:`,
+        `script-src-elem 'self' 'nonce-${nonce}' https: http:`,
+        "script-src-attr 'none'",
+        "style-src 'self' 'unsafe-inline'",
+        "img-src 'self' data: blob:",
+        "font-src 'self' data:",
+        "connect-src 'self' http://localhost:* http://127.0.0.1:*",
+        "object-src 'none'",
+        "frame-ancestors 'none'",
+        "base-uri 'self'",
+        "form-action 'self'",
+      ].join("; ");
 
   res.headers.set("Content-Security-Policy", csp);
+  res.headers.set("X-CSP-Nonce", nonce);
   res.headers.set("Referrer-Policy", "strict-origin-when-cross-origin");
   res.headers.set("X-Content-Type-Options", "nosniff");
   res.headers.set("X-Frame-Options", "DENY");

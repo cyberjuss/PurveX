@@ -29,6 +29,8 @@ interface EnvironmentRunnerConfig {
   max_concurrent_tests: number;
   heartbeat_interval_seconds: number;
   alert_offline_minutes: number;
+  owner_name?: string;
+  owner_email?: string;
 }
 
 // Helper function to get API URL
@@ -120,11 +122,11 @@ fi
 if [ -z "$OWNER_NAME" ]; then
     OWNER_NAME="$USERNAME"
 fi
-read -r -p "Owner name [${OWNER_NAME}]: " OWNER_NAME_INPUT
+read -r -p "Owner name [\${OWNER_NAME}]: " OWNER_NAME_INPUT
 if [ -n "$OWNER_NAME_INPUT" ]; then
     OWNER_NAME="$OWNER_NAME_INPUT"
 fi
-read -r -p "Owner email (optional) [${OWNER_EMAIL}]: " OWNER_EMAIL_INPUT
+read -r -p "Owner email (optional) [\${OWNER_EMAIL}]: " OWNER_EMAIL_INPUT
 if [ -n "$OWNER_EMAIL_INPUT" ]; then
     OWNER_EMAIL="$OWNER_EMAIL_INPUT"
 fi
@@ -999,119 +1001,71 @@ export default function TestRunnerSettingsPage() {
       />
       {/* Step Progress Indicator */}
       <div className="flex justify-center">
-        {connectionType === "agent" ? (
-          <div className="relative w-full max-w-5xl px-6">
-            <div className="absolute top-[32px] left-[12.5%] w-[25%] h-[4px] rounded-full bg-slate-200" />
-            <div className="absolute top-[32px] left-[37.5%] w-[25%] h-[4px] rounded-full bg-slate-200" />
-            <div className="absolute top-[32px] left-[62.5%] w-[25%] h-[4px] rounded-full bg-slate-200" />
-            <div
-              className={cn(
-                "absolute top-[32px] left-[12.5%] w-[25%] h-[4px] rounded-full transition-colors",
-                currentStep > 1 ? "bg-indigo-200" : "bg-slate-200"
-              )}
-            />
-            <div
-              className={cn(
-                "absolute top-[32px] left-[37.5%] w-[25%] h-[4px] rounded-full transition-colors",
-                currentStep > 2 ? "bg-indigo-200" : "bg-slate-200"
-              )}
-            />
-            <div
-              className={cn(
-                "absolute top-[32px] left-[62.5%] w-[25%] h-[4px] rounded-full transition-colors",
-                currentStep > 3 ? "bg-indigo-200" : "bg-slate-200"
-              )}
-            />
+        {(() => {
+          const steps =
+            connectionType === "agent"
+              ? [
+                  { step: 1, label: "Connection" },
+                  { step: 2, label: "Platform" },
+                  { step: 3, label: "Download" },
+                  { step: 4, label: "Run" },
+                ]
+              : [
+                  { step: 1, label: "Connection" },
+                  { step: 2, label: "Configuration" },
+                ];
+          const maxSteps = steps.length;
+          const progress = maxSteps > 1 ? Math.min(1, Math.max(0, (currentStep - 1) / (maxSteps - 1))) : 0;
+          return (
+            <div className="relative w-full max-w-5xl px-6">
+              <div className="absolute top-[32px] left-0 right-0 h-[4px] rounded-full bg-slate-200" />
+              <div
+                className="absolute top-[32px] left-0 h-[4px] rounded-full bg-indigo-200 transition-[width] duration-300"
+                style={{ width: `${progress * 100}%` }}
+              />
 
-            <div className="relative z-10 grid grid-cols-4 items-start text-center">
-              {[
-                { step: 1, label: "Connection" },
-                { step: 2, label: "Platform" },
-                { step: 3, label: "Download" },
-                { step: 4, label: "Run" },
-              ].map((item) => {
-                const isActive = currentStep === item.step;
-                const isCompleted = currentStep > item.step;
-                return (
-                  <div key={item.step} className="flex flex-col items-center gap-3">
-                    <div
-                      className={cn(
-                        "flex items-center justify-center w-16 h-16 rounded-full border-2 transition-all bg-white shadow-sm",
-                        isCompleted
-                          ? "border-indigo-400 text-indigo-500 bg-indigo-50"
-                          : isActive
-                          ? "border-[#5b7bff] text-[#4d6dff] shadow-[0_0_0_4px_rgba(91,123,255,0.18)]"
-                          : "border-slate-200 text-slate-400"
-                      )}
-                    >
-                      {isCompleted ? (
-                        <CheckCircle2 className="h-7 w-7" />
-                      ) : (
-                        <span className="text-2xl font-display font-bold">{item.step}</span>
-                      )}
+              <div
+                className={cn(
+                  "relative z-10 grid items-start text-center",
+                  maxSteps === 4 ? "grid-cols-4" : "grid-cols-2"
+                )}
+              >
+                {steps.map((item) => {
+                  const isActive = currentStep === item.step;
+                  const isCompleted = currentStep > item.step;
+                  return (
+                    <div key={item.step} className="flex flex-col items-center gap-3">
+                      <div
+                        className={cn(
+                          "flex items-center justify-center w-16 h-16 rounded-full border-2 transition-all bg-white shadow-sm",
+                          isCompleted
+                            ? "border-indigo-400 text-indigo-500 bg-indigo-50"
+                            : isActive
+                            ? "border-[#5b7bff] text-[#4d6dff] shadow-[0_0_0_4px_rgba(91,123,255,0.18)]"
+                            : "border-slate-200 text-slate-400"
+                        )}
+                      >
+                        {isCompleted ? (
+                          <CheckCircle2 className="h-7 w-7" />
+                        ) : (
+                          <span className="text-2xl font-display font-bold">{item.step}</span>
+                        )}
+                      </div>
+                      <span
+                        className={cn(
+                          "text-base font-medium",
+                          isActive ? "text-[#4d6dff]" : "text-slate-500"
+                        )}
+                      >
+                        {item.label}
+                      </span>
                     </div>
-                    <span
-                      className={cn(
-                        "text-base font-medium",
-                        isActive ? "text-[#4d6dff]" : "text-slate-500"
-                      )}
-                    >
-                      {item.label}
-                    </span>
-                  </div>
-                );
-              })}
+                  );
+                })}
+              </div>
             </div>
-          </div>
-        ) : (
-          <div className="relative w-full max-w-4xl px-6">
-            <div className="absolute top-[32px] left-[25%] w-[50%] h-[4px] rounded-full bg-slate-200" />
-            <div
-              className={cn(
-                "absolute top-[32px] left-[25%] w-[50%] h-[4px] rounded-full transition-colors",
-                currentStep > 1 ? "bg-indigo-200" : "bg-slate-200"
-              )}
-            />
-
-            <div className="relative z-10 grid grid-cols-2 items-start text-center">
-              {[
-                { step: 1, label: "Connection" },
-                { step: 2, label: "Configuration" },
-              ].map((item) => {
-                const isActive = currentStep === item.step;
-                const isCompleted = currentStep > item.step;
-                return (
-                  <div key={item.step} className="flex flex-col items-center gap-3">
-                    <div
-                      className={cn(
-                        "flex items-center justify-center w-16 h-16 rounded-full border-2 transition-all bg-white shadow-sm",
-                        isCompleted
-                          ? "border-indigo-400 text-indigo-500 bg-indigo-50"
-                          : isActive
-                          ? "border-[#5b7bff] text-[#4d6dff] shadow-[0_0_0_4px_rgba(91,123,255,0.18)]"
-                          : "border-slate-200 text-slate-400"
-                      )}
-                    >
-                      {isCompleted ? (
-                        <CheckCircle2 className="h-7 w-7" />
-                      ) : (
-                        <span className="text-2xl font-display font-bold">{item.step}</span>
-                      )}
-                    </div>
-                    <span
-                      className={cn(
-                        "text-base font-medium",
-                        isActive ? "text-[#4d6dff]" : "text-slate-500"
-                      )}
-                    >
-                      {item.label}
-                    </span>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        )}
+          );
+        })()}
       </div>
       {/* Unified Connection Card - Agent or SSH */}
       <Card className="border border-slate-200 shadow-lg shadow-slate-200/50 rounded-2xl bg-white overflow-hidden">
@@ -1441,7 +1395,7 @@ export default function TestRunnerSettingsPage() {
                                     : `${filename} has been downloaded with your registration token pre-configured.`,
                               });
                               setCurrentStep(4);
-                            } catch (err) {
+                            } catch (err: any) {
                               toast({
                                 type: "error",
                                 title: "Download failed",

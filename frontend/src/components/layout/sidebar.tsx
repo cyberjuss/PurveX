@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useTransition } from "react";
 import { cn } from "@/lib/utils";
 import { Shield, Activity, Settings, Bot, LogOut, FlaskConical, Menu, FileText } from "lucide-react";
 import Link from "next/link";
@@ -27,7 +27,9 @@ const links = [
 export function Sidebar({ open, onClose, onToggle }: SidebarProps) {
   const pathname = usePathname();
   const router = useRouter();
+  const [, startTransition] = useTransition();
   const [inventoryScore, setInventoryScore] = useState<number | null>(null);
+  const [isLoggingOut, setIsLoggingOut] = useState(false);
   const userName = "Administrator";
   const userRole = "Admin";
   const userInitials = userName
@@ -78,31 +80,46 @@ export function Sidebar({ open, onClose, onToggle }: SidebarProps) {
    * Backend JWT validation still protects APIs; this is purely a UX layer.
    */
     async function handleSignOut() {
+      if (isLoggingOut) return;
+      setIsLoggingOut(true);
       if (typeof window !== "undefined") {
         try {
           await apiFetch("/auth/logout", { method: "POST" });
-        } catch (err) {
+        } catch {
           // Proceed with client-side cleanup even if the server call fails.
         }
         localStorage.removeItem("purvex_username");
         localStorage.removeItem("purvex_user_role");
         localStorage.removeItem("purvex_dev_offline_mode");
         localStorage.removeItem("purvex_seen_login");
-        window.location.replace("/login");
-        return;
       }
-      router.replace("/login");
+      onClose?.();
+      setTimeout(() => {
+        startTransition(() => {
+          router.replace("/login");
+          router.refresh();
+        });
+      }, 220);
     }
 
   return (
-    <aside
-      className={cn(
-        "fixed inset-y-0 left-0 z-50 flex h-screen flex-col overflow-hidden text-slate-100 transition-all duration-200 ease-out",
-        "bg-gradient-to-b from-[#060d1b] via-[#08162f] to-[#050f1d] backdrop-blur-xl border-r border-slate-800/60 shadow-[8px_0_30px_-18px_rgba(5,15,29,0.75)]",
-        open ? "translate-x-0 w-64" : "-translate-x-full w-64"
-      )}
-      aria-hidden={false}
-    >
+    <>
+      <div
+        className={cn(
+          "fixed inset-0 z-[60] bg-[#050b17] transition-opacity duration-300 ease-out",
+          isLoggingOut ? "opacity-100" : "opacity-0 pointer-events-none"
+        )}
+        aria-hidden="true"
+      />
+      <aside
+        className={cn(
+          "fixed inset-y-0 left-0 z-50 flex h-screen flex-col overflow-hidden text-slate-100 transition-all duration-200 ease-out",
+          "bg-gradient-to-b from-[#060d1b] via-[#08162f] to-[#050f1d] backdrop-blur-xl border-r border-slate-800/60 shadow-[8px_0_30px_-18px_rgba(5,15,29,0.75)]",
+          open ? "translate-x-0 w-64" : "-translate-x-full w-64",
+          isLoggingOut ? "opacity-0" : "opacity-100"
+        )}
+        aria-hidden={false}
+      >
       {/* Mobile Header */}
       <div className="md:hidden flex items-center justify-between px-5 py-4 border-b border-slate-800/60">
         <Link
@@ -199,6 +216,7 @@ export function Sidebar({ open, onClose, onToggle }: SidebarProps) {
           <LogOut className="h-4 w-4 text-slate-300" />
         </button>
       </div>
-    </aside>
+      </aside>
+    </>
   );
 }

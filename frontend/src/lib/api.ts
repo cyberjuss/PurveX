@@ -25,6 +25,7 @@ export interface Detection {
   last_alert_at?: string | null;
   last_reviewed_at?: string | null;
   last_result?: string | null;
+  last_score?: number | null;
   lifecycle_stage?: string | null;
 }
 
@@ -37,6 +38,10 @@ export interface DetectionAlert {
   query: string;
   raw_event?: string;
   test_id?: number | null;
+  created_at?: string | null;
+  status?: string | null;
+  source?: string | null;
+  message?: string | null;
 }
 
 export interface Test {
@@ -45,9 +50,14 @@ export interface Test {
   technique_id?: string | null;
   marker?: string | null;
   environment?: string;
-  started_at?: string;
+  started_at: string;
   finished_at?: string | null;
+  result?: string | null;
   status?: string;
+  score?: number | null;
+  endpoint?: string | null;
+  initiated_by_username?: string | null;
+  initiated_by_role?: string | null;
 }
 
 export type TestWithDetectionTitle = Test & {
@@ -61,12 +71,22 @@ export interface TestArtifact {
   siem_sample_events?: string | null;
   ai_explanation?: string | null;
   ai_suggested_rule?: string | null;
+  ai_root_cause_category?: string | null;
+  ai_confidence_score?: number | null;
 }
 
 export type TestDetailResponse = Test & {
   detection?: Detection | null;
   artifact?: TestArtifact | null;
   detection_title?: string | null;
+  telemetry_summary?: {
+    has_logs?: boolean | null;
+    events_found?: number | null;
+  } | null;
+  detection_summary?: {
+    rule_fired?: boolean | null;
+    alerts_found?: number | null;
+  } | null;
 };
 
 export interface TestSchedule {
@@ -79,10 +99,14 @@ export interface TestSchedule {
   run_at?: string | null;
   cron_expression?: string | null;
   interval_minutes?: number | null;
+  interval_seconds?: number | null;
+  enabled?: boolean | null;
   created_at?: string;
   last_run_at?: string | null;
   next_run_at?: string | null;
 }
+
+export type TestScheduleType = "once" | "interval" | "cron";
 
 export interface MitreTechnique {
   id: string;
@@ -93,6 +117,7 @@ export interface MitreTechnique {
 
 export type TwoFactorSetupResponse = {
   qr_code?: string;
+  qr_code_uri?: string;
   secret?: string;
   backup_codes?: string[];
   message?: string;
@@ -102,6 +127,17 @@ export type TwoFactorStatusResponse = {
   enabled: boolean;
   method?: string | null;
   backup_codes_remaining?: number | null;
+  has_backup_codes?: boolean | null;
+};
+
+export type BootstrapStatus = {
+  needs_admin: boolean;
+};
+
+export type BootstrapAdminRequest = {
+  username: string;
+  password: string;
+  email?: string;
 };
 
 export type AtomicTestDefinition = Record<string, any>;
@@ -488,6 +524,7 @@ export async function runTest(
     mode?: TestRunMode;
     atomic?: { atomic_test_id: string; atomic_args?: Record<string, any> };
     labOs?: "windows" | "linux" | "both";
+    endpoint?: string | null;
   }
 ): Promise<Test> {
   const body: any = {
@@ -508,6 +545,9 @@ export async function runTest(
   }
   if (params.labOs) {
     body.lab_os = params.labOs;
+  }
+  if (params.endpoint) {
+    body.endpoint = params.endpoint;
   }
 
   return apiFetch("/tests/run", {
@@ -727,6 +767,17 @@ export async function verify2FAToken(token: string, twoFactorToken: string): Pro
 
 export async function get2FAStatus(): Promise<TwoFactorStatusResponse> {
   return apiFetch("/auth/2fa/status", { cache: "no-store" });
+}
+
+export async function getBootstrapStatus(): Promise<BootstrapStatus> {
+  return apiFetch("/auth/bootstrap/status", { cache: "no-store" });
+}
+
+export async function bootstrapAdmin(payload: BootstrapAdminRequest): Promise<unknown> {
+  return apiFetch("/auth/bootstrap", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
 }
 
 export async function disable2FA(password: string): Promise<{ message: string }> {

@@ -28,8 +28,9 @@ export function NotificationBell({
           lastResult = undefined;
           return;
         }
-        if (latest.result !== lastResult) {
-          lastResult = latest.result;
+        const currentResult = latest.result || undefined;
+        if (currentResult !== lastResult) {
+          lastResult = currentResult;
           if (latest.result === "FAIL") {
             setAlertState("fail");
           } else if (latest.result === "PASS") {

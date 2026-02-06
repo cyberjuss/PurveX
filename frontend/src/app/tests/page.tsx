@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useCallback } from "react";
 import { PageContainer } from "@/components/layout/page-container";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -9,9 +9,9 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { getTests, TestWithDetectionTitle, getDetections, type Detection } from "@/lib/api";
+import { getTests, TestWithDetectionTitle, getDetections, getMitreTechniques, type Detection, type MitreTechnique } from "@/lib/api";
 import { format, subDays } from "date-fns";
-import { Activity, Play, Target, History, Loader2, Clock, Shield, AlertCircle, RefreshCw, Eye, ArrowUpDown, CheckCircle2, XCircle, AlertTriangle, Zap, TrendingUp, FileText, TestTube, ArrowUpRight, Edit, FileCode, Network, Globe, ChevronRight, ClipboardList, AlertCircle as AlertCircleIcon, Info, Filter } from "lucide-react";
+import { Activity, Play, Target, History, Loader2, Clock, Shield, AlertCircle, RefreshCw, Eye, ArrowUpDown, CheckCircle2, XCircle, AlertTriangle, Zap, TrendingUp, FileText, TestTube, ArrowUpRight, Edit, FileCode, Network, Globe, ChevronRight, ClipboardList, AlertCircle as AlertCircleIcon, Info, Filter, Search, Crosshair, Package, Server, KeyRound, Radar, FlagTriangleRight } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { PageHeader } from "@/components/layout/page-header";
 
@@ -35,10 +35,46 @@ function getResultBadgeClass(result?: string) {
   }
 }
 
+type KillChainKey = "recon" | "weaponize" | "deliver" | "exploit" | "install" | "c2" | "actions";
+
+const KILL_CHAIN_STAGES: Array<{
+  key: KillChainKey;
+  label: string;
+  detail: string;
+  icon: any;
+  accent: string;
+}> = [
+  { key: "recon", label: "Reconnaissance", detail: "Profile targets & surface", icon: Search, accent: "from-sky-500/20 to-sky-400/10" },
+  { key: "weaponize", label: "Weaponization", detail: "Build payload & lure", icon: Package, accent: "from-indigo-500/20 to-indigo-400/10" },
+  { key: "deliver", label: "Delivery", detail: "Send the exploit", icon: Crosshair, accent: "from-amber-500/20 to-amber-400/10" },
+  { key: "exploit", label: "Exploitation", detail: "Trigger execution", icon: Zap, accent: "from-rose-500/20 to-rose-400/10" },
+  { key: "install", label: "Installation", detail: "Persist foothold", icon: Server, accent: "from-emerald-500/20 to-emerald-400/10" },
+  { key: "c2", label: "Command & Control", detail: "Establish beacon", icon: Radar, accent: "from-violet-500/20 to-violet-400/10" },
+  { key: "actions", label: "Actions on Objectives", detail: "Impact & exfiltrate", icon: FlagTriangleRight, accent: "from-slate-500/20 to-slate-400/10" },
+];
+
+const TACTIC_TO_KILL_CHAIN: Record<string, KillChainKey> = {
+  Reconnaissance: "recon",
+  "Resource Development": "weaponize",
+  "Initial Access": "deliver",
+  Execution: "exploit",
+  Persistence: "install",
+  "Command and Control": "c2",
+  "Privilege Escalation": "actions",
+  "Defense Evasion": "actions",
+  "Credential Access": "actions",
+  Discovery: "actions",
+  "Lateral Movement": "actions",
+  Collection: "actions",
+  Exfiltration: "actions",
+  Impact: "actions",
+};
+
 export default function TestsHistoryPage() {
   const router = useRouter();
   const [tests, setTests] = useState<TestWithDetectionTitle[]>([]);
   const [detections, setDetections] = useState<Detection[]>([]);
+  const [mitreTechniques, setMitreTechniques] = useState<MitreTechnique[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
@@ -49,17 +85,20 @@ export default function TestsHistoryPage() {
   const [extensionFilter, setExtensionFilter] = useState<"all" | ".ps1" | ".sh" | ".bat" | ".py" | ".exe" | ".dll" | ".js" | ".vbs">("all");
   const [sortField, setSortField] = useState<"started_at" | "result" | "score" | "detection_title">("started_at");
   const [sortDirection, setSortDirection] = useState<"asc" | "desc">("desc");
+  const [expandedStage, setExpandedStage] = useState<KillChainKey | null>(null);
 
   const loadData = async () => {
       try {
         setLoading(true);
       setRefreshing(true);
-      const [testsData, detectionsData] = await Promise.all([
-          getTests(),
+      const [testsData, detectionsData, mitreData] = await Promise.all([
+        getTests(),
         getDetections().catch(() => []),
-        ]);
+        getMitreTechniques().catch(() => []),
+      ]);
         setTests(testsData);
         setDetections(detectionsData);
+        setMitreTechniques(mitreData);
       setError(null);
       } catch (err: any) {
       setError(err?.message || "Failed to load test data.");
@@ -128,6 +167,49 @@ export default function TestsHistoryPage() {
       recentFailures,
     };
   }, [tests, detections]);
+
+  const techniqueTacticsMap = useMemo(() => {
+    const map = new Map<string, string[]>();
+    mitreTechniques.forEach((tech) => {
+      map.set(tech.id, tech.tactics || []);
+    });
+    return map;
+  }, [mitreTechniques]);
+
+  const detectionTechniqueMap = useMemo(() => {
+    const map = new Map<string, string>();
+    detections.forEach((det) => {
+      if (det.id && det.technique_id) {
+        map.set(det.id, det.technique_id);
+      }
+    });
+    return map;
+  }, [detections]);
+
+  const getStagesForTechnique = useCallback(
+    (techniqueId?: string | null) => {
+      if (!techniqueId) return new Set<KillChainKey>();
+      const direct = techniqueTacticsMap.get(techniqueId);
+      const base = techniqueId.includes(".") ? techniqueId.split(".")[0] : techniqueId;
+      const tactics = direct && direct.length ? direct : techniqueTacticsMap.get(base) || [];
+      const stages = new Set<KillChainKey>();
+      tactics.forEach((tactic) => {
+        const mapped = TACTIC_TO_KILL_CHAIN[tactic];
+        if (mapped) stages.add(mapped);
+      });
+      return stages;
+    },
+    [techniqueTacticsMap]
+  );
+
+  const testStagesMap = useMemo(() => {
+    const map = new Map<number, Set<KillChainKey>>();
+    tests.forEach((test) => {
+      const techniqueId = test.technique_id || detectionTechniqueMap.get(test.detection_id || "");
+      map.set(test.id, getStagesForTechnique(techniqueId));
+    });
+    return map;
+  }, [tests, detectionTechniqueMap, getStagesForTechnique]);
 
   // Filter and sort tests
   const filteredAndSortedTests = useMemo(() => {
@@ -206,7 +288,36 @@ export default function TestsHistoryPage() {
     });
 
     return filtered;
-  }, [tests, searchQuery, resultFilter, envFilter, timeFilter, extensionFilter, sortField, sortDirection]);
+  }, [
+    tests,
+    searchQuery,
+    resultFilter,
+    envFilter,
+    timeFilter,
+    extensionFilter,
+    sortField,
+    sortDirection,
+  ]);
+
+  const stageCounts = useMemo(() => {
+    const counts: Record<KillChainKey, number> = {
+      recon: 0,
+      weaponize: 0,
+      deliver: 0,
+      exploit: 0,
+      install: 0,
+      c2: 0,
+      actions: 0,
+    };
+    filteredAndSortedTests.forEach((test) => {
+      const stages = testStagesMap.get(test.id);
+      if (!stages) return;
+      stages.forEach((stage) => {
+        counts[stage] += 1;
+      });
+    });
+    return counts;
+  }, [filteredAndSortedTests, testStagesMap]);
 
   // Get recent runs (last 10)
   const recentRuns = [...tests]
@@ -398,16 +509,14 @@ export default function TestsHistoryPage() {
               </Link>
             </div>
 
-            {/* Test Results Card */}
+            {/* Global Filters */}
             <Card className="border border-slate-200 bg-white shadow-sm">
               <CardContent className="p-6">
-
-                {/* Filters */}
                 <div className="rounded-xl border border-slate-200 bg-white px-4 py-4 shadow-sm space-y-3">
                   <div className="flex flex-wrap items-center gap-3">
                     <div className="inline-flex items-center gap-2 text-sm text-slate-700">
                       <Clock className="h-4 w-4 text-slate-500" />
-                      Recent activity
+                      Global filters
                     </div>
                   </div>
                   <div className="flex items-center gap-3 overflow-x-auto">
@@ -471,6 +580,120 @@ export default function TestsHistoryPage() {
                     </Select>
                   </div>
                 </div>
+              </CardContent>
+            </Card>
+
+            {/* Cyber Kill Chain */}
+            <Card className="border border-slate-200 bg-white shadow-sm">
+              <CardHeader className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                <div className="space-y-1">
+                  <CardTitle className="text-base font-semibold text-slate-900">Cyber Kill Chain</CardTitle>
+                  <CardDescription className="text-sm text-slate-600">
+                    Map test coverage across the adversary lifecycle to spot weak stages fast.
+                  </CardDescription>
+                </div>
+                <div className="flex flex-wrap items-center gap-2 text-xs">
+                  <Badge className="w-fit bg-slate-100 text-slate-600 border border-slate-200">
+                    Auto-mapped from ATT&CK tactics
+                  </Badge>
+                </div>
+              </CardHeader>
+              <CardContent className="pb-6">
+                <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-7">
+                  {KILL_CHAIN_STAGES.map((stage, index) => {
+                    const Icon = stage.icon;
+                    const isSelected = expandedStage === stage.key;
+                    const count = stageCounts[stage.key] || 0;
+                    return (
+                      <div key={stage.key} className="flex flex-col gap-3">
+                        <button
+                          type="button"
+                          onClick={() => setExpandedStage(isSelected ? null : stage.key)}
+                          className={cn(
+                            "rounded-2xl border p-5 shadow-sm text-left transition-all",
+                            isSelected
+                              ? "border-indigo-300 bg-indigo-50/50 shadow-[0_12px_32px_rgba(79,70,229,0.18)]"
+                              : "border-slate-200 bg-white hover:border-slate-300 hover:shadow-md"
+                          )}
+                        >
+                          <div className="flex items-start justify-between gap-3">
+                            <div className={`h-10 w-10 rounded-xl bg-gradient-to-br ${stage.accent} flex items-center justify-center`}>
+                              <Icon className="h-4 w-4 text-slate-700" />
+                            </div>
+                          </div>
+                          <div className="mt-4 space-y-2">
+                            <p className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider">Stage {index + 1}</p>
+                            <p className="text-sm font-semibold text-slate-900">{stage.label}</p>
+                            <span className="inline-flex w-fit items-center rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-semibold text-slate-600">
+                              {count} tests
+                            </span>
+                            <p className="text-xs text-slate-600">{stage.detail}</p>
+                          </div>
+                        </button>
+                        {isSelected && (
+                          <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
+                                Stage detail
+                              </p>
+                              <Badge className="bg-slate-100 text-slate-600 border border-slate-200">
+                                {stageCounts[stage.key] || 0} tests
+                              </Badge>
+                            </div>
+                            <div className="mt-3 overflow-hidden rounded-xl border border-slate-200">
+                              <div className="grid grid-cols-1 gap-2 bg-slate-50 px-3 py-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">
+                                <span>Tests</span>
+                              </div>
+                              <div className="divide-y divide-slate-200">
+                                {filteredAndSortedTests
+                                  .filter((test) => {
+                                    const stages = testStagesMap.get(test.id);
+                                    return stages ? stages.has(stage.key) : false;
+                                  })
+                                  .slice(0, 6)
+                                  .map((test) => (
+                                    <button
+                                      key={`stage-${stage.key}-${test.id}`}
+                                      type="button"
+                                      onClick={() => router.push(`/tests/${test.id}`)}
+                                      className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-xs text-slate-700 hover:bg-indigo-50 transition-colors"
+                                    >
+                                      <span className="truncate font-medium text-slate-900">
+                                        {test.detection_title || "No Detection"}
+                                      </span>
+                                      <Badge className={getResultBadgeClass(test.result || test.status)}>
+                                        {test.result || test.status || "N/A"}
+                                      </Badge>
+                                    </button>
+                                  ))}
+                                {filteredAndSortedTests.filter((test) => {
+                                  const stages = testStagesMap.get(test.id);
+                                  return stages ? stages.has(stage.key) : false;
+                                }).length === 0 && (
+                                  <div className="px-3 py-4 text-center text-xs text-slate-500">
+                                    No tests for this stage yet.
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+                <div className="mt-4 flex flex-wrap items-center gap-2 text-xs text-slate-500">
+                  <Badge className="bg-blue-50 text-blue-600 border border-blue-100">
+                    Click a stage to view its tests
+                  </Badge>
+                  <span>Coverage uses ATT&CK tactic mapping; adjust detections to refine.</span>
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* Test Results Card */}
+            <Card className="border border-slate-200 bg-white shadow-sm">
+              <CardContent className="p-6">
 
                 {/* Test List or Empty State */}
                 {filteredAndSortedTests.length === 0 ? (

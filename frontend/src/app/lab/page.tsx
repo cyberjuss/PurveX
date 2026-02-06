@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -111,11 +111,11 @@ fi
 if [ -z "$OWNER_NAME" ]; then
     OWNER_NAME="$USERNAME"
 fi
-read -r -p "Owner name [${OWNER_NAME}]: " OWNER_NAME_INPUT
+read -r -p "Owner name [\${OWNER_NAME}]: " OWNER_NAME_INPUT
 if [ -n "$OWNER_NAME_INPUT" ]; then
     OWNER_NAME="$OWNER_NAME_INPUT"
 fi
-read -r -p "Owner email (optional) [${OWNER_EMAIL}]: " OWNER_EMAIL_INPUT
+read -r -p "Owner email (optional) [\${OWNER_EMAIL}]: " OWNER_EMAIL_INPUT
 if [ -n "$OWNER_EMAIL_INPUT" ]; then
     OWNER_EMAIL="$OWNER_EMAIL_INPUT"
 fi
@@ -984,7 +984,7 @@ function LabPageContent() {
               const source = (endpointKey && testsByEndpoint.get(endpointKey)) || (envKey && testsByEnvironment.get(envKey)) || [];
               return source
                 .slice()
-                .sort((a, b) => new Date(b.started_at || b.created_at || b.finished_at || 0).getTime() - new Date(a.started_at || a.created_at || a.finished_at || 0).getTime())
+                .sort((a: any, b: any) => new Date(b.started_at || b.created_at || b.finished_at || 0).getTime() - new Date(a.started_at || a.created_at || a.finished_at || 0).getTime())
                 .slice(0, 3);
             })(),
             agentVersion: runner.agent_version || "—",
@@ -1697,9 +1697,11 @@ function LabPageContent() {
                       Environment
                     </p>
                     <p className="text-base font-display font-bold text-white">
-                      {currentTest.environment === "lab"
-                        ? "Lab (PurveX)"
-                        : currentTest.environment.toUpperCase()}
+                      {currentTest.environment
+                        ? (currentTest.environment === "lab"
+                          ? "Lab (PurveX)"
+                          : currentTest.environment.toUpperCase())
+                        : "UNKNOWN"}
                     </p>
                   </div>
                   <div className="space-y-1">
@@ -1771,5 +1773,9 @@ function LabPageContent() {
 }
 
 export default function LabPage() {
-  return <LabPageContent />;
+  return (
+    <Suspense fallback={<div className="min-h-screen bg-slate-950" />}>
+      <LabPageContent />
+    </Suspense>
+  );
 }

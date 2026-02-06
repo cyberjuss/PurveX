@@ -41,9 +41,9 @@ interface UnifiedNotification {
   status?: "success" | "warning" | "error" | "info";
   actionUrl: string;
   metadata?: {
-    techniqueId?: string;
-    environment?: string;
-    score?: number;
+    techniqueId?: string | null;
+    environment?: string | null;
+    score?: number | null;
     testId?: number;
   };
 }
