@@ -38,6 +38,7 @@ PurveX is a detection validation platform for security teams. It connects to you
 | Python | 3.11+ | `python --version` |
 | Node.js | 20+ | `node --version` |
 | npm | 9+ | `npm --version` |
+| PostgreSQL | 14+ | `psql --version` |
 | Git | any | `git --version` |
 
 ---
@@ -52,10 +53,13 @@ cd PurveX
 cp .env.example .env
 ```
 
-Edit `.env` and set your keys (optional for dev — defaults work out of the box):
+Create a PostgreSQL database, then edit `.env` with your connection details:
 
 ```bash
-# Generate secrets (optional for local dev, required for production)
+# Create the database
+createdb purvex
+
+# Generate secrets
 python -c "import secrets; print(secrets.token_urlsafe(32))"          # JWT_SECRET_KEY
 python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"  # PURVEX_ENCRYPTION_KEY
 ```
@@ -149,13 +153,11 @@ See [`.env.example`](.env.example) for all options. Key settings:
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `JWT_SECRET_KEY` | prod | JWT signing key |
-| `PURVEX_ENCRYPTION_KEY` | prod | Fernet key for secrets at rest |
-| `DATABASE_URL` | prod | PostgreSQL connection string |
+| `DATABASE_URL` | yes | PostgreSQL connection string |
+| `JWT_SECRET_KEY` | yes | JWT signing key |
+| `PURVEX_ENCRYPTION_KEY` | yes | Fernet key for secrets at rest |
 | `PURVEX_ENV` | no | `dev` / `staging` / `prod` (default: `dev`) |
 | `OPENAI_API_KEY` | no | Enables AI assistant features |
-
-> In **dev mode**, missing keys are auto-generated. In **production**, the app blocks startup without required secrets and PostgreSQL.
 
 ---
 

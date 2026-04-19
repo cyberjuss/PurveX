@@ -12,7 +12,10 @@ ROOT_ENV = BACKEND_DIR.parent / ".env"
 load_dotenv(dotenv_path=ROOT_ENV)
 
 DEFAULT_DEPLOYMENT_ENV = os.getenv("PURVEX_ENV", "dev")
-DEFAULT_DATABASE_URL = f"sqlite+aiosqlite:///{(BACKEND_DIR / 'purvex.db').as_posix()}"
+DEFAULT_DATABASE_URL = os.getenv(
+    "DATABASE_URL",
+    "postgresql+asyncpg://purvex:password@localhost:5432/purvex",
+)
 DEFAULT_CREATE_DEFAULT_ADMIN = DEFAULT_DEPLOYMENT_ENV.lower() != "prod"
 DEFAULT_ADMIN_PASSWORD_VALUE = (
     os.getenv("DEFAULT_ADMIN_PASSWORD")
@@ -23,7 +26,7 @@ class Settings(BaseSettings):
     project_name: str = "PurveX"
     api_v1_str: str = "/api/v1"
     # Database settings
-    database_url: str = os.getenv("DATABASE_URL", DEFAULT_DATABASE_URL)
+    database_url: str = DEFAULT_DATABASE_URL
 
     # JWT Settings
     # SECURITY: In production, this MUST be set via environment variable
