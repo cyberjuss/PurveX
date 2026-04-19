@@ -565,7 +565,6 @@ Usage: ./scripts/purvex.sh <command>
 
 Commands:
   --start     Start backend + frontend (production build)
-  --dev       Start backend + frontend (dev mode with hot reload)
   --setup     Install Python venv, pip deps, and npm deps
   --rebuild   Reinstall deps, clear caches, rebuild frontend
   --help      Show this help
@@ -577,8 +576,7 @@ Environment variables:
 
 Examples:
   ./scripts/purvex.sh --setup            # First-time setup
-  ./scripts/purvex.sh --start            # Production build
-  ./scripts/purvex.sh --dev              # Development with hot reload
+  ./scripts/purvex.sh --start            # Start PurveX
   FRONTEND_PORT=3000 ./scripts/purvex.sh --start
 EOF
 }
