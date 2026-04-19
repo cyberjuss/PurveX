@@ -563,21 +563,10 @@ PurveX — Detection Validation Platform
 
 Usage: ./scripts/purvex.sh <command>
 
-Commands:
-  --start     Start backend + frontend (production build)
-  --setup     Install Python venv, pip deps, and npm deps
-  --rebuild   Reinstall deps, clear caches, rebuild frontend
+  --setup     Install dependencies (first time)
+  --start     Start PurveX
+  --rebuild   Rebuild everything from scratch
   --help      Show this help
-
-Environment variables:
-  BACKEND_PORT       Backend port (default: 8001)
-  FRONTEND_PORT      Frontend port (default: 1120)
-  UVICORN_LOG_LEVEL  Uvicorn log level: info, warning, error (default: warning — quieter startup)
-
-Examples:
-  ./scripts/purvex.sh --setup            # First-time setup
-  ./scripts/purvex.sh --start            # Start PurveX
-  FRONTEND_PORT=3000 ./scripts/purvex.sh --start
 EOF
 }
 
