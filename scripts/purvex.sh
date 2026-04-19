@@ -559,8 +559,6 @@ run_rebuild() {
 
 show_help() {
   cat <<'EOF'
-PurveX — Detection Validation Platform
-
 Usage: ./scripts/purvex.sh <command>
 
   --setup     Install dependencies (first time)
