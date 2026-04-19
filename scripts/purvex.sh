@@ -46,14 +46,9 @@ kv() {
 print_urls() {
   local api="${1}"
   local web="${2}"
-  banner_line
-  printf "  ${BOLD}PurveX${RESET}  ${DIM}production${RESET}\n"
-  banner_line
-  kv "Web" "${CYAN}${web}${RESET}"
-  kv "API" "${CYAN}${api}${RESET}"
-  kv "Health" "${CYAN}${api}/health${RESET}"
-  printf "\n  ${DIM}Stop — Ctrl+C${RESET}\n"
-  banner_line
+  printf "\n"
+  info "Web: ${web}"
+  info "API: ${api}"
   printf "\n"
 }
 
@@ -373,14 +368,8 @@ start_backend() {
 }
 
 wait_for_backend_ready() {
-  local health_url="http://127.0.0.1:${BACKEND_PORT}/health"
-  if [ "${PURVEX_QUIET_RUNTIME:-}" != "1" ]; then
-    info "Waiting for API readiness…"
-  else
-    dim "  … waiting for ${health_url}"
-  fi
   for _ in $(seq 1 60); do
-    if curl -fsS "${health_url}" >/dev/null 2>&1; then
+    if curl -fsS "http://127.0.0.1:${BACKEND_PORT}/health" >/dev/null 2>&1; then
       return 0
     fi
     sleep 1
@@ -420,17 +409,7 @@ run_dev() {
   check_python
   check_node
   load_env
-  banner_line
-  printf "  ${BOLD}PurveX${RESET}  ${DIM}development mode (hot reload)${RESET}\n"
-  banner_line
-  runtime_summary
-  if [ -f "${ROOT_DIR}/.env" ]; then
-    kv "Config" ".env loaded"
-  else
-    kv "Config" "(no .env — optional)"
-  fi
-  printf "\n"
-  unset PURVEX_QUIET_RUNTIME
+
   stop_matching_processes "backend" "*PurveX*backend*uvicorn*"
   stop_matching_processes "frontend" "*PurveX*frontend*next*dev*"
   stop_matching_processes "frontend" "*PurveX*frontend*node_modules*next*dist*bin*next*dev*"
@@ -442,22 +421,20 @@ run_dev() {
       fail "Could not find a free backend port. Set BACKEND_PORT manually and retry."
     fi
     if [ "${chosen_backend_port}" != "${BACKEND_PORT}" ]; then
-      warn "Backend port ${BACKEND_PORT} is unavailable. Falling back to ${chosen_backend_port}."
+      warn "Port ${BACKEND_PORT} busy, using ${chosen_backend_port}."
       BACKEND_PORT="${chosen_backend_port}"
     fi
   fi
 
   clear_port "${FRONTEND_PORT}" "frontend"
   export NEXT_PUBLIC_API_URL="http://127.0.0.1:${BACKEND_PORT}"
-  export PURVEX_QUIET_RUNTIME=1
-  info "Starting API (FastAPI on port ${BACKEND_PORT})…"
+
+  info "Starting PurveX (dev)..."
   start_backend
   if ! wait_for_backend_ready; then
-    fail "API did not become ready at http://127.0.0.1:${BACKEND_PORT}/health"
+    fail "API did not start."
   fi
-  info "API ready."
   bootstrap_admin
-  info "Starting web app (Next.js dev on port ${FRONTEND_PORT})…"
   start_frontend_dev
   unset PURVEX_QUIET_RUNTIME
 
@@ -471,17 +448,7 @@ run_start() {
   check_python
   check_node
   load_env
-  banner_line
-  printf "  ${BOLD}PurveX${RESET}  ${DIM}starting production build…${RESET}\n"
-  banner_line
-  runtime_summary
-  if [ -f "${ROOT_DIR}/.env" ]; then
-    kv "Config" ".env loaded"
-  else
-    kv "Config" "(no .env — optional)"
-  fi
-  printf "\n"
-  unset PURVEX_QUIET_RUNTIME
+
   stop_matching_processes "backend" "*PurveX*backend*uvicorn*"
   stop_matching_processes "frontend" "*PurveX*frontend*next*start*"
   stop_matching_processes "frontend" "*PurveX*frontend*node_modules*next*dist*bin*next*start*"
@@ -495,22 +462,20 @@ run_start() {
       fail "Could not find a free backend port. Set BACKEND_PORT manually and retry."
     fi
     if [ "${chosen_backend_port}" != "${BACKEND_PORT}" ]; then
-      warn "Backend port ${BACKEND_PORT} is unavailable. Falling back to ${chosen_backend_port}."
+      warn "Port ${BACKEND_PORT} busy, using ${chosen_backend_port}."
       BACKEND_PORT="${chosen_backend_port}"
     fi
   fi
 
   clear_port "${FRONTEND_PORT}" "frontend"
   export NEXT_PUBLIC_API_URL="http://127.0.0.1:${BACKEND_PORT}"
-  export PURVEX_QUIET_RUNTIME=1
-  info "Starting API (FastAPI on port ${BACKEND_PORT})…"
+
+  info "Starting PurveX..."
   start_backend
   if ! wait_for_backend_ready; then
-    fail "API did not become ready at http://127.0.0.1:${BACKEND_PORT}/health"
+    fail "API did not start."
   fi
-  info "API ready."
   bootstrap_admin
-  info "Starting web app (Next.js on port ${FRONTEND_PORT})…"
   start_frontend
   unset PURVEX_QUIET_RUNTIME
 
