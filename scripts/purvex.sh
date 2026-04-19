@@ -3,7 +3,8 @@
 # purvex.sh — Unified PurveX launcher for Linux / macOS / Git Bash (Windows)
 #
 # Usage:
-#   ./scripts/purvex.sh --start          Start backend + frontend
+#   ./scripts/purvex.sh --start          Start backend + frontend (production build)
+#   ./scripts/purvex.sh --dev            Start backend + frontend (dev mode, hot reload)
 #   ./scripts/purvex.sh --setup          Install all dependencies
 #   ./scripts/purvex.sh --rebuild        Rebuild and restart everything
 #   ./scripts/purvex.sh --help           Show this help
@@ -46,7 +47,7 @@ print_urls() {
   local api="${1}"
   local web="${2}"
   banner_line
-  printf "  ${BOLD}PurveX${RESET}  ${DIM}local development${RESET}\n"
+  printf "  ${BOLD}PurveX${RESET}  ${DIM}production${RESET}\n"
   banner_line
   kv "Web" "${CYAN}${web}${RESET}"
   kv "API" "${CYAN}${api}${RESET}"
@@ -393,15 +394,76 @@ start_frontend() {
     fail "Frontend dependencies missing. Run: ./scripts/purvex.sh --setup"
   fi
 
-  if [ -d ".next" ]; then
-    rm -rf .next
-    if [ "${PURVEX_QUIET_RUNTIME:-}" != "1" ]; then
-      info "Cleared .next cache."
+  # Build production bundle if not already built
+  if [ ! -d ".next" ]; then
+    info "Building frontend (first run)..."
+    npx next build --webpack
+  fi
+
+  PORT="${FRONTEND_PORT}" npx next start -p "${FRONTEND_PORT}" -H 127.0.0.1 &
+  FRONTEND_PID=$!
+}
+
+start_frontend_dev() {
+  cd "${FRONTEND_DIR}"
+  if [ ! -d "node_modules" ]; then
+    fail "Frontend dependencies missing. Run: ./scripts/purvex.sh --setup"
+  fi
+
+  rm -rf .next
+  npx next dev --webpack -p "${FRONTEND_PORT}" -H 127.0.0.1 &
+  FRONTEND_PID=$!
+}
+
+run_dev() {
+  export PURVEX_QUIET_RUNTIME=1
+  check_python
+  check_node
+  load_env
+  banner_line
+  printf "  ${BOLD}PurveX${RESET}  ${DIM}development mode (hot reload)${RESET}\n"
+  banner_line
+  runtime_summary
+  if [ -f "${ROOT_DIR}/.env" ]; then
+    kv "Config" ".env loaded"
+  else
+    kv "Config" "(no .env — optional)"
+  fi
+  printf "\n"
+  unset PURVEX_QUIET_RUNTIME
+  stop_matching_processes "backend" "*PurveX*backend*uvicorn*"
+  stop_matching_processes "frontend" "*PurveX*frontend*next*dev*"
+  stop_matching_processes "frontend" "*PurveX*frontend*node_modules*next*dist*bin*next*dev*"
+
+  if ! can_bind_port "${BACKEND_PORT}"; then
+    local chosen_backend_port
+    chosen_backend_port="$(choose_backend_port "${BACKEND_PORT}")"
+    if [ -z "${chosen_backend_port}" ]; then
+      fail "Could not find a free backend port. Set BACKEND_PORT manually and retry."
+    fi
+    if [ "${chosen_backend_port}" != "${BACKEND_PORT}" ]; then
+      warn "Backend port ${BACKEND_PORT} is unavailable. Falling back to ${chosen_backend_port}."
+      BACKEND_PORT="${chosen_backend_port}"
     fi
   fi
 
-  npx next dev --webpack -p "${FRONTEND_PORT}" -H 127.0.0.1 &
-  FRONTEND_PID=$!
+  clear_port "${FRONTEND_PORT}" "frontend"
+  export NEXT_PUBLIC_API_URL="http://127.0.0.1:${BACKEND_PORT}"
+  export PURVEX_QUIET_RUNTIME=1
+  info "Starting API (FastAPI on port ${BACKEND_PORT})…"
+  start_backend
+  if ! wait_for_backend_ready; then
+    fail "API did not become ready at http://127.0.0.1:${BACKEND_PORT}/health"
+  fi
+  info "API ready."
+  bootstrap_admin
+  info "Starting web app (Next.js dev on port ${FRONTEND_PORT})…"
+  start_frontend_dev
+  unset PURVEX_QUIET_RUNTIME
+
+  print_urls "http://127.0.0.1:${BACKEND_PORT}" "http://127.0.0.1:${FRONTEND_PORT}"
+
+  wait
 }
 
 run_start() {
@@ -410,7 +472,7 @@ run_start() {
   check_node
   load_env
   banner_line
-  printf "  ${BOLD}PurveX${RESET}  ${DIM}starting environment…${RESET}\n"
+  printf "  ${BOLD}PurveX${RESET}  ${DIM}starting production build…${RESET}\n"
   banner_line
   runtime_summary
   if [ -f "${ROOT_DIR}/.env" ]; then
@@ -483,14 +545,12 @@ run_rebuild() {
     setup_backend
   fi
 
-  # Frontend: clean + rebuild
+  # Frontend: clean + rebuild production bundle
   info "Rebuilding frontend..."
   cd "${FRONTEND_DIR}"
-  if [ -d ".next" ]; then
-    rm -rf .next
-    info "Cleared .next cache."
-  fi
+  rm -rf .next
   npm install
+  info "Building production bundle..."
   npx next build --webpack
   info "Rebuild complete. Run: ./scripts/purvex.sh --start"
 }
@@ -504,7 +564,8 @@ PurveX — Detection Validation Platform
 Usage: ./scripts/purvex.sh <command>
 
 Commands:
-  --start     Start the backend (FastAPI) and frontend (Next.js)
+  --start     Start backend + frontend (production build)
+  --dev       Start backend + frontend (dev mode with hot reload)
   --setup     Install Python venv, pip deps, and npm deps
   --rebuild   Reinstall deps, clear caches, rebuild frontend
   --help      Show this help
@@ -516,7 +577,8 @@ Environment variables:
 
 Examples:
   ./scripts/purvex.sh --setup            # First-time setup
-  ./scripts/purvex.sh --start            # Daily development
+  ./scripts/purvex.sh --start            # Production build
+  ./scripts/purvex.sh --dev              # Development with hot reload
   FRONTEND_PORT=3000 ./scripts/purvex.sh --start
 EOF
 }
@@ -525,6 +587,7 @@ EOF
 
 case "${1:-}" in
   --start)   run_start   ;;
+  --dev)     run_dev     ;;
   --setup)   run_setup   ;;
   --rebuild) run_rebuild ;;
   --help|-h) show_help   ;;
