@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, useEffect } from "react";
-import { loadPermissions, loadRoles, hasPermission, hasRole, Permission, Role, clearPermissionCache } from "@/lib/permissions";
+import { useEffect, useMemo, useState } from "react";
+import { loadPermissions, loadRoles, Permission, Role, clearPermissionCache } from "@/lib/permissions";
 
 /**
  * React hook for checking user permissions and roles.
@@ -47,7 +47,7 @@ export function usePermissions() {
     fetchPermissions();
   }, []);
 
-  return {
+  return useMemo(() => ({
     permissions,
     roles,
     loading,
@@ -104,6 +104,6 @@ export function usePermissions() {
         console.error("Failed to refresh permissions:", err);
       }
     },
-  };
+  }), [permissions, roles, loading, error]);
 }
 

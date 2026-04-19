@@ -55,28 +55,38 @@ async def list_audit_events(
         )
     
     # Build query with filters
-    query = select(models.AuditEvent)
+    org_id = require_org_id(current_user)
+    query = select(models.AuditEvent).where(
+        or_(
+            models.AuditEvent.user_id.is_(None),
+            models.AuditEvent.user_id.in_(
+                select(models.User.id).where(models.User.organization_id == org_id)
+            ),
+        )
+    )
     
     # Apply filters
     filters = []
     
     if action:
-        filters.append(models.AuditEvent.action.ilike(f"%{action}%"))
-    
+        safe_action = action.replace("%", r"\%").replace("_", r"\_")
+        filters.append(models.AuditEvent.action.ilike(f"%{safe_action}%", escape="\\"))
+
     if resource_type:
         filters.append(models.AuditEvent.resource_type == resource_type)
-    
+
     if user_id:
         filters.append(models.AuditEvent.user_id == user_id)
-    
+
     if start_date:
         filters.append(models.AuditEvent.created_at >= start_date)
-    
+
     if end_date:
         filters.append(models.AuditEvent.created_at <= end_date)
-    
+
     if search:
-        filters.append(models.AuditEvent.details.ilike(f"%{search}%"))
+        safe_search = search.replace("%", r"\%").replace("_", r"\_")
+        filters.append(models.AuditEvent.details.ilike(f"%{safe_search}%", escape="\\"))
     
     if filters:
         query = query.where(and_(*filters))
@@ -108,9 +118,13 @@ async def get_audit_stats(
     cutoff_date = datetime.utcnow() - timedelta(days=days)
     
     # Get total events
+    org_id = require_org_id(current_user)
+    org_user_ids = select(models.User.id).where(models.User.organization_id == org_id)
+
     total_result = await db.execute(
         select(models.AuditEvent)
         .where(models.AuditEvent.created_at >= cutoff_date)
+        .where(or_(models.AuditEvent.user_id.is_(None), models.AuditEvent.user_id.in_(org_user_ids)))
     )
     total_events = len(total_result.scalars().all())
     
@@ -121,6 +135,7 @@ async def get_audit_stats(
             models.AuditEvent.created_at
         )
         .where(models.AuditEvent.created_at >= cutoff_date)
+        .where(or_(models.AuditEvent.user_id.is_(None), models.AuditEvent.user_id.in_(org_user_ids)))
     )
     actions = {}
     for row in actions_result.all():
@@ -134,6 +149,7 @@ async def get_audit_stats(
             models.AuditEvent.created_at
         )
         .where(models.AuditEvent.created_at >= cutoff_date)
+        .where(or_(models.AuditEvent.user_id.is_(None), models.AuditEvent.user_id.in_(org_user_ids)))
     )
     resources = {}
     for row in resources_result.all():
@@ -147,6 +163,7 @@ async def get_audit_stats(
             models.AuditEvent.created_at
         )
         .where(models.AuditEvent.created_at >= cutoff_date)
+        .where(or_(models.AuditEvent.user_id.is_(None), models.AuditEvent.user_id.in_(org_user_ids)))
     )
     users = {}
     for row in users_result.all():

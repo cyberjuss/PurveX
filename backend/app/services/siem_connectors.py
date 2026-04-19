@@ -184,6 +184,10 @@ class SplunkConnector:
                     "last_run_at": content.get("last_run"),
                     "query": content.get("search"),
                     "evidence_url": self._build_search_link(entry.get("name") or ""),
+                    "description": content.get("description"),
+                    # ESCU annotations expose MITRE mappings as a JSON string
+                    "annotations": content.get("action.correlationsearch.annotations"),
+                    "metadata": content.get("action.correlationsearch.metadata"),
                 }
             )
         return rules
@@ -450,6 +454,242 @@ class SentinelConnector:
                     "last_run_at": props.get("lastModifiedUtc"),
                     "query": props.get("query"),
                     "evidence_url": None,
+                    "description": props.get("description"),
+                    # Sentinel exposes MITRE mappings as native arrays on the rule
+                    "tactics": props.get("tactics") or [],
+                    "techniques": props.get("techniques") or [],
                 }
             )
         return rules
+
+
+class ElasticConnector:
+    """Connector for Elastic Security (Kibana Detection Engine).
+
+    Auth supports either an API key (header `Authorization: ApiKey <key>`) or
+    HTTP basic via username/password. Defaults assume the user has already
+    enabled the Detection Engine and that signals land in the standard
+    `.alerts-security.alerts-default` data stream.
+    """
+
+    def __init__(self, base_url: str, credentials: Dict[str, Any]):
+        self.base_url = (base_url or "").rstrip("/")
+        self.credentials = credentials
+        self.timeout = float(credentials.get("timeout_seconds", 15))
+        self.verify_ssl = _as_bool(credentials.get("verify_ssl"), default=True)
+        self.signals_index = credentials.get("signals_index") or ".alerts-security.alerts-default"
+        self.events_index = credentials.get("events_index") or "logs-*"
+
+    def _auth_headers(self) -> Dict[str, str]:
+        headers = {"kbn-xsrf": "purvex", "Content-Type": "application/json"}
+        api_key = self.credentials.get("api_key") or self.credentials.get("token")
+        if api_key:
+            headers["Authorization"] = f"ApiKey {api_key}"
+        return headers
+
+    def _basic_auth(self) -> Optional[Tuple[str, str]]:
+        if self.credentials.get("api_key") or self.credentials.get("token"):
+            return None
+        username = self.credentials.get("username")
+        password = self.credentials.get("password")
+        if username and password:
+            return (username, password)
+        return None
+
+    async def _kibana_request(
+        self,
+        method: str,
+        path: str,
+        *,
+        params: Optional[Dict[str, Any]] = None,
+        json_body: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        if not self.base_url:
+            raise ValueError("Missing Elastic/Kibana base URL")
+        url = f"{self.base_url}{path}"
+        async with httpx.AsyncClient(timeout=self.timeout, verify=self.verify_ssl) as client:
+            resp = await client.request(
+                method,
+                url,
+                headers=self._auth_headers(),
+                auth=self._basic_auth(),
+                params=params,
+                json=json_body,
+            )
+            resp.raise_for_status()
+            if not resp.content:
+                return {}
+            try:
+                return resp.json()
+            except Exception:
+                return {}
+
+    async def health(self) -> Dict[str, Any]:
+        try:
+            data = await self._kibana_request("GET", "/api/status")
+            status_value = (data.get("status", {}) or {}).get("overall", {}).get("level") or "unknown"
+            return {
+                "status": "connected" if status_value in {"available", "ok", "green"} else "degraded",
+                "auth_status": "ok",
+                "message": f"Kibana status: {status_value}",
+            }
+        except httpx.HTTPStatusError as exc:
+            return {
+                "status": "error",
+                "auth_status": "failed" if exc.response.status_code in {401, 403} else "error",
+                "message": f"HTTP {exc.response.status_code}",
+            }
+        except Exception as exc:
+            return {"status": "error", "auth_status": "failed", "message": str(exc)}
+
+    async def get_rules(self, limit: int) -> List[Dict[str, Any]]:
+        limit = _limit(limit, 1, 500)
+        data = await self._kibana_request(
+            "GET",
+            "/api/detection_engine/rules/_find",
+            params={"per_page": str(limit), "page": "1"},
+        )
+        rules: List[Dict[str, Any]] = []
+        for item in data.get("data", []) or []:
+            threats = item.get("threat") or []
+            techniques: List[str] = []
+            for threat in threats:
+                for technique in threat.get("technique", []) or []:
+                    tech_id = technique.get("id")
+                    if tech_id:
+                        techniques.append(tech_id)
+                    for sub in technique.get("subtechnique", []) or []:
+                        sub_id = sub.get("id")
+                        if sub_id:
+                            techniques.append(sub_id)
+            rules.append(
+                {
+                    "rule_id": item.get("rule_id") or item.get("id"),
+                    "name": item.get("name"),
+                    "enabled": item.get("enabled"),
+                    "severity": item.get("severity"),
+                    "schedule": item.get("interval"),
+                    "last_run_at": (item.get("execution_summary") or {})
+                    .get("last_execution", {})
+                    .get("date"),
+                    "query": item.get("query"),
+                    "evidence_url": None,
+                    "description": item.get("description"),
+                    "techniques": techniques,
+                }
+            )
+        return rules
+
+    async def get_alerts(self, limit: int) -> List[Dict[str, Any]]:
+        limit = _limit(limit, 1, 200)
+        body = {
+            "size": limit,
+            "sort": [{"@timestamp": {"order": "desc"}}],
+            "query": {"match_all": {}},
+        }
+        data = await self._kibana_request(
+            "POST",
+            f"/api/console/proxy?path=/{self.signals_index}/_search&method=POST",
+            json_body=body,
+        )
+        hits = (data.get("hits") or {}).get("hits", []) or []
+        alerts: List[Dict[str, Any]] = []
+        for hit in hits:
+            src = hit.get("_source", {}) or {}
+            kibana_alert = src.get("kibana.alert") or {}
+            rule = kibana_alert.get("rule") or src.get("signal", {}).get("rule") or {}
+            alerts.append(
+                {
+                    "alert_id": hit.get("_id"),
+                    "rule_id": rule.get("rule_id") or rule.get("id"),
+                    "rule_name": rule.get("name"),
+                    "severity": rule.get("severity") or kibana_alert.get("severity"),
+                    "status": kibana_alert.get("workflow_status") or "open",
+                    "fired_at": src.get("@timestamp"),
+                    "last_seen_at": src.get("@timestamp"),
+                    "source": "elastic",
+                    "raw_event": _safe_text(json.dumps(src, default=str)),
+                    "evidence_url": None,
+                }
+            )
+        return alerts
+
+    async def get_events(self, limit: int) -> List[Dict[str, Any]]:
+        limit = _limit(limit, 1, 200)
+        body = {
+            "size": limit,
+            "sort": [{"@timestamp": {"order": "desc"}}],
+            "query": {"match_all": {}},
+        }
+        data = await self._kibana_request(
+            "POST",
+            f"/api/console/proxy?path=/{self.events_index}/_search&method=POST",
+            json_body=body,
+        )
+        hits = (data.get("hits") or {}).get("hits", []) or []
+        events: List[Dict[str, Any]] = []
+        for hit in hits:
+            src = hit.get("_source", {}) or {}
+            host = (src.get("host") or {}).get("name") or src.get("agent", {}).get("hostname")
+            user = (src.get("user") or {}).get("name")
+            events.append(
+                {
+                    "event_id": hit.get("_id"),
+                    "event_time": src.get("@timestamp"),
+                    "severity": (src.get("event") or {}).get("severity"),
+                    "source": "elastic",
+                    "host": host,
+                    "user": user,
+                    "action": (src.get("event") or {}).get("action"),
+                    "raw_event": _safe_text(json.dumps(src, default=str)),
+                    "evidence_url": None,
+                }
+            )
+        return events
+
+    async def get_evidence(
+        self,
+        *,
+        earliest: str,
+        latest: str,
+        host: Optional[str] = None,
+        user: Optional[str] = None,
+        dest: Optional[str] = None,
+        src: Optional[str] = None,
+        limit: int = 50,
+    ) -> Tuple[List[Dict[str, Any]], Optional[str]]:
+        limit = _limit(limit, 1, 200)
+        filters: List[Dict[str, Any]] = [
+            {"range": {"@timestamp": {"gte": earliest, "lte": latest}}}
+        ]
+        if host:
+            filters.append({"match_phrase": {"host.name": host}})
+        if user:
+            filters.append({"match_phrase": {"user.name": user}})
+        body = {
+            "size": limit,
+            "sort": [{"@timestamp": {"order": "desc"}}],
+            "query": {"bool": {"filter": filters}},
+        }
+        data = await self._kibana_request(
+            "POST",
+            f"/api/console/proxy?path=/{self.events_index}/_search&method=POST",
+            json_body=body,
+        )
+        hits = (data.get("hits") or {}).get("hits", []) or []
+        items: List[Dict[str, Any]] = []
+        for hit in hits:
+            row = hit.get("_source", {}) or {}
+            items.append(
+                {
+                    "event_time": row.get("@timestamp"),
+                    "host": (row.get("host") or {}).get("name"),
+                    "user": (row.get("user") or {}).get("name"),
+                    "dest": (row.get("destination") or {}).get("ip"),
+                    "src": (row.get("source") or {}).get("ip"),
+                    "signature": (row.get("event") or {}).get("action"),
+                    "sourcetype": (row.get("event") or {}).get("dataset"),
+                    "index": hit.get("_index"),
+                }
+            )
+        return items, None

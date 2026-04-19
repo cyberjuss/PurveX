@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status, Query, Request
 from fastapi.responses import FileResponse
-from sqlalchemy import select, and_, func
+from sqlalchemy import select, and_, delete, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..db import get_db
@@ -310,9 +310,17 @@ async def download_report(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Report file not found"
         )
-    
+
+    # SECURITY: Prevent path traversal — resolved path must be inside REPORTS_DIR
+    resolved = Path(report.file_path).resolve()
+    if not resolved.is_relative_to(REPORTS_DIR.resolve()):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied"
+        )
+
     return FileResponse(
-        report.file_path,
+        str(resolved),
         media_type="application/pdf",
         filename=f"purvex_report_{report_id}.pdf"
     )
@@ -352,7 +360,12 @@ async def delete_report(
             pass  # Continue even if file deletion fails
     
     # Delete the report record
-    await db.delete(report)
+    await db.execute(
+        delete(Report).where(
+            Report.id == report.id,
+            Report.organization_id == org_id,
+        )
+    )
     await db.commit()
     
     return {"message": "Report deleted successfully"}

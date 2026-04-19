@@ -14,7 +14,7 @@ interface FirstRunOnboardingProps {
 
 export function FirstRunOnboarding({
   onDismiss,
-  headline = "Validate detections with confidence",
+  headline = "Validate detections, prove coverage, and show what to fix next.",
   nextActionHref = "/detections",
 }: FirstRunOnboardingProps) {
   const [dismissed, setDismissed] = useState(false);
@@ -48,9 +48,9 @@ export function FirstRunOnboarding({
       <CardContent className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
         <div className="space-y-2">
           {[
-            "Connect your SIEM or data source",
-            "Import or create detections to track",
-            "Run an atomic test to validate coverage",
+            "Connect your data source",
+            "Add detections to validate",
+            "Run your first validation",
           ].map((item) => (
             <div key={item} className="flex items-center gap-2 text-sm text-slate-700">
               <CheckCircle2 className="h-4 w-4 text-emerald-500" />
@@ -61,7 +61,7 @@ export function FirstRunOnboarding({
         <div className="flex flex-col gap-2 md:items-end md:min-w-[220px]">
           <Button className="w-full md:w-auto" asChild>
             <Link href={nextActionHref}>
-              Get started
+              Open detections
               <ArrowRight className="h-4 w-4 ml-2" />
             </Link>
           </Button>
@@ -70,8 +70,8 @@ export function FirstRunOnboarding({
             className="w-full md:w-auto text-xs h-8 border-slate-300 bg-white text-slate-700 hover:bg-slate-50"
             asChild
           >
-            <Link href="/tests/run">
-              Run first test
+            <Link href="/run-test">
+              Run first validation
               <Play className="h-4 w-4 ml-2" />
             </Link>
           </Button>
@@ -80,3 +80,4 @@ export function FirstRunOnboarding({
     </Card>
   );
 }
+

@@ -11,17 +11,12 @@ import {
   ShieldCheck,
   Sparkles,
   Settings as SettingsIcon,
-  Calendar,
-  CheckCircle2,
-  Circle,
-  ArrowRight,
   ChevronRight,
-  Zap,
-  Target,
+  ArrowRight,
+  AlertCircle,
 } from "lucide-react";
 import { PageContainer } from "@/components/layout/page-container";
 import { PageHeader } from "@/components/layout/page-header";
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import {
   getOrganizationSettings,
   getSiemConnections,
@@ -44,25 +39,13 @@ interface SettingsItem {
   category: "core" | "advanced" | "management";
 }
 
-const categoryTabs = [
-  { id: "all", label: "All Settings", icon: SettingsIcon },
-  { id: "core", label: "Platform Setup", icon: Target },
-  { id: "advanced", label: "Policy & Controls", icon: Zap },
-  { id: "management", label: "People & Governance", icon: Users },
-] as const;
-
 export default function SettingsPage() {
   const pathname = usePathname();
-  const [loading, setLoading] = useState(true);
   const [siemCount, setSiemCount] = useState<number | null>(null);
   const [runnerCount, setRunnerCount] = useState<number | null>(null);
-  const [runnerList, setRunnerList] = useState<any[]>([]);
-  const [runnerPage, setRunnerPage] = useState(0);
   const [hasPolicy, setHasPolicy] = useState(false);
   const [hasAiAssistant, setHasAiAssistant] = useState(false);
   const [orgName, setOrgName] = useState<string | null>(null);
-  const [activeCategory, setActiveCategory] = useState<"all" | "core" | "advanced" | "management">("all");
-  const [runnerDialogOpen, setRunnerDialogOpen] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -93,7 +76,6 @@ export default function SettingsPage() {
         }
         if (runners.status === "fulfilled") {
           setRunnerCount(runners.value.length);
-          setRunnerList(runners.value);
         }
         if (policy.status === "fulfilled") {
           setHasPolicy(true);
@@ -102,9 +84,8 @@ export default function SettingsPage() {
           setHasAiAssistant(true);
         }
       } finally {
-        if (!cancelled) {
-          setLoading(false);
-        }
+        // Intentionally no local loading gate here; the overview can render
+        // progressively as each settings domain resolves.
       }
     }
 
@@ -117,25 +98,12 @@ export default function SettingsPage() {
 
   const siemConfigured = (siemCount ?? 0) > 0;
   const runnersConfigured = (runnerCount ?? 0) > 0;
-  const runnersPerPage = 3;
-  const runnerTotalPages = Math.max(1, Math.ceil(runnerList.length / runnersPerPage));
-  const runnerPageStart = runnerPage * runnersPerPage;
-  const runnerPageItems = runnerList.slice(runnerPageStart, runnerPageStart + runnersPerPage);
-  const domainsTotal = 5;
-  const domainsConfigured =
-    (orgName ? 1 : 0) +
-    (siemConfigured ? 1 : 0) +
-    (runnersConfigured ? 1 : 0) +
-    (hasPolicy ? 1 : 0) +
-    (hasAiAssistant ? 1 : 0);
-  const openIssues = Math.max(domainsTotal - domainsConfigured, 0);
-
   const settingsItems: SettingsItem[] = [
     {
       id: "organization",
       href: "/settings/organization",
       label: "Organization",
-      description: "Org name, contact, time zone, and global defaults",
+      description: "Set the organization name, contact details, timezone, and default environments.",
       icon: Building2,
       color: "sky",
       status: orgName ? "configured" : "not_configured",
@@ -146,7 +114,7 @@ export default function SettingsPage() {
       id: "siem",
       href: "/settings/siem",
       label: "SIEM",
-      description: "Splunk and other SIEM connections plus marker patterns",
+      description: "Connect SIEM data sources and define how PurveX reads validation evidence.",
       icon: Shield,
       color: "emerald",
       status: siemConfigured ? "configured" : "not_configured",
@@ -157,533 +125,172 @@ export default function SettingsPage() {
     {
       id: "test-runner",
       href: "/settings/test-runner",
-      label: "Agent",
-      description: "Where and how atomic tests execute (lab, staging, prod)",
+      label: "Agents",
+      description: "Register validation agents and control where validations can run.",
       icon: ServerCog,
       color: "indigo",
       status: runnersConfigured ? "configured" : "not_configured",
-      statusText: runnersConfigured ? `${runnerCount} runner(s)` : "None yet",
+      statusText: runnersConfigured ? `${runnerCount} agent(s)` : "Not configured",
       count: runnerCount ?? 0,
       category: "core",
     },
     {
       id: "testing-policy",
       href: "/settings/testing-policy",
-      label: "Testing Policy & Safety",
-      description: "Business hours, prod guardrails, and marker conventions",
+      label: "Testing Policy",
+      description: "Set allowed environments, production guardrails, and data retention rules.",
       icon: ShieldCheck,
       color: "cyan",
       status: hasPolicy ? "configured" : "default",
-      statusText: hasPolicy ? "Guardrails set" : "Using defaults",
+      statusText: hasPolicy ? "Configured" : "Using defaults",
       category: "advanced",
     },
     {
       id: "ai-assistant",
       href: "/settings/ai-assistant",
       label: "AI Assistant",
-      description: "Control how PurveX-AI explains, tunes, and shares data",
+      description: "Configure OpenAI analysis, privacy controls, and assistant behavior.",
       icon: Sparkles,
       color: "amber",
       status: hasAiAssistant ? "configured" : "default",
-      statusText: hasAiAssistant ? "Configured" : "Off by default",
+      statusText: hasAiAssistant ? "Configured" : "Using defaults",
       category: "advanced",
     },
     {
       id: "users",
       href: "/settings/users",
-      label: "Users & Access",
-      description: "Manage user accounts and assign roles for access control",
+      label: "Users",
+      description: "Add workspace members, assign roles, and manage access.",
       icon: Users,
       color: "slate",
       category: "management",
     },
     {
-      id: "security",
-      href: "/settings/security",
-      label: "Security",
-      description: "Two-factor authentication and account security settings",
-      icon: Shield,
-      color: "sky",
-      category: "management",
-    },
-    {
       id: "audit",
       href: "/settings/audit",
-      label: "Audit Log",
-      description: "View and analyze all security-sensitive actions and administrative changes",
+      label: "Audit",
+      description: "Review configuration, access, and operational changes over time.",
       icon: Shield,
       color: "purple",
       category: "management",
     },
-    {
-      id: "schedules",
-      href: "/settings/schedules",
-      label: "Test Schedules",
-      description: "Schedule tests to run automatically at specified times or intervals",
-      icon: Calendar,
-      color: "indigo",
-      category: "management",
-    },
   ];
-
-  const filteredItems = activeCategory === "all" 
-    ? settingsItems 
-    : settingsItems.filter(item => item.category === activeCategory);
 
   const nextActions = settingsItems
     .filter(
       (item) =>
         item.status === "not_configured" || item.status === "default"
-    )
-    .slice(0, 2);
-
-  const coreItems = settingsItems.filter(item => item.category === "core");
-  const advancedItems = settingsItems.filter(item => item.category === "advanced");
-  const managementItems = settingsItems.filter(item => item.category === "management");
+    );
 
   return (
     <PageContainer maxWidth="full">
-        <div className="max-w-7xl mx-auto px-8 py-8 space-y-6">
-          <PageHeader
-            eyebrow="Platform configuration"
-            title="Settings"
-            subtitle="Tune platform setup, policies, and governance without leaving PurveX."
-            icon={<SettingsIcon className="h-5 w-5" />}
-          />
-          {/* Category Tabs - Unique Horizontal Design */}
-          <div className="flex items-center gap-3 mb-8 overflow-x-auto hide-scrollbar pb-2" data-tour="settings-categories">
-            {categoryTabs.map((cat) => {
-              const Icon = cat.icon;
-              const isActive = activeCategory === cat.id;
-              const count =
-                cat.id === "all"
-                  ? settingsItems.length
-                  : cat.id === "core"
-                    ? coreItems.length
-                    : cat.id === "advanced"
-                      ? advancedItems.length
-                      : managementItems.length;
-              return (
-                <button
-                  key={cat.id}
-                  onClick={() => setActiveCategory(cat.id as typeof activeCategory)}
-                  className={cn(
-                    "flex items-center gap-2 px-5 py-2.5 rounded-full border transition-all duration-200 whitespace-nowrap focus-visible:outline-none shadow-sm",
-                    isActive
-                      ? "bg-white text-slate-900 border-slate-300 font-semibold"
-                      : "bg-white text-slate-700 border-slate-200 hover:border-slate-300 hover:bg-slate-50"
-                  )}
-                  aria-label={`Filter settings by ${cat.label}`}
-                  aria-pressed={isActive}
-                >
-                  <Icon className={cn("h-4 w-4", isActive ? "text-slate-900" : "text-slate-500")} />
-                  <span className="font-display font-semibold">{cat.label}</span>
-                  <span className={cn(
-                    "px-2 py-0.5 rounded-full text-xs font-semibold border",
-                    isActive ? "bg-white text-slate-700 border-slate-300" : "bg-slate-50 text-slate-600 border-slate-200"
-                  )}>
-                    {count}
-                  </span>
-                </button>
-              );
-            })}
-          </div>
+      <div className="mx-auto max-w-7xl px-8 py-8 space-y-6">
+        <PageHeader
+          eyebrow="Platform configuration"
+          title="Settings"
+          subtitle="Configure the systems PurveX depends on, who can use them, and how validation should run."
+          icon={<SettingsIcon className="h-5 w-5" />}
+        />
 
-          {/* Main Content Grid - Unique 3-Column Layout */}
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
-            {/* Left Column - Core Settings */}
-            <div className="lg:col-span-2 space-y-6">
-              {/* Hero Section */}
-              <div className="p-8 rounded-3xl bg-white border border-slate-200">
-                <div className="flex items-start justify-between gap-6 mb-3">
-                  <div className="flex-1">
-                    <h2 className="text-2xl font-display font-bold text-slate-900 mb-3">
-                      Settings Workspace
-                    </h2>
-                    <p className="text-base font-body text-slate-600 leading-relaxed">
-                      Connect SIEMs, runners, policies, and AI to match your environment. Move from
-                      lab testing to production-ready coverage in one place.
+        {nextActions.length > 0 && (
+          <div className="rounded-2xl border border-[var(--stroke-soft)] bg-[var(--surface-card)] p-5 shadow-[var(--shadow-soft)]" data-tour="settings-next-actions">
+            <div className="flex items-start gap-3">
+              <div className="mt-0.5 rounded-lg bg-amber-50 p-2 text-amber-700 dark:bg-amber-500/10 dark:text-amber-300">
+                <AlertCircle className="h-4 w-4" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="flex flex-col gap-1 md:flex-row md:items-center md:justify-between">
+                  <div>
+                    <h2 className="text-sm font-display font-semibold text-[var(--surface-card-foreground)]">Needs attention</h2>
+                    <p className="text-sm text-[var(--surface-subtle-foreground)]">
+                      {nextActions.length} setting area{nextActions.length === 1 ? "" : "s"} still need review.
                     </p>
                   </div>
-                  {/* Progress Ring */}
-                  <div className="flex-shrink-0">
-                    <div className="relative w-20 h-20">
-                      <svg className="transform -rotate-90 w-20 h-20">
-                        <circle
-                          cx="40"
-                          cy="40"
-                          r="36"
-                          stroke="currentColor"
-                          strokeWidth="6"
-                          fill="none"
-                          className="text-slate-700"
-                        />
-                        <circle
-                          cx="40"
-                          cy="40"
-                          r="36"
-                          stroke="currentColor"
-                          strokeWidth="6"
-                          fill="none"
-                          strokeDasharray={`${(domainsConfigured / domainsTotal) * 226} 226`}
-                          className="text-slate-900 transition-all duration-500"
-                          strokeLinecap="round"
-                        />
-                      </svg>
-                      <div className="absolute inset-0 flex items-center justify-center">
-                        <div className="text-center">
-                          <div className="text-2xl font-display font-bold text-slate-900">{domainsConfigured}</div>
-                          <div className="text-xs font-body text-slate-600">/{domainsTotal}</div>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
                 </div>
-              </div>
-
-              {/* Settings Grid - Unique Card Design */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {filteredItems.map((item) => {
-                  const Icon = item.icon;
-                  const isActive = pathname === item.href;
-                  const statusColor =
-                    item.status === "configured"
-                      ? "emerald"
-                      : item.status === "default"
-                      ? "amber"
-                      : "slate";
-
-                  const cardClasses = cn(
-                    "group relative p-6 rounded-2xl transition-all duration-300",
-                    "hover:scale-[1.02] hover:shadow-lg border border-slate-200",
-                    isActive
-                      ? "bg-white shadow-md"
-                      : "bg-white hover:shadow-md"
-                  );
-
-                  const cardBody = (
-                    <>
-                      {/* Status Indicator Bar */}
-                      {item.status && (
-                        <div className={cn(
-                          "absolute top-0 left-0 right-0 h-1 rounded-t-2xl",
-                          item.status === "configured" ? "bg-emerald-500" :
-                          item.status === "default" ? "bg-amber-500" :
-                          "bg-slate-600"
-                        )} />
-                      )}
-                      
-                      <div className="flex items-start gap-4">
-                        <div className={cn(
-                          "h-14 w-14 rounded-xl flex items-center justify-center flex-shrink-0 shadow-sm transition-all duration-300",
-                          isActive
-                            ? item.color === "sky" ? "bg-sky-100" :
-                              item.color === "emerald" ? "bg-emerald-100" :
-                              item.color === "indigo" ? "bg-indigo-100" :
-                              item.color === "cyan" ? "bg-cyan-100" :
-                              item.color === "violet" ? "bg-violet-100" :
-                              item.color === "amber" ? "bg-amber-100" :
-                              item.color === "purple" ? "bg-purple-100" :
-                              "bg-slate-100"
-                            : "bg-slate-100 group-hover:bg-slate-200"
-                        )}>
-                          <Icon className={cn(
-                            "h-6 w-6 transition-colors",
-                            isActive
-                              ? item.color === "sky" ? "text-sky-600" :
-                                item.color === "emerald" ? "text-emerald-600" :
-                                item.color === "indigo" ? "text-indigo-600" :
-                                item.color === "cyan" ? "text-cyan-600" :
-                                item.color === "violet" ? "text-violet-600" :
-                                item.color === "amber" ? "text-amber-600" :
-                                item.color === "purple" ? "text-purple-600" :
-                                "text-slate-600"
-                              : "text-slate-500 group-hover:text-slate-600"
-                          )} />
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center justify-between gap-2 mb-2">
-                            <h3 className={cn(
-                              "text-lg font-display font-bold truncate",
-                              isActive ? "text-slate-900" : "text-slate-900 group-hover:text-slate-900"
-                            )}>
-                              {item.label}
-                            </h3>
-                            {item.status && (
-                              <div className={cn(
-                                "h-2 w-2 rounded-full flex-shrink-0",
-                                item.status === "configured" ? "bg-emerald-400" :
-                                item.status === "default" ? "bg-amber-400" :
-                                "bg-slate-500"
-                              )} />
-                            )}
-                          </div>
-                          <p className="text-sm font-body text-slate-600 line-clamp-2 mb-3">
-                            {item.description}
-                          </p>
-                          {item.statusText && (
-                            <div className={cn(
-                              "inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold",
-                              item.status === "configured" ? "bg-emerald-50 text-emerald-700" :
-                              item.status === "default" ? "bg-amber-50 text-amber-700" :
-                              "bg-slate-100 text-slate-600"
-                            )}>
-                              {item.statusText}
-                            </div>
-                          )}
-                        </div>
-                        <ChevronRight className={cn(
-                          "h-5 w-5 flex-shrink-0 transition-all",
-                          isActive ? "text-sky-600" : "text-slate-400 group-hover:text-slate-600"
-                        )} />
-                      </div>
-                    </>
-                  );
-
-                  if (item.id === "test-runner") {
-                    return (
-                      <button
-                        key={item.id}
-                        type="button"
-                        data-tour={`settings-${item.id}`}
-                        onClick={() => setRunnerDialogOpen(true)}
-                        className={cardClasses}
-                      >
-                        {cardBody}
-                      </button>
-                    );
-                  }
-
-                  return (
-                    <Link key={item.id} href={item.href} data-tour={`settings-${item.id}`} className={cardClasses}>
-                      {cardBody}
-                    </Link>
-                  );
-                })}
-              </div>
-            </div>
-
-            {/* Right Column - Quick Actions & Stats */}
-            <div className="space-y-6">
-              {/* Next Actions */}
-              {nextActions.length > 0 && (
-                <div className="p-6 rounded-2xl bg-white border border-slate-200" data-tour="settings-next-actions">
-                  <div className="flex items-center gap-2 mb-4">
-                    <Zap className="h-5 w-5 text-amber-600" />
-                    <h3 className="text-lg font-display font-bold text-slate-900">Next Actions</h3>
-                  </div>
-                  <p className="text-sm font-body text-slate-600 mb-4">
-                    Complete these to improve test reliability
-                  </p>
-                  <div className="space-y-3">
-                    {nextActions.map((action) => {
-                      const Icon = action.icon;
-                      return (
-                        <Link
-                          key={action.id}
-                          href={action.href}
-                          className="group flex items-center gap-3 p-4 rounded-xl bg-white hover:bg-slate-50 transition-all duration-200 border border-slate-200"
-              >
-                          <div className={cn(
-                            "h-10 w-10 rounded-lg flex items-center justify-center flex-shrink-0",
-                            action.color === "sky" ? "bg-sky-100" :
-                            action.color === "emerald" ? "bg-emerald-100" :
-                            action.color === "indigo" ? "bg-indigo-100" :
-                            "bg-slate-100"
-                          )}>
-                            <Icon className={cn(
-                              "h-5 w-5",
-                              action.color === "sky" ? "text-sky-600" :
-                              action.color === "emerald" ? "text-emerald-600" :
-                              action.color === "indigo" ? "text-indigo-600" :
-                              "text-slate-600"
-                            )} />
-                          </div>
-                          <div className="flex-1 min-w-0">
-                            <h4 className="text-sm font-display font-semibold text-slate-900 truncate">
-                              {action.label}
-                            </h4>
-                          </div>
-                          <ArrowRight className="h-4 w-4 text-slate-400 group-hover:text-slate-600 transition-colors" />
-                        </Link>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
-
-              {/* Quick Stats */}
-              <div className="p-6 rounded-2xl bg-white border border-slate-200">
-                <h3 className="text-lg font-display font-bold text-slate-900 mb-4">Progress</h3>
-                <div className="space-y-4">
-                  <div className="flex items-center justify-between">
-                    <span className="text-sm font-body text-slate-600">Configured</span>
-                    <div className="flex items-center gap-2">
-                      <CheckCircle2 className="h-4 w-4 text-emerald-600" />
-                      <span className="text-xl font-display font-bold text-slate-900">{domainsConfigured}</span>
-                    </div>
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <span className="text-sm font-body text-slate-600">Remaining</span>
-                    <div className="flex items-center gap-2">
-                      <Circle className="h-4 w-4 text-amber-600" />
-                      <span className="text-xl font-display font-bold text-slate-900">{openIssues}</span>
-                    </div>
-                  </div>
-                  <div className="pt-4 border-t border-slate-200">
-                    <div className="flex items-center justify-between mb-2">
-                      <span className="text-sm font-body text-slate-600">Completion</span>
-                      <span className="text-2xl font-display font-bold text-slate-900">
-                        {Math.round((domainsConfigured / domainsTotal) * 100)}%
-                </span>
-                    </div>
-                    <div className="h-2 bg-slate-200 rounded-full overflow-hidden">
-                      <div
-                        className="h-full bg-slate-900 transition-all duration-500"
-                        style={{ width: `${(domainsConfigured / domainsTotal) * 100}%` }}
-                      />
-                    </div>
-          </div>
-        </div>
-            </div>
-
-              {/* Status Pills */}
-              <div className="p-6 rounded-2xl bg-white border border-slate-200">
-                <h3 className="text-lg font-display font-bold text-slate-900 mb-4">Status</h3>
-                <div className="flex flex-wrap gap-2">
-                  {[
-                    { label: "Org", value: orgName || "Not named", status: orgName ? "configured" : "not_configured", color: "sky" },
-                    { label: "SIEM", value: siemConfigured ? `${siemCount} connected` : "Not configured", status: siemConfigured ? "configured" : "not_configured", color: "emerald" },
-                    { label: "Runners", value: runnersConfigured ? `${runnerCount} defined` : "None yet", status: runnersConfigured ? "configured" : "not_configured", color: "indigo" },
-                    { label: "Policy", value: hasPolicy ? "Guardrails set" : "Using defaults", status: hasPolicy ? "configured" : "default", color: "cyan" },
-                    { label: "AI", value: hasAiAssistant ? "Configured" : "Off", status: hasAiAssistant ? "configured" : "default", color: "amber" },
-                  ].map((pill) => (
-                    <div
-                      key={pill.label}
-                      className={cn(
-                        "inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-body",
-                        pill.status === "configured"
-                          ? pill.color === "sky" ? "bg-sky-50 text-sky-700" :
-                            pill.color === "emerald" ? "bg-emerald-50 text-emerald-700" :
-                            pill.color === "indigo" ? "bg-indigo-50 text-indigo-700" :
-                            pill.color === "cyan" ? "bg-cyan-50 text-cyan-700" :
-                            pill.color === "violet" ? "bg-violet-50 text-violet-700" :
-                            "bg-amber-50 text-amber-700"
-                          : pill.status === "default"
-                          ? "bg-amber-50 text-amber-700"
-                          : "bg-slate-100 text-slate-600"
-                      )}
+                <div className="mt-4 flex flex-col gap-2 md:flex-row md:flex-wrap">
+                  {nextActions.slice(0, 3).map((action) => (
+                    <Link
+                      key={action.id}
+                      href={action.href}
+                      className="inline-flex items-center gap-2 rounded-xl border border-[var(--stroke-soft)] bg-[var(--surface-elevated)] px-3 py-2 text-sm font-medium text-[var(--surface-card-foreground)] transition-colors hover:bg-[var(--interactive-surface-hover)]"
                     >
-                      <div
-                        className={cn(
-                          "h-1.5 w-1.5 rounded-full",
-                          pill.status === "configured"
-                            ? pill.color === "sky" ? "bg-sky-400" :
-                              pill.color === "emerald" ? "bg-emerald-400" :
-                              pill.color === "indigo" ? "bg-indigo-400" :
-                              pill.color === "cyan" ? "bg-cyan-400" :
-                              pill.color === "violet" ? "bg-violet-400" :
-                              "bg-amber-400"
-                            : pill.status === "default"
-                            ? "bg-amber-400"
-                            : "bg-slate-500"
-                        )}
-                      />
-                      <span className="font-semibold">{pill.label}:</span>
-                      <span>{pill.value}</span>
-          </div>
+                      <span>{action.label}</span>
+                      <span className="text-[var(--surface-subtle-foreground)]">{action.statusText}</span>
+                      <ArrowRight className="h-4 w-4 text-[var(--surface-subtle-foreground)]" />
+                    </Link>
                   ))}
                 </div>
               </div>
             </div>
+          </div>
+        )}
+
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+          {settingsItems.map((item) => {
+            const Icon = item.icon;
+            const isActive = pathname === item.href;
+
+            return (
+              <Link
+                key={item.id}
+                href={item.href}
+                data-tour={`settings-${item.id}`}
+                className={cn(
+                  "group relative rounded-2xl border border-[var(--stroke-soft)] bg-[var(--surface-card)] p-6 transition-all duration-200 hover:border-[var(--accent-line)] hover:shadow-[var(--shadow-soft)]",
+                  isActive && "border-[var(--accent-line)] shadow-[var(--shadow-soft)]"
+                )}
+              >
+                {item.status && (
+                  <div
+                    className={cn(
+                      "absolute left-0 right-0 top-0 h-1 rounded-t-2xl",
+                      item.status === "configured"
+                        ? "bg-emerald-500"
+                        : item.status === "default"
+                          ? "bg-amber-500"
+                          : "bg-[var(--surface-subtle-foreground)]"
+                    )}
+                  />
+                )}
+
+                <div className="flex items-start gap-4">
+                  <div className={cn(
+                    "flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-xl bg-[var(--surface-elevated)] text-[var(--surface-subtle-foreground)] transition-colors group-hover:bg-[var(--interactive-surface-hover)]",
+                    isActive && "bg-[var(--interactive-surface-hover)]"
+                  )}>
+                    <Icon className="h-5 w-5" />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center justify-between gap-3">
+                      <h3 className="truncate text-lg font-display font-semibold text-[var(--surface-card-foreground)]">
+                        {item.label}
+                      </h3>
+                      {item.statusText && (
+                        <span
+                          className={cn(
+                            "rounded-lg px-2.5 py-1 text-xs font-semibold",
+                            item.status === "configured"
+                              ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-300"
+                              : item.status === "default"
+                                ? "bg-amber-50 text-amber-700 dark:bg-amber-500/10 dark:text-amber-300"
+                                : "bg-[var(--surface-elevated)] text-[var(--surface-subtle-foreground)]"
+                          )}
+                        >
+                          {item.statusText}
+                        </span>
+                      )}
+                    </div>
+                    <p className="mt-2 text-sm leading-6 text-[var(--surface-subtle-foreground)]">
+                      {item.description}
+                    </p>
+                  </div>
+                  <ChevronRight className="mt-1 h-5 w-5 flex-shrink-0 text-[var(--surface-subtle-foreground)] transition-colors group-hover:text-[var(--surface-card-foreground)]" />
+                </div>
+              </Link>
+            );
+          })}
         </div>
       </div>
-      <Dialog open={runnerDialogOpen} onOpenChange={(open) => {
-        setRunnerDialogOpen(open);
-        if (open) {
-          setRunnerPage(0);
-        }
-      }}>
-        <DialogContent className="sm:max-w-[720px]">
-          <div className="rounded-2xl border border-slate-200 bg-gradient-to-br from-slate-50 via-white to-indigo-50 p-6">
-            <DialogHeader className="text-left">
-              <DialogTitle className="text-2xl font-display font-bold text-slate-900">Runners</DialogTitle>
-              <DialogDescription className="text-sm text-slate-600">
-                Live runner configurations that execute atomic tests in your environments.
-              </DialogDescription>
-            </DialogHeader>
-            <div className="mt-5">
-              {runnerList.length === 0 ? (
-                <div className="text-sm text-slate-600">No runners configured yet.</div>
-              ) : (
-                <div className="space-y-3">
-                  {runnerPageItems.map((runner) => (
-                    <div
-                      key={runner.id ?? `${runner.hostname}-${runner.environment_name}`}
-                      className="flex items-center justify-between gap-4 rounded-2xl border border-slate-200 bg-white px-5 py-4 shadow-sm"
-                    >
-                      <div className="min-w-0">
-                        <div className="text-base font-semibold text-slate-900 truncate">
-                          {runner.hostname || `Runner ${runner.id ?? ""}`}
-                        </div>
-                        <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-slate-600">
-                          <span className="inline-flex items-center rounded-full bg-slate-100 px-2.5 py-1 font-semibold text-slate-700">
-                            {runner.environment_name || "Unknown environment"}
-                          </span>
-                          <span className="inline-flex items-center rounded-full bg-indigo-100 px-2.5 py-1 font-semibold text-indigo-700">
-                            {runner.runner_type === "SSH" ? "Agent" : (runner.runner_type || "Runner")}
-                          </span>
-                        </div>
-                      </div>
-                      <div className="text-xs font-semibold text-slate-600">
-                        {runner.username ? `${runner.username}@${runner.port || 22}` : `Port ${runner.port || 22}`}
-                      </div>
-                    </div>
-                  ))}
-                  {runnerTotalPages > 1 && (
-                    <div className="flex items-center justify-between gap-2">
-                      <button
-                        type="button"
-                        className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed"
-                        aria-label="Previous page"
-                        title="Previous page"
-                        disabled={runnerPage === 0}
-                        onClick={() => setRunnerPage((prev) => Math.max(0, prev - 1))}
-                      >
-                        <ArrowRight className="h-3.5 w-3.5 rotate-180" />
-                        Prev
-                      </button>
-                      <div className="text-xs text-slate-500">
-                        Page {runnerPage + 1} of {runnerTotalPages}
-                      </div>
-                      <button
-                        type="button"
-                        className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed"
-                        aria-label="Next page"
-                        title="Next page"
-                        disabled={runnerPage >= runnerTotalPages - 1}
-                        onClick={() => setRunnerPage((prev) => Math.min(runnerTotalPages - 1, prev + 1))}
-                      >
-                        Next
-                        <ArrowRight className="h-3.5 w-3.5" />
-                      </button>
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-            <div className="mt-5 flex justify-end">
-              <Link
-                href="/settings/test-runner"
-                className="inline-flex items-center justify-center rounded-xl bg-white text-slate-900 px-4 py-2 text-sm font-semibold border border-slate-200 hover:bg-slate-50 transition-colors"
-                onClick={() => setRunnerDialogOpen(false)}
-              >
-                Setup runner
-              </Link>
-            </div>
-          </div>
-        </DialogContent>
-      </Dialog>
     </PageContainer>
   );
 }

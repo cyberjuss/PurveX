@@ -12,7 +12,7 @@ from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
-from sqlalchemy import select, text, inspect
+from sqlalchemy import or_, select, text, inspect
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from .middleware.security import SecurityHeadersMiddleware, RateLimitMiddleware, RequestLoggingMiddleware
 from .middleware.csrf import CSRFProtectionMiddleware
@@ -121,6 +121,8 @@ async def create_db_and_tables():
                     sync_conn.execute(text("ALTER TABLE environment_runner_configs ADD COLUMN owner_name VARCHAR(255)"))
                 if "owner_email" not in runner_columns:
                     sync_conn.execute(text("ALTER TABLE environment_runner_configs ADD COLUMN owner_email VARCHAR(255)"))
+                if "siem_connection_id" not in runner_columns:
+                    sync_conn.execute(text("ALTER TABLE environment_runner_configs ADD COLUMN siem_connection_id INTEGER"))
                 ai_columns = {col["name"] for col in inspector.get_columns("ai_assistant_settings")}
                 if "analysis_mode" not in ai_columns:
                     sync_conn.execute(text("ALTER TABLE ai_assistant_settings ADD COLUMN analysis_mode VARCHAR(50)"))
@@ -144,13 +146,26 @@ async def create_db_and_tables():
                     "UPDATE environment_runner_configs SET organization_id = (SELECT id FROM organizations LIMIT 1) "
                     "WHERE organization_id IS NULL"
                 ))
+                detection_columns = {col["name"] for col in inspector.get_columns("detections")}
+                if "siem_connection_id" not in detection_columns:
+                    sync_conn.execute(text("ALTER TABLE detections ADD COLUMN siem_connection_id INTEGER"))
+                if "external_id" not in detection_columns:
+                    sync_conn.execute(text("ALTER TABLE detections ADD COLUMN external_id VARCHAR(255)"))
+                if "content_hash" not in detection_columns:
+                    sync_conn.execute(text("ALTER TABLE detections ADD COLUMN content_hash VARCHAR(64)"))
+                if "source" not in detection_columns:
+                    sync_conn.execute(text("ALTER TABLE detections ADD COLUMN source VARCHAR(32) DEFAULT 'manual'"))
+                if "enabled_upstream" not in detection_columns:
+                    sync_conn.execute(text("ALTER TABLE detections ADD COLUMN enabled_upstream BOOLEAN"))
+                if "last_synced_at" not in detection_columns:
+                    sync_conn.execute(text("ALTER TABLE detections ADD COLUMN last_synced_at DATETIME"))
+                if "drift_detected_at" not in detection_columns:
+                    sync_conn.execute(text("ALTER TABLE detections ADD COLUMN drift_detected_at DATETIME"))
             await conn.run_sync(ensure_tests_endpoint)
         
-        # Automatically run RBAC migration on startup
-        # Temporarily disabled to debug startup hang
-        # from .services.rbac_migration import run_rbac_migration
-        # await run_rbac_migration()
-        logger.info("RBAC migration temporarily disabled for debugging")
+        # Automatically run RBAC migration on startup.
+        from .services.rbac_migration import run_rbac_migration
+        await run_rbac_migration()
         
         # SECURITY: Enforce strong JWT secret in production
         is_production = settings.DEPLOYMENT_ENV.lower() == "prod"
@@ -198,7 +213,10 @@ async def create_db_and_tables():
                 existing_admin = result.scalar_one_or_none()
                 if existing_admin:
                     # Verify password is not default (check if hash matches default password)
-                    if verify_password(settings.DEFAULT_ADMIN_PASSWORD, existing_admin.hashed_password):
+                    if settings.DEFAULT_ADMIN_PASSWORD and verify_password(
+                        settings.DEFAULT_ADMIN_PASSWORD,
+                        existing_admin.hashed_password,
+                    ):
                         logger.error(
                             f"SECURITY ERROR: Default admin credentials detected for user '{settings.DEFAULT_ADMIN_EMAIL}'. "
                             "This is a critical security risk in production."
@@ -212,6 +230,10 @@ async def create_db_and_tables():
         # Only create the default admin in non‑production environments. This avoids
         # shipping a well‑known username/password pair into real deployments.
         if settings.CREATE_DEFAULT_ADMIN and not is_production:
+            if not settings.DEFAULT_ADMIN_PASSWORD:
+                raise RuntimeError(
+                    "DEFAULT_ADMIN_PASSWORD must be set when CREATE_DEFAULT_ADMIN=true."
+                )
             async with async_sessionmaker() as session:
                 # Get or create default organization
                 org_result = await session.execute(select(models.Organization))
@@ -250,7 +272,10 @@ async def create_db_and_tables():
                     # Assign ADMINISTRATOR role to the admin user
                     from .services.rbac import Role as RoleEnum
                     role_result = await session.execute(
-                        select(models.Role).where(models.Role.name == RoleEnum.ADMINISTRATOR.value)
+                        select(models.Role).where(
+                            models.Role.name == RoleEnum.ADMINISTRATOR.value,
+                            or_(models.Role.organization_id == org.id, models.Role.organization_id.is_(None)),
+                        )
                     )
                     admin_role = role_result.scalar_one_or_none()
                     if admin_role:
@@ -418,22 +443,17 @@ async def create_db_and_tables():
             "PurveX API started with CORS_ORIGINS=%s", ",".join(settings.CORS_ORIGINS)
         )
         
-        # Check if Ollama is available (non-blocking, just log a warning if not)
-        try:
-            import httpx
-            ollama_url = os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434")
-            with httpx.Client(timeout=2.0) as client:
-                resp = client.get(f"{ollama_url}/api/tags")
-                if resp.status_code == 200:
-                    ollama_models = resp.json().get("models", [])
-                    model_names = [m.get("name", "unknown") for m in ollama_models]
-                    logger.info(f"✓ Ollama is available at {ollama_url} with models: {', '.join(model_names)}")
-                else:
-                    logger.warning(f"Ollama responded with status {resp.status_code} at {ollama_url}")
-        except Exception as e:
-            logger.warning(f"⚠ Ollama is not available at {ollama_url}. Watchtower AI features will not work. Error: {e}")
-            logger.info("  To start Ollama, run: ollama serve")
-            logger.info("  Or use the startup script: scripts\\start_ollama.ps1")
+        if settings.AI_PROVIDER.strip().lower() == "openai":
+            if settings.OPENAI_API_KEY:
+                logger.info(
+                    "OpenAI integration enabled with model %s",
+                    settings.OPENAI_MODEL,
+                )
+            else:
+                logger.warning(
+                    "OpenAI integration is selected but OPENAI_API_KEY is not configured. "
+                    "Watchtower AI will fall back to deterministic guidance."
+                )
         
         # Start the test scheduler worker
         from .services.test_scheduler import start_scheduler
@@ -470,8 +490,7 @@ async def create_db_and_tables():
         raise
     except Exception as e:
         logger.error(f"Error during startup: {e}", exc_info=True)
-        # Don't prevent server from starting if migration fails
-        # The server can still run, but RBAC might not be fully initialized
+        raise
 
 
 # Production environment check
@@ -495,6 +514,7 @@ app.add_middleware(SecurityHeadersMiddleware)
 if os.getenv("PURVEX_ENV", "dev").lower() == "prod":
     app.add_middleware(RateLimitMiddleware, max_requests=100, window_seconds=60)
 app.add_middleware(RequestLoggingMiddleware)
+app.add_middleware(CSRFProtectionMiddleware)
 
 # Production security middleware
 from .middleware.production import HTTPSEnforcementMiddleware, RequestSizeLimitMiddleware
@@ -504,10 +524,6 @@ if IS_PRODUCTION:
     max_request_size = int(os.getenv("MAX_REQUEST_SIZE_MB", "10")) * 1024 * 1024
     app.add_middleware(RequestSizeLimitMiddleware, max_request_size=max_request_size)
     logger.info(f"Production security enabled: HTTPS enforcement and {max_request_size / (1024*1024):.0f}MB request limit")
-
-# CSRF protection middleware (validates tokens for state-changing requests)
-from .middleware.csrf import CSRFProtectionMiddleware
-app.add_middleware(CSRFProtectionMiddleware)
 
 # CORS middleware (must be after security middleware)
 # SECURITY: Restrict CORS in production to specific origins

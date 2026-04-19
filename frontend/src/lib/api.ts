@@ -1,9 +1,9 @@
-const DEFAULT_API_URL = "http://127.0.0.1:8001";
-const LEGACY_DEFAULT_API_URLS = ["http://127.0.0.1:8000"];
-const FALLBACK_API_PORT =
-  process.env.NEXT_PUBLIC_API_PORT ||
-  process.env.NEXT_PUBLIC_API_FALLBACK_PORT ||
-  "8001";
+// In the browser, all API calls go through the Next.js same-origin proxy at /api/v1
+// so cookies stay same-origin. On the server (SSR/route handlers) we can hit the
+// backend directly.
+const PROXY_PREFIX = "/api/v1";
+const DEFAULT_API_URL = "http://localhost:8001";
+const LEGACY_DEFAULT_API_URLS = ["http://127.0.0.1:8001", "http://127.0.0.1:8000"];
 
 export interface Detection {
   id: string;
@@ -62,6 +62,7 @@ export interface Test {
 
 export type TestWithDetectionTitle = Test & {
   detection_title?: string | null;
+  atomic_command?: string | null;
 };
 
 export interface TestArtifact {
@@ -150,27 +151,21 @@ export type AIAssistantSettings = Record<string, any>;
 
 /**
  * Build a list of API base URLs to try.
- * - Prefer the browser's current host with the API port (covers localhost and LAN testing).
- * - Respect NEXT_PUBLIC_API_URL when provided (useful for production hosts or tunnels).
- * - Always fall back to 127.0.0.1 for single-machine workflows.
+ * - In the browser, stay on the same origin and let Next proxy requests.
+ * - On the server, allow an explicit backend URL override and otherwise fall
+ *   back to local backend addresses for single-machine development.
  */
 export function getApiBaseCandidates(): string[] {
-  const candidates = new Set<string>();
-
+  // Browser clients must stay same-origin to avoid split cookie/session state.
   if (typeof window !== "undefined") {
-    try {
-      const { protocol, hostname } = window.location;
-      const derived = `${protocol}//${hostname}:${FALLBACK_API_PORT}`;
-      candidates.add(derived.replace(/\/$/, ""));
-    } catch (err) {
-      logClientError("Failed to derive browser API origin", err);
-    }
+    return [PROXY_PREFIX];
   }
 
+  // Server-side (SSR): hit the backend directly.
+  const candidates = new Set<string>();
   if (process.env.NEXT_PUBLIC_API_URL) {
     candidates.add(process.env.NEXT_PUBLIC_API_URL.replace(/\/$/, ""));
   }
-
   candidates.add(DEFAULT_API_URL);
   for (const legacy of LEGACY_DEFAULT_API_URLS) {
     candidates.add(legacy);
@@ -237,19 +232,17 @@ function clearSessionAndRedirect(reason: "expired" | "unauthorized") {
  * Get or fetch CSRF token for the current user.
  * Tokens are cached in localStorage and refreshed as needed.
  */
+// SECURITY: CSRF token stored in memory only (not localStorage) to prevent XSS theft
+let _csrfToken: string | null = null;
+let _csrfTokenTime: number = 0;
+
 async function getCsrfToken(forceRefresh = false): Promise<string | null> {
   if (typeof window === "undefined") return null;
 
-  if (!forceRefresh) {
-    const cached = window.localStorage.getItem("purvex_csrf_token");
-    const cachedTime = window.localStorage.getItem("purvex_csrf_token_time");
-
-    // Token is valid for 1 hour, refresh if older
-    if (cached && cachedTime) {
-      const age = Date.now() - parseInt(cachedTime, 10);
-      if (age < 3600000) {
-        return cached;
-      }
+  if (!forceRefresh && _csrfToken) {
+    const age = Date.now() - _csrfTokenTime;
+    if (age < 3600000) {
+      return _csrfToken;
     }
   }
 
@@ -272,8 +265,8 @@ async function getCsrfToken(forceRefresh = false): Promise<string | null> {
           const data = await res.json();
           const csrfToken = data.csrf_token;
           if (csrfToken) {
-            window.localStorage.setItem("purvex_csrf_token", csrfToken);
-            window.localStorage.setItem("purvex_csrf_token_time", Date.now().toString());
+            _csrfToken = csrfToken;
+            _csrfTokenTime = Date.now();
             return csrfToken;
           }
         }
@@ -310,10 +303,6 @@ export async function apiFetch(path: string, options: RequestInit = {}) {
   const requiresCsrf = method !== "GET" && method !== "HEAD" && method !== "OPTIONS";
 
   if (typeof window !== "undefined") {
-    const token = window.localStorage.getItem("purvex_access_token");
-    if (token && !headers.Authorization) {
-      headers.Authorization = `Bearer ${token}`;
-    }
     // SECURITY: Add CSRF token for state-changing requests
     if (requiresCsrf) {
       const csrfToken = await getCsrfToken();
@@ -373,24 +362,43 @@ export async function apiFetch(path: string, options: RequestInit = {}) {
           }
 
           if (res.status === 401) {
+            // /auth/me is a probe — callers expect a plain throw so they can
+            // decide what to do (show login, etc.) without triggering a redirect.
+            if (path === "/auth/me") {
+              throw new Error(errorDetail);
+            }
+
             if (!isSilent) {
               logClientError(`API auth error ${res.status} on ${path}`, text);
             }
+
+            // For any other protected endpoint, a 401 means the user has no
+            // valid session cookie (missing, expired, revoked, or browser
+            // stripped it). Re-verify against /auth/me to distinguish between
+            // "endpoint-specific auth edge case" and "session is gone".
             let sessionValid = false;
             try {
               const sessionRes = await fetch(`${base}/auth/me`, {
                 credentials: "include",
+                cache: "no-store",
               });
               sessionValid = sessionRes.ok;
-            } catch (err) {
+            } catch {
               sessionValid = false;
             }
 
             if (!sessionValid) {
+              // Always bounce to /login — do NOT gate on a localStorage
+              // session hint, because a missing hint is exactly the state a
+              // freshly-loaded tab or cleared browser is in, and the user
+              // should still be sent to the login page instead of seeing a
+              // stuck "Not authenticated" error on the protected page.
               clearSessionAndRedirect("expired");
               throw new Error("Your session has expired. Please sign in again.");
             }
 
+            // /auth/me is OK but this endpoint returned 401 — surface the
+            // original error detail from the server.
             throw new Error(errorDetail);
           }
 
@@ -453,12 +461,14 @@ export async function apiFetch(path: string, options: RequestInit = {}) {
         return res.json();
       } catch (err) {
         lastNetworkError = err;
-        continue;
+        break;
       }
     }
   }
 
-  if (lastNetworkError && !isSilent) {
+  const expectedUnauthenticatedFinal = path === "/auth/me";
+
+  if (lastNetworkError && !isSilent && !expectedUnauthenticatedFinal) {
     logClientError(`All API base URL attempts failed for ${path}`, {
       attemptedBases,
       error: lastNetworkError,
@@ -640,10 +650,6 @@ export async function deleteTestSchedule(scheduleId: number): Promise<void> {
   });
 }
 
-export async function getMitreCoverage(): Promise<any[]> {
-  return [];
-}
-
 export async function getMitreTechniques(): Promise<MitreTechnique[]> {
   return apiFetch("/mitre/techniques", { cache: "no-store" });
 }
@@ -758,7 +764,7 @@ export async function complete2FASetup(token: string): Promise<{ message: string
   });
 }
 
-export async function verify2FAToken(token: string, twoFactorToken: string): Promise<{ verified: boolean; method: string; access_token?: string }> {
+export async function verify2FAToken(token: string, twoFactorToken: string): Promise<{ verified: boolean; method: string }> {
   return apiFetch("/auth/2fa/verify", {
     method: "POST",
     body: JSON.stringify({ token, two_factor_token: twoFactorToken }),
@@ -809,15 +815,20 @@ export async function getAtomicTests(params?: {
   platform?: string;
   limit?: number;
   offset?: number;
+  silent?: boolean;
 }): Promise<{ items: AtomicTestDefinition[]; total: number }> {
+  const { silent, ...queryParams } = params || {};
   const query = new URLSearchParams(
-    Object.entries(params || {}).filter(([, v]) => v !== undefined && v !== null) as [
+    Object.entries(queryParams).filter(([, v]) => v !== undefined && v !== null) as [
       string,
       string
     ][]
   ).toString();
 
-  return apiFetch(`/atomic/tests${query ? `?${query}` : ""}`, { cache: "no-store" });
+  return apiFetch(`/atomic/tests${query ? `?${query}` : ""}`, {
+    cache: "no-store",
+    headers: silent ? { "X-Purvex-Silent": "true" } : undefined,
+  });
 }
 
 export async function getAtomicTest(id: string): Promise<AtomicTestDefinition> {

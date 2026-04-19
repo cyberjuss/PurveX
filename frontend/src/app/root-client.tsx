@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect } from "react";
 import { usePathname } from "next/navigation";
 import Link from "next/link";
 import Image from "next/image";
@@ -8,21 +8,11 @@ import "./globals.css";
 import { Sidebar } from "@/components/layout/sidebar";
 import { TopHeader } from "@/components/layout/top-header";
 import { ToastProvider } from "@/components/ui/toast";
-import { LoadingSplash } from "@/components/loading-splash";
 import { cn } from "@/lib/utils";
 import { getApiBaseCandidates } from "@/lib/api";
-import { UnifiedPageHeader } from "@/components/layout/unified-page-header";
+import { PageHeader } from "@/components/layout/page-header";
 import { ThemeProvider } from "@/contexts/theme-context";
 import { Breadcrumbs } from "@/components/layout/breadcrumbs";
-
-const formatSegmentTitle = (value: string) => {
-  if (!value) return "Home";
-  return value
-    .split(/[-_]/g)
-    .filter(Boolean)
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(" ");
-};
 
 export default function RootClientLayout({
   children,
@@ -32,82 +22,78 @@ export default function RootClientLayout({
   const pathname = usePathname();
   const maxIdleMs = 60 * 60 * 1000;
   const [sidebarOpen, setSidebarOpen] = useState(true);
-  const [prevRoute, setPrevRoute] = useState<string | null>(null);
-  const [prevChildren, setPrevChildren] = useState<React.ReactNode | null>(null);
-  const lastChildrenRef = useRef<React.ReactNode | null>(null);
-  const prevPathRef = useRef<string | null>(null);
   const segments = pathname.split("/").filter(Boolean);
-  const firstSegment = segments[0] || "dashboard";
+  const firstSegment = segments[0] || "login";
   const heroMeta: Record<string, { label: string; title: string; subtitle?: string }> = {
     dashboard: {
       label: "DASHBOARD",
       title: "Security Operations",
-      subtitle: "Real-time visibility into your detection engineering",
+      subtitle: "Work with more certainty, move faster, and stop carrying the stress of not knowing whether your detections actually hold up.",
     },
     detections: {
       label: "DETECTIONS",
       title: "Detection Workspace",
-      subtitle: "Manage and validate your detection engineering portfolio",
+      subtitle: "Turn a messy backlog into a body of work you can trust, improve, and be proud to stand behind.",
     },
     tests: {
       label: "TESTS",
       title: "Tests",
-      subtitle: "Run, review, and tune detection tests",
+      subtitle: "Build the habit of proving your work, learning faster, and steadily raising your level as an operator.",
     },
     lab: {
       label: "LAB",
       title: "Lab",
-      subtitle: "Experiment safely and validate detection changes",
+      subtitle: "Experiment without fear, validate quickly, and create the kind of repetition that compounds into real mastery.",
     },
     settings: {
       label: "SETTINGS",
       title: "Settings",
-      subtitle: "Control data sources, runners, and platform policies",
+      subtitle: "Set up the systems that remove friction now so your future work feels calmer, cleaner, and more scalable.",
     },
     notifications: {
       label: "NOTIFICATIONS",
       title: "Notifications",
-      subtitle: "Recent activity across tests and detections",
+      subtitle: "See what needs your attention early, before uncertainty turns into drift, missed coverage, or lost time.",
     },
     reports: {
       label: "REPORTS",
       title: "Detection Effectiveness Reports",
-      subtitle: "Generate comprehensive PDF reports proving detection effectiveness",
+      subtitle: "Show progress clearly, prove impact decisively, and make your future opportunities easier to earn.",
     },
     about: {
       label: "ABOUT",
       title: "About PurveX",
-      subtitle: "PurveX is built for detection engineering teams that need clarity, speed, and confidence when validating security controls.",
+      subtitle: "This work is about changing the operator's life: less doubt, more control, stronger judgment, and a bigger future than burnout ever allows.",
     },
     contact: {
       label: "CONTACT",
       title: "Contact PurveX",
-      subtitle: "We would love to hear from you. Reach out for product questions, partnerships, or feedback.",
+      subtitle: "Reach out if you want this platform to help create a measurable shift in how your team works, improves, and grows.",
     },
     creators: {
       label: "CREATORS",
       title: "Creators",
-      subtitle: "We collaborate with practitioners and open communities to improve detection engineering.",
+      subtitle: "We build with people who care about elevating practitioners, not just shipping software.",
     },
     developers: {
       label: "DEVELOPERS",
       title: "Developers",
-      subtitle: "Extend PurveX through integrations, automations, and telemetry pipelines that keep detections current.",
+      subtitle: "Build the integrations and workflows that help security teams become sharper, faster, and more effective over time.",
     },
     press: {
       label: "PRESS",
       title: "Press",
-      subtitle: "Media inquiries, demos, and product background for the PurveX platform.",
+      subtitle: "The story is not the product itself. The story is what happens to people when better validation changes how they work and what they can become.",
     },
     "run-test": {
       label: "RUN TEST",
       title: "Run test",
-      subtitle: "Launch and monitor scoped validation runs with live status and telemetry.",
+      subtitle: "Create proof, remove guesswork, and turn each run into a step toward a stronger future operating posture.",
     },
     legal: {
       label: "LEGAL",
       title: "Legal",
-      subtitle: "Policies, terms, and disclosures for the PurveX platform.",
+      subtitle: "The guardrails behind a platform built to create trust, safety, and durable long-term value for the people using it.",
     },
   };
   const localHeaderSegments = new Set(["detections", "tests", "run-test", "notifications", "settings", "lab", "reports"]);
@@ -122,26 +108,6 @@ export default function RootClientLayout({
   useEffect(() => {
     setSidebarOpen(true);
   }, []);
-
-  useEffect(() => {
-    if (prevRoute === null) {
-      setPrevRoute(pathname);
-      prevPathRef.current = pathname;
-      lastChildrenRef.current = children;
-      return;
-    }
-    if (prevPathRef.current !== pathname) {
-      setPrevChildren(lastChildrenRef.current);
-      const timeout = setTimeout(() => {
-        setPrevChildren(null);
-      }, 240);
-      prevPathRef.current = pathname;
-      setPrevRoute(pathname);
-      lastChildrenRef.current = children;
-      return () => clearTimeout(timeout);
-    }
-    lastChildrenRef.current = children;
-  }, [pathname, prevRoute]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -163,7 +129,6 @@ export default function RootClientLayout({
     elements.forEach((el) => observer.observe(el));
     return () => observer.disconnect();
   }, [pathname, children]);
-  const lastSegment = segments[segments.length - 1] || firstSegment;
   const isLoginPage = pathname === "/login";
   const isFullBleedPage = ["/agent"].some((route) => pathname.startsWith(route));
   const isTopLevelRoute = segments.length <= 1;
@@ -186,18 +151,33 @@ export default function RootClientLayout({
   useEffect(() => {
     if (typeof window === "undefined") return;
 
+    const getRouteTitle = () => {
+      if (pathname.startsWith("/settings/organization")) return "PurveX | Settings | Organization";
+      if (pathname.startsWith("/settings/siem")) return "PurveX | Settings | SIEM";
+      if (pathname.startsWith("/settings/test-runner")) return "PurveX | Settings | Agents";
+      if (pathname.startsWith("/settings/testing-policy")) return "PurveX | Settings | Testing Policy";
+      if (pathname.startsWith("/settings/ai-assistant")) return "PurveX | Settings | AI Assistant";
+      if (pathname.startsWith("/settings/users")) return "PurveX | Settings | Users";
+      if (pathname.startsWith("/settings/audit")) return "PurveX | Settings | Audit";
+      if (pathname.startsWith("/tests/schedules")) return "PurveX | Tests | Schedules";
+      if (pathname.startsWith("/tests/audit")) return "PurveX | Tests | Audit";
+      if (pathname.startsWith("/tests/")) return "PurveX | Tests | Validation Run";
+      if (pathname.startsWith("/detections/") && pathname.endsWith("/events")) return "PurveX | Detections | Events";
+      if (pathname.startsWith("/detections/")) return "PurveX | Detections | Record";
+      return null;
+    };
+
     const titleMap: Record<string, string> = {
+      "/": "PurveX | Login",
       "/login": "PurveX | Login",
       "/dashboard": "PurveX | Dashboard",
       "/detections": "PurveX | Detections",
-      "/alerts": "PurveX | Events",
-      "/events": "PurveX | Events",
       "/tests": "PurveX | Tests",
       "/lab": "PurveX | Lab",
       "/settings": "PurveX | Settings",
       "/reports": "PurveX | Reports",
-      "/run-test": "PurveX | Run Test",
-      "/agent": "PurveX | Agent",
+      "/run-test": "PurveX | Run Validation",
+      "/agent": "PurveX | Watchtower",
       "/about": "PurveX | About",
       "/contact": "PurveX | Contact",
       "/creators": "PurveX | Creators",
@@ -209,12 +189,15 @@ export default function RootClientLayout({
     };
 
     const fallback = firstSegment ? `PurveX | ${firstSegment.charAt(0).toUpperCase()}${firstSegment.slice(1)}` : "PurveX";
-    document.title = titleMap[pathname] || fallback;
+    document.title = getRouteTitle() || titleMap[pathname] || fallback;
   }, [pathname, firstSegment]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
     if (isLoginPage) return;
+    if (!localStorage.getItem("purvex_seen_login") && !localStorage.getItem("purvex_username")) {
+      return;
+    }
 
     const lastAuthKey = "purvex_last_auth_check";
     const now = Date.now();
@@ -250,7 +233,7 @@ export default function RootClientLayout({
           return;
         }
         localStorage.setItem(lastAuthKey, String(Date.now()));
-      } catch (err) {
+      } catch {
         // Network or transient errors should not force a logout.
       }
     };
@@ -263,7 +246,7 @@ export default function RootClientLayout({
     return () => {
       window.removeEventListener("pageshow", handlePageShow);
     };
-  }, [isLoginPage, pathname]);
+  }, [isLoginPage, maxIdleMs, pathname]);
 
 
   // Ensure sidebar starts open post-hydration and handle splash/scroll restoration without inline scripts.
@@ -358,9 +341,8 @@ export default function RootClientLayout({
           </div>
       </div>
       <ThemeProvider>
-        <LoadingSplash />
           <ToastProvider>
-          <div className="flex min-h-screen w-screen bg-white text-slate-900">
+          <div className="flex min-h-screen w-screen bg-[var(--surface-shell)] text-[var(--surface-shell-foreground)]">
             <Sidebar
               open={sidebarOpen}
               onClose={() => setSidebarOpen(false)}
@@ -394,41 +376,32 @@ export default function RootClientLayout({
               </a>
               <main
                 id="main-content"
-                className="flex-1 min-w-0 bg-white text-slate-900 flex flex-col"
+                className="flex-1 min-w-0 flex flex-col bg-[var(--surface-page)] text-[var(--foreground)]"
               >
                 <div className="flex flex-col gap-5 px-6 pb-10 pt-8 sm:px-10 lg:px-14">
                   <div className="w-full max-w-7xl min-w-0 mx-auto flex flex-col gap-3">
                     {!isFullBleedPage && hero && firstSegment !== "login" && firstSegment !== "dashboard" && (
-                      <UnifiedPageHeader
+                      <PageHeader
                         title={hero.title}
                         subtitle={hero.subtitle}
                         className="mt-0.5 mb-2 pl-0.5"
                       />
                     )}
-                    <div className="min-h-0 flex flex-col route-transition-wrap">
-                      {prevChildren && (
-                        <div
-                          className="route-layer route-fade-out"
-                          style={{ position: "absolute", inset: 0 }}
-                          aria-hidden
-                        >
-                          {prevChildren}
-                        </div>
-                      )}
-                      <div className="route-layer route-fade-in stagger-children">{children}</div>
+                    <div className="min-h-0 flex flex-col">
+                      <div className="stagger-children">{children}</div>
                     </div>
                   </div>
                 </div>
               </main>
-              <footer className="border-t border-slate-200 bg-white">
-                <div className="flex h-24 w-full flex-col items-center justify-center gap-1 px-4 text-[11px] leading-tight text-slate-600 sm:px-6 lg:px-10">
+              <footer className="border-t border-[var(--stroke-soft)] bg-[var(--surface-elevated)] text-[var(--surface-elevated-foreground)]">
+                <div className="flex h-24 w-full flex-col items-center justify-center gap-1 px-4 text-[11px] leading-tight text-slate-600 dark:text-slate-400 sm:px-6 lg:px-10">
                   <span className="text-center font-semibold text-slate-800">© 2025 PurveX</span>
-                  <div className="flex flex-wrap items-center justify-center gap-x-3 gap-y-1 text-[11px] text-slate-600">
+                  <div className="flex flex-wrap items-center justify-center gap-x-3 gap-y-1 text-[11px] text-slate-600 dark:text-slate-400">
                     <Link href="/about" className="hover:text-indigo-600 hover:underline underline-offset-4">About</Link>
                     <Link href="/press" className="hover:text-indigo-600 hover:underline underline-offset-4">Press</Link>
                     <Link href="/legal/copyright" className="hover:text-indigo-600 hover:underline underline-offset-4">Copyright</Link>
                     <Link href="/contact" className="hover:text-indigo-600 hover:underline underline-offset-4">Contact</Link>
-                    <Link href="/legal/creators" className="hover:text-indigo-600 hover:underline underline-offset-4">Creators</Link>
+                    <Link href="/creators" className="hover:text-indigo-600 hover:underline underline-offset-4">Creators</Link>
                     <Link href="/legal/ads" className="hover:text-indigo-600 hover:underline underline-offset-4">Advertise</Link>
                     <Link href="/developers" className="hover:text-indigo-600 hover:underline underline-offset-4">Developers</Link>
                     <span className="text-slate-400">•</span>

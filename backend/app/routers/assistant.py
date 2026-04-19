@@ -3,13 +3,13 @@ from __future__ import annotations
 import os
 from typing import Literal, Optional
 
-import httpx
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from ..routers.auth import get_current_user
 from ..config import settings
 from ..db import get_db
+from ..services.ai_assistant import call_llm
 from ..utils.tenant import require_org_id
 from sqlalchemy import select, desc, func
 from .. import models
@@ -25,9 +25,14 @@ class AssistantRequest(BaseModel):
   # extend this with structured fields like `alert`, `detection`, `test`, etc.
   prompt: Optional[str] = Field(None, description="User message to send to the LLM.")
   action: Optional[str] = Field(None, description="Action ID for structured Watchtower analysis.")
+  context_scope: Optional[Literal["portfolio", "detection"]] = Field(
+    None,
+    description="Whether to prepend portfolio or detection-specific PurveX context to a freeform prompt.",
+  )
   detection_id: Optional[str] = None
   alert_id: Optional[int] = None
   force_demo: Optional[bool] = False
+  model_name: Optional[str] = Field(None, description="Optional model override for this request.")
 
 
 class AssistantResponse(BaseModel):
@@ -209,8 +214,39 @@ async def _build_detection_context(db, org_id: int, detection_id: Optional[str])
     context += f"Sample Events:\n{_truncate(artifact.siem_sample_events, 1500)}\n"
   return context
 
+async def _build_alert_context(db, org_id: int, alert_id: Optional[int]) -> str:
+  if not alert_id:
+    return ""
+
+  alert_result = await db.execute(
+    select(models.DetectionAlert).where(
+      models.DetectionAlert.organization_id == org_id,
+      models.DetectionAlert.id == alert_id,
+    )
+  )
+  alert = alert_result.scalar_one_or_none()
+  if not alert:
+    return ""
+
+  context = (
+    "[Alert Context]\n"
+    f"Alert ID: {alert.id}\n"
+    f"Name: {alert.name}\n"
+    f"Severity: {alert.severity}\n"
+    f"Time: {alert.time}\n"
+  )
+  if alert.host:
+    context += f"Host: {alert.host}\n"
+  if alert.query:
+    context += f"Alert Query:\n{_truncate(alert.query, 1200)}\n"
+  if alert.raw_event:
+    context += f"Raw Event:\n{_truncate(alert.raw_event, 1200)}\n"
+  if alert.test_id:
+    context += f"Linked Test ID: {alert.test_id}\n"
+  return context
+
 def _fallback_action_response(action: Optional[str], context: str) -> str:
-  # Minimal, deterministic fallback when Ollama is unavailable/slow.
+  # Minimal, deterministic fallback used when no external AI provider is enabled.
   lines = context.splitlines()
   total_det = next((l.split(": ", 1)[1] for l in lines if l.startswith("Total detections: ")), "Not provided")
   total_tests = next((l.split(": ", 1)[1] for l in lines if l.startswith("Total tests: ")), "Not provided")
@@ -243,35 +279,6 @@ async def _build_demo_context(db, org_id: int) -> str:
     return f"{portfolio}\n{detection}".strip()
   return os.getenv("PURVEX_DEMO_CONTEXT") or STATIC_DEMO_CONTEXT
 
-
-def _ollama_base_url() -> str:
-  return os.getenv("OLLAMA_BASE_URL") or settings.OLLAMA_API_BASE_URL
-
-def _ollama_model() -> str:
-  return os.getenv("OLLAMA_MODEL") or os.getenv("OLLAMA_MODEL_NAME") or settings.OLLAMA_MODEL_NAME
-
-def _ollama_options(is_action: bool = False) -> dict:
-  # Favor speed over long outputs for the Watchtower chat.
-  # These can be tuned via env vars without code changes.
-  def _get_int(name: str, default: int) -> int:
-    try:
-      return int(os.getenv(name, str(default)))
-    except ValueError:
-      return default
-
-  if is_action:
-    return {
-      "num_predict": _get_int("OLLAMA_NUM_PREDICT", 64),
-      "num_ctx": _get_int("OLLAMA_NUM_CTX", 512),
-      "temperature": float(os.getenv("OLLAMA_TEMPERATURE", "0.2")),
-      "top_p": float(os.getenv("OLLAMA_TOP_P", "0.9")),
-    }
-  return {
-    "num_predict": _get_int("OLLAMA_NUM_PREDICT", 256),
-    "num_ctx": _get_int("OLLAMA_NUM_CTX", 2048),
-    "temperature": float(os.getenv("OLLAMA_TEMPERATURE", "0.2")),
-    "top_p": float(os.getenv("OLLAMA_TOP_P", "0.9")),
-  }
 
 WATCHTOWER_SYSTEM_PROMPT = os.getenv(
   "WATCHTOWER_SYSTEM_PROMPT",
@@ -336,6 +343,27 @@ ACTION_SYSTEM_PROMPT = os.getenv(
 def _action_system_prompt() -> str:
   return f"{ACTION_SYSTEM_PROMPT}\n\n{PURVEX_KNOWLEDGE_PACK}"
 
+
+def _configured_ai_settings(ai_settings: Optional[models.AIAssistantSettings]) -> tuple[str, str, str]:
+  provider = (getattr(ai_settings, "provider", None) or settings.AI_PROVIDER or "OpenAI").strip()
+  model_name = (getattr(ai_settings, "model_name", None) or settings.OPENAI_MODEL).strip()
+  api_base_url = (getattr(ai_settings, "api_base_url", None) or settings.OPENAI_API_BASE_URL).strip()
+  return provider, model_name, api_base_url
+
+
+def _provider_key_hint(provider: str) -> str:
+  provider_l = (provider or "").strip().lower()
+  if provider_l == "deepseek":
+    return "DEEPSEEK_API_KEY (or OPENAI_API_KEY compatibility variable)"
+  return "OPENAI_API_KEY"
+
+
+async def _load_ai_settings(db, org_id: int) -> Optional[models.AIAssistantSettings]:
+  result = await db.execute(
+    select(models.AIAssistantSettings).where(models.AIAssistantSettings.organization_id == org_id)
+  )
+  return result.scalar_one_or_none()
+
 PURVEX_KNOWLEDGE_PACK = """
 You are PurveX Watchtower, a focused detection-engineering assistant.
 
@@ -377,11 +405,7 @@ async def chat_with_assistant(
   user = Depends(get_current_user),
   db = Depends(get_db),
 ) -> AssistantResponse:
-  """Proxy a chat prompt to the configured LLM (e.g. Ollama) and return its answer.
-
-  This is the v1 MVP for the Watchtower AI assistant. It sends the user's prompt
-  to the local/hosted LLM and returns the generated text as `answer`.
-  """
+  """Return a Watchtower answer using the configured AI provider with deterministic fallback."""
   # SECURITY: Sanitize prompt input
   from ..utils.security import sanitize_string
   if not payload.prompt and not payload.action:
@@ -392,16 +416,19 @@ async def chat_with_assistant(
   if not sanitized_prompt and not action:
     raise HTTPException(status_code=400, detail="Prompt cannot be empty")
   
-  # Basic safety check – ensure the backend has an LLM endpoint configured.
-  ollama_base_url = _ollama_base_url()
-  ollama_model = _ollama_model()
-
-  if not ollama_base_url:
-    raise HTTPException(status_code=503, detail="LLM backend is not configured.")
+  org_id = require_org_id(user)
+  ai_settings = await _load_ai_settings(db, org_id)
+  provider, model_name, api_base_url = _configured_ai_settings(ai_settings)
+  requested_model = (payload.model_name or "").strip()
+  if requested_model:
+    # Keep a strict allowlist for per-request model override.
+    allowed_models = {"gpt-4o-mini", "gpt-4o", "deepseek-chat", "deepseek-reasoner"}
+    if requested_model not in allowed_models:
+      raise HTTPException(status_code=400, detail=f"Unsupported model: {requested_model}")
+    model_name = requested_model
 
   # Build context pack when action is provided (preferred MVP path).
   if action:
-    org_id = require_org_id(user)
     if payload.force_demo:
       context = await _build_demo_context(db, org_id)
     else:
@@ -410,8 +437,7 @@ async def chat_with_assistant(
       else:
         context = await _build_detection_context(db, org_id, payload.detection_id)
       if not context:
-        # Demo fallback so the MVP can be validated before real data exists.
-        context = await _build_demo_context(db, org_id)
+        raise HTTPException(status_code=404, detail="Requested context is not available for this workspace.")
     action_prompt = ACTION_TEMPLATES.get(action, "")
     sanitized_prompt = (
       f"{action_prompt}\n"
@@ -426,96 +452,56 @@ async def chat_with_assistant(
       detail=f"Prompt is too long ({len(sanitized_prompt)} characters). Please shorten the question or narrow the context.",
     )
 
-  try:
-    # Try /api/chat first (newer Ollama API), fallback to /api/generate (older API)
-    chat_url = f"{ollama_base_url}/api/chat"
-    generate_url = f"{ollama_base_url}/api/generate"
-    
-    # Allow more time for local models to load/generate on first use.
-    # This is especially important for larger models like llama3.1.
-    timeout_seconds = 20.0 if action else 30.0
-    async with httpx.AsyncClient(timeout=timeout_seconds) as client:
-      # Try the newer chat API first
-      try:
-        system_prompt = _action_system_prompt() if action else WATCHTOWER_SYSTEM_PROMPT
-        request_payload = {
-          "model": ollama_model,
-          "messages": [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": sanitized_prompt},
-          ],
-          "options": _ollama_options(is_action=bool(action)),
-          "stream": False,
-        }
-        print(f"[Watchtower] Calling Ollama chat API: {chat_url} with model: {ollama_model}")
-        resp = await client.post(chat_url, json=request_payload)
-        resp.raise_for_status()
-        data = resp.json()
-        print(f"[Watchtower] Ollama response keys: {list(data.keys())}")
-        # Chat API returns `{"message": {"content": "..."}, ...}`
-        answer = (data.get("message", {}).get("content") or "").strip()
-        print(f"[Watchtower] Extracted answer length: {len(answer)}")
-      except (httpx.HTTPError, KeyError) as chat_err:
-        # Fallback to older generate API
-        try:
-          resp = await client.post(
-            generate_url,
-            json={
-              "model": ollama_model,
-              "prompt": f"{_action_system_prompt() if action else WATCHTOWER_SYSTEM_PROMPT}\n\nUser: {sanitized_prompt}\nAssistant:",
-              "options": _ollama_options(is_action=bool(action)),
-              "stream": False,
-            },
-          )
-          resp.raise_for_status()
-          data = resp.json()
-          # Generate API returns `{"response": "...", "done": true, ...}`
-          answer = (data.get("response") or "").strip()
-        except Exception as gen_err:
-          # If both APIs fail, raise with details
-          if action:
-            answer = _fallback_action_response(action, sanitized_prompt)
-          else:
-            raise HTTPException(
-              status_code=502,
-              detail=(
-                "Both Ollama chat and generate APIs failed. "
-                f"Chat error: {repr(chat_err)}. Generate error: {repr(gen_err)}. "
-                f"Check that Ollama is running and the model '{ollama_model}' is available."
-              )
-            ) from gen_err
-      
-      if not answer:
-        answer = "The language model did not return any content. Please check that Ollama is running and the model is available."
-      return AssistantResponse(answer=answer)
-  except httpx.TimeoutException as exc:
-    if action:
-      return AssistantResponse(answer=_fallback_action_response(action, sanitized_prompt))
-    raise HTTPException(
-      status_code=504,
-      detail=(
-        "Ollama request timed out after 120 seconds. The local model may be taking "
-        "too long to generate a response. Try a shorter prompt or consider using a "
-        "smaller model (for example 'gemma3:4b') in the OLLAMA_MODEL setting."
-      ),
-    ) from exc
-  except httpx.ConnectError as exc:
-    if action:
-      return AssistantResponse(answer=_fallback_action_response(action, sanitized_prompt))
-    raise HTTPException(
-      status_code=503,
-      detail=f"Cannot connect to Ollama at {ollama_base_url}. Is Ollama running? Error: {exc}"
-    ) from exc
-  except httpx.HTTPError as exc:
-    if action:
-      return AssistantResponse(answer=_fallback_action_response(action, sanitized_prompt))
-    raise HTTPException(status_code=502, detail=f"Error calling LLM backend: {exc}") from exc
-  except HTTPException:
-    # Re-raise HTTPExceptions as-is
-    raise
-  except Exception as exc:
-    import traceback
-    raise HTTPException(
-      status_code=500,
-      detail=f"Unexpected error in Watchtower assistant: {str(exc)}. Check backend logs for details."
-    ) from exc
+  if action:
+    answer = call_llm(
+      sanitized_prompt,
+      system_prompt=_action_system_prompt(),
+      provider=provider,
+      api_base_url=api_base_url,
+      model_name=model_name,
+      timeout_seconds=20,
+    )
+    if answer.startswith("Error communicating"):
+      answer = _fallback_action_response(action, sanitized_prompt)
+    return AssistantResponse(answer=answer)
+
+  freeform_context = ""
+  if payload.force_demo:
+    freeform_context = await _build_demo_context(db, org_id)
+  elif payload.context_scope == "portfolio":
+    freeform_context = await _build_portfolio_context(db, org_id)
+  elif payload.context_scope == "detection" or payload.detection_id or payload.alert_id:
+    detection_context = await _build_detection_context(db, org_id, payload.detection_id)
+    alert_context = await _build_alert_context(db, org_id, payload.alert_id)
+    freeform_context = "\n".join(part for part in [detection_context, alert_context] if part).strip()
+
+  if freeform_context:
+    sanitized_prompt = (
+      f"{freeform_context}\n"
+      "[User Question]\n"
+      f"{sanitized_prompt}"
+    )
+
+  answer = call_llm(
+    sanitized_prompt,
+    system_prompt=WATCHTOWER_SYSTEM_PROMPT,
+    provider=provider,
+    api_base_url=api_base_url,
+    model_name=model_name,
+    timeout_seconds=20,
+  )
+  if answer.startswith("Error communicating"):
+    key_hint = _provider_key_hint(provider)
+    answer = (
+      "Summary: AI analysis is unavailable right now.\n"
+      "Findings:\n"
+      f"- Provider: {provider}\n"
+      f"- Model: {model_name}\n"
+      f"- Error: {answer}\n"
+      "Root cause: OTHER (confidence: high)\n"
+      "Next steps:\n"
+      f"1) Confirm {key_hint} is configured on the backend.\n"
+      "2) Verify the selected model and API base URL are valid.\n"
+      "3) Retry the request after updating AI assistant settings."
+    )
+  return AssistantResponse(answer=answer)

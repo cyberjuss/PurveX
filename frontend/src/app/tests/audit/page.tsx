@@ -140,7 +140,7 @@ export default function TestsAuditPage() {
       <div className="w-full pl-0.5 pr-0 sm:pr-0">
         <PageHeader
           title="Test Execution Audit"
-          subtitle="Trace every run with unified, searchable execution context"
+          subtitle="Follow every run end to end so lessons are preserved and improvement becomes cumulative."
         />
       </div>
 

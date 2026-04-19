@@ -5,7 +5,7 @@ from typing import List, Optional
 from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import delete, or_, select
 from sqlalchemy.orm import selectinload
 from typing_extensions import Annotated
 
@@ -107,7 +107,12 @@ async def list_roles(
     """List all available roles (admin only)."""
     await require_permission(current_user, Permission.SETTINGS_USERS_MANAGE, db)
     
-    stmt = select(models.Role).order_by(models.Role.name)
+    org_id = require_org_id(current_user)
+    stmt = (
+        select(models.Role)
+        .where(or_(models.Role.organization_id == org_id, models.Role.organization_id.is_(None)))
+        .order_by(models.Role.name)
+    )
     result = await db.execute(stmt)
     roles = result.scalars().all()
     
@@ -191,7 +196,10 @@ async def assign_role(
     expires_at = payload.expires_at
     
     # Get role
-    stmt = select(models.Role).where(models.Role.name == role_name.upper())
+    stmt = select(models.Role).where(
+        models.Role.name == role_name.upper(),
+        or_(models.Role.organization_id == org_id, models.Role.organization_id.is_(None)),
+    )
     result = await db.execute(stmt)
     role = result.scalar_one_or_none()
     if not role:
@@ -278,7 +286,13 @@ async def remove_role(
                 detail="Cannot remove ADMINISTRATOR role from admin user"
             )
     
-    await db.delete(user_role)
+    await db.execute(
+        delete(models.UserRole).where(
+            models.UserRole.id == user_role.id,
+            models.UserRole.user_id == user_id,
+            models.UserRole.organization_id == org_id,
+        )
+    )
     await db.commit()
     
     return None

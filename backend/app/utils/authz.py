@@ -34,7 +34,7 @@ async def require_permission(
     # SECURITY: Admin users bypass all permission checks
     if user.is_admin:
         # Still validate CSRF for state-changing operations
-        if request and request.method in ["POST", "PUT", "DELETE", "PATCH"]:
+        if request and request.method in ["POST", "PUT", "DELETE", "PATCH"] and request.cookies.get("access_token"):
             try:
                 require_csrf_token(request, user.id)
             except HTTPException as e:
@@ -47,7 +47,8 @@ async def require_permission(
         return  # Admin users have all permissions
     
     # CSRF protection for state-changing operations (optional for now, can be made mandatory later)
-    if request and request.method in ["POST", "PUT", "DELETE", "PATCH"]:
+    # Only enforce CSRF for cookie-authenticated browser sessions.
+    if request and request.method in ["POST", "PUT", "DELETE", "PATCH"] and request.cookies.get("access_token"):
         try:
             require_csrf_token(request, user.id)
         except HTTPException as e:
@@ -69,7 +70,7 @@ async def require_permission(
             detail="User organization not set"
         )
     
-    has_perm = await rbac.has_permission(user.id, org_id, permission)
+    has_perm = await rbac.has_permission(user, permission)
     if not has_perm:
         # SECURITY: Log permission denial to audit log
         try:
@@ -105,6 +106,32 @@ def require_admin(user: models.User):
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Administrator access required"
         )
+
+
+async def require_schedule(
+    user: models.User,
+    db: AsyncSession,
+    environment: str,
+    request: Request | None = None,
+):
+    """
+    Check scheduling permission for an environment.
+
+    PROD scheduling requires the dedicated PROD permission. Other environments
+    use the general scheduling permission.
+    """
+    env = (environment or "").lower()
+    if env == "prod":
+        perm = Permission.TESTS_SCHEDULE_PROD
+    elif env in {"lab", "dev"}:
+        perm = Permission.TESTS_SCHEDULE
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Unknown environment for scheduling: {environment!r}",
+        )
+
+    await require_permission(user, perm, db, request)
 
 
 # Convenience functions for detection-related permissions

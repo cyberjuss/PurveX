@@ -15,24 +15,19 @@ const ThemeContext = createContext<ThemeContextType | undefined>(undefined);
 const THEME_STORAGE_KEY = "purvex-theme";
 
 export function ThemeProvider({ children }: { children: ReactNode }) {
-  const [theme, setThemeState] = useState<Theme>("dark");
-  const [mounted, setMounted] = useState(false);
+  const [theme, setThemeState] = useState<Theme>(() => {
+    if (typeof window === "undefined") return "light";
+    const storedTheme = window.localStorage.getItem(THEME_STORAGE_KEY) as Theme | null;
+    return storedTheme || "light";
+  });
 
   useEffect(() => {
-    // Get theme from localStorage or default to dark
-    const storedTheme = localStorage.getItem(THEME_STORAGE_KEY) as Theme | null;
-    const initialTheme = storedTheme || "dark";
-    
-    // Apply theme class immediately to prevent flash
-    if (initialTheme === "dark") {
+    if (theme === "dark") {
       document.documentElement.classList.add("dark");
     } else {
       document.documentElement.classList.remove("dark");
     }
-    
-    setThemeState(initialTheme);
-    setMounted(true);
-  }, []);
+  }, [theme]);
 
   const setTheme = (newTheme: Theme) => {
     setThemeState(newTheme);

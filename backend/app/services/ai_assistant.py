@@ -1,8 +1,7 @@
-# This file contains AI assistant related functionalities.
-import requests
 import json
 from typing import Dict, List, Optional
-from loguru import logger
+
+import httpx
 
 from .. import models
 from ..config import settings
@@ -11,54 +10,69 @@ from ..config import settings
 def call_llm(
     prompt: str,
     *,
+    system_prompt: Optional[str] = None,
     provider: Optional[str] = None,
     api_base_url: Optional[str] = None,
     model_name: Optional[str] = None,
     timeout_seconds: int = 10,
 ) -> str:
-    """Call the local Llama (Ollama) instance with a given prompt.
+    resolved_provider = (provider or settings.AI_PROVIDER or "OpenAI").strip().lower()
+    if resolved_provider not in {"openai", "deepseek", "built-in", "builtin"}:
+        return f"Error communicating with AI provider: Unsupported provider '{provider}'."
 
-    Uses settings.OLLAMA_API_BASE_URL and settings.OLLAMA_MODEL_NAME so you
-    can change models / endpoints via configuration.
-    """
-    provider = provider or settings.AI_PROVIDER
-    if provider not in {"Local LLaMA", "Local Llama", "Ollama"}:
-        return "AI analysis is disabled because the provider is not supported in this deployment."
+    if resolved_provider in {"built-in", "builtin"}:
+        return "Error communicating with AI provider: Built-in provider does not support external model calls."
 
-    base_url = (api_base_url or settings.OLLAMA_API_BASE_URL).rstrip("/")
-    model_name = model_name or settings.OLLAMA_MODEL_NAME
+    api_key = settings.OPENAI_API_KEY
+    if not api_key:
+        if resolved_provider == "deepseek":
+            return "Error communicating with DeepSeek: OPENAI_API_KEY is not configured."
+        return "Error communicating with OpenAI: OPENAI_API_KEY is not configured."
 
-    # If policy forbids sending raw logs outside the environment, only allow
-    # localhost/127.0.0.1 as the LLM endpoint.
-    if settings.NO_RAW_LOGS_OUTSIDE_ENV and not (
-        base_url.startswith("http://127.0.0.1")
-        or base_url.startswith("http://localhost")
-    ):
-        logger.error(
-            "NO_RAW_LOGS_OUTSIDE_ENV is true but OLLAMA_API_BASE_URL=%s is non-local. "
-            "Refusing to send detection logs to external LLM.",
-            base_url,
-        )
-        return "AI analysis is disabled by policy because the LLM endpoint is not local."
-
-    ollama_api_url = f"{base_url}/api/chat"
-    headers = {"Content-Type": "application/json"}
-    data = {
-        "model": model_name,
-        "messages": [
-            {"role": "user", "content": prompt},
-        ],
-        "stream": False,
-    }
+    default_base_url = "https://api.deepseek.com/v1" if resolved_provider == "deepseek" else settings.OPENAI_API_BASE_URL
+    base_url = (api_base_url or default_base_url).rstrip("/")
+    resolved_model = model_name or ("deepseek-chat" if resolved_provider == "deepseek" else settings.OPENAI_MODEL)
+    messages = []
+    if system_prompt:
+        messages.append({"role": "system", "content": system_prompt})
+    messages.append({"role": "user", "content": prompt})
 
     try:
-        response = requests.post(ollama_api_url, headers=headers, data=json.dumps(data), timeout=timeout_seconds)
-        response.raise_for_status()
-        result = response.json()
-        return result["message"]["content"]
-    except requests.exceptions.RequestException as e:
-        logger.error(f"Error calling Ollama LLM at %s: %s", ollama_api_url, e)
-        return "Error communicating with AI assistant."
+        with httpx.Client(timeout=timeout_seconds) as client:
+            response = client.post(
+                f"{base_url}/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "model": resolved_model,
+                    "messages": messages,
+                    "temperature": 0.2,
+                },
+            )
+            response.raise_for_status()
+            payload = response.json()
+    except httpx.HTTPStatusError as exc:
+        error_detail = exc.response.text.strip()
+        label = "DeepSeek" if resolved_provider == "deepseek" else "OpenAI"
+        return f"Error communicating with {label}: {exc.response.status_code} {error_detail}"
+    except Exception as exc:
+        label = "DeepSeek" if resolved_provider == "deepseek" else "OpenAI"
+        return f"Error communicating with {label}: {exc}"
+
+    choices = payload.get("choices") or []
+    if not choices:
+        label = "DeepSeek" if resolved_provider == "deepseek" else "OpenAI"
+        return f"Error communicating with {label}: No choices returned."
+
+    message = choices[0].get("message") or {}
+    content = message.get("content")
+    if isinstance(content, str) and content.strip():
+        return content.strip()
+
+    label = "DeepSeek" if resolved_provider == "deepseek" else "OpenAI"
+    return f"Error communicating with {label}: Empty response content."
 
 def _fallback_analysis(
     test: models.Test,

@@ -56,9 +56,10 @@ def _metric_latency(latency: Optional[float], ideal: int, maximum: int) -> float
 def _collect_telemetry_and_detection_events(
     test: models.Test,
     detection: Optional[models.Detection] = None,
+    siem_connection: Optional[models.SIEMConnection] = None,
 ) -> Tuple[bool, bool, bool, int, int, List[Dict], List[Dict], Optional[float], Optional[float]]:
     """Shared helper to query the SIEM for telemetry + (optional) detection events."""
-    siem_adapter = get_siem_adapter()
+    siem_adapter = get_siem_adapter(siem_connection)
 
     earliest = test.started_at - timedelta(minutes=2)
     latest = datetime.utcnow() + timedelta(minutes=2)
@@ -76,7 +77,9 @@ def _collect_telemetry_and_detection_events(
     detection_events: List[Dict] = []
     if detection is not None:
         try:
-            detection_q = f'{detection.siem_query} "{marker}"'
+            detection_q = detection.siem_query
+            if marker and "{{MARKER}}" in detection_q:
+                detection_q = detection_q.replace("{{MARKER}}", marker)
             detection_events = siem_adapter.search_events(detection_q, earliest, latest)
         except Exception:
             detection_events = []
@@ -119,7 +122,9 @@ def _collect_telemetry_and_detection_events(
 
 
 def validate_detection_for_test(
-    test: models.Test, detection: models.Detection
+    test: models.Test,
+    detection: models.Detection,
+    siem_connection: Optional[models.SIEMConnection] = None,
 ) -> Tuple[str, int, List[Dict]]:
     """Validate a detection by checking telemetry + detection events and compute a 0‑100 score.
 
@@ -141,7 +146,7 @@ def validate_detection_for_test(
         detection_events,
         telemetry_ingestion_latency_seconds,
         detection_latency_seconds,
-    ) = _collect_telemetry_and_detection_events(test, detection)
+    ) = _collect_telemetry_and_detection_events(test, detection, siem_connection)
 
     # --- 2. Derive booleans and basic counts -------------------------------------------------
 
@@ -233,7 +238,10 @@ def validate_detection_for_test(
     return legacy_result, numeric_score, sample_events
 
 
-def validate_telemetry_for_test(test: models.Test) -> Tuple[str, int, List[Dict]]:
+def validate_telemetry_for_test(
+    test: models.Test,
+    siem_connection: Optional[models.SIEMConnection] = None,
+) -> Tuple[str, int, List[Dict]]:
     """Telemetry‑only validation for scenario / coverage runs without a linked Detection."""
 
     (
@@ -246,7 +254,7 @@ def validate_telemetry_for_test(test: models.Test) -> Tuple[str, int, List[Dict]
         _detection_events,
         telemetry_ingestion_latency_seconds,
         _detection_latency_seconds,
-    ) = _collect_telemetry_and_detection_events(test, None)
+    ) = _collect_telemetry_and_detection_events(test, None, siem_connection)
 
     expected_events_count: Optional[int] = None
 

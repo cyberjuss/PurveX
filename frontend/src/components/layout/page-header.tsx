@@ -16,23 +16,23 @@ export function PageHeader({ title, subtitle, eyebrow, icon, actions, className 
   return (
     <div
       className={cn(
-        "rounded-[28px] border border-slate-200/80 bg-white/85 backdrop-blur shadow-[0_20px_48px_-36px_rgba(15,23,42,0.55)] px-6 py-6 flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between",
+        "rounded-[28px] border border-[var(--stroke-soft)] bg-[var(--surface-card)] px-6 py-6 shadow-[var(--shadow-soft)] flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between",
         className
       )}
     >
       <div className="flex items-start gap-4 max-w-4xl">
         {icon ? (
-          <span className="inline-flex h-12 w-12 items-center justify-center rounded-2xl bg-slate-950 text-white shadow-lg shadow-slate-900/20">
+          <span className="inline-flex h-12 w-12 items-center justify-center rounded-2xl border border-[var(--accent-line)] bg-[var(--surface-elevated)] text-[var(--accent-strong)] shadow-sm">
             {icon}
           </span>
         ) : null}
         <div className="space-y-1.5">
           {eyebrow ? (
-            <p className="text-xs uppercase tracking-[0.36em] text-slate-500">{eyebrow}</p>
+            <p className="text-xs uppercase tracking-[0.36em] text-[var(--surface-subtle-foreground)]">{eyebrow}</p>
           ) : null}
-          <h1 className="text-[28px] font-display font-semibold tracking-tight text-slate-900">{title}</h1>
+          <h1 className="text-[28px] font-display font-semibold tracking-tight text-[var(--surface-card-foreground)]">{title}</h1>
         {subtitle ? (
-          <p className="text-sm text-slate-600 leading-relaxed">{subtitle}</p>
+          <p className="text-sm leading-relaxed text-[var(--surface-subtle-foreground)]">{subtitle}</p>
         ) : null}
         </div>
       </div>

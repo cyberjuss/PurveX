@@ -1,46 +1,98 @@
 "use client";
 
-import { useState, useEffect, useCallback, useMemo, Suspense } from "react";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Badge } from "@/components/ui/badge";
-import { Input } from "@/components/ui/input";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+import { Suspense, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { useSearchParams } from "next/navigation";
-import { getDetections, getDetectionAlerts, Detection, DetectionAlert, apiFetch } from "@/lib/api";
-import { format, formatRelative, subDays, isAfter } from "date-fns";
-import { Activity, AlertTriangle, Eye, Play, Shield, Sparkles, ArrowRight, Cpu, Download, CheckSquare, Square, ArrowUpDown, RefreshCw, Search, CheckCircle2, XCircle, Clock, TrendingUp, Zap, Target, X, PanelRightOpen, PanelRightClose, Filter, XCircle as XIcon, SlidersHorizontal, Database, ChevronLeft, ChevronRight } from "lucide-react";
-import { usePermissions } from "@/hooks/usePermissions";
-import { Permission } from "@/lib/permissions";
-import { PageContainer } from "@/components/layout/page-container";
-import { Checkbox } from "@/components/ui/checkbox";
+import { useRouter, useSearchParams } from "next/navigation";
+import { format, formatRelative } from "date-fns";
+import {
+  AlertTriangle,
+  CheckCircle2,
+  ChevronDown,
+  ChevronRight,
+  Clock3,
+  Eye,
+  Play,
+  Radar,
+  Search,
+  Shield,
+  X,
+  XCircle,
+} from "lucide-react";
+import { getDetections, type Detection } from "@/lib/api";
 import { cn } from "@/lib/utils";
-import { PageHeader } from "@/components/layout/page-header";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { PageContainer } from "@/components/layout/page-container";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 
+type WorkspaceView = "queue" | "library";
 type HealthStateKey = "HEALTHY" | "DETECTION_FAILED" | "TELEMETRY_MISSING" | "UNKNOWN";
+type LifecycleStage = "DRAFT" | "ACTIVE" | "NEEDS_IMPROVEMENT" | "RETIRED";
 
-// Map backend results into the PurveX 4‑state health model.
-function deriveHealthState(d: Detection): HealthStateKey {
-  // Never tested → Unknown
-  if (!d.last_tested_at) {
-    return "UNKNOWN";
+const WORKSPACE_VIEWS: WorkspaceView[] = ["queue", "library"];
+
+const HEALTH_META: Record<
+  HealthStateKey,
+  {
+    label: string;
+    badge: string;
+    tone: string;
+    bg: string;
+    border: string;
+    headline: string;
+    detail: string;
   }
+> = {
+  HEALTHY: {
+    label: "Trusted",
+    badge: "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-300",
+    tone: "text-emerald-600 dark:text-emerald-300",
+    bg: "bg-emerald-500",
+    border: "border-emerald-200 dark:border-emerald-500/30",
+    headline: "Detection validated end to end.",
+    detail: "Telemetry arrived, the rule fired, and PurveX has current evidence for trust.",
+  },
+  DETECTION_FAILED: {
+    label: "Needs tuning",
+    badge: "border-rose-200 bg-rose-50 text-rose-700 dark:border-rose-500/30 dark:bg-rose-500/10 dark:text-rose-300",
+    tone: "text-rose-600 dark:text-rose-300",
+    bg: "bg-rose-500",
+    border: "border-rose-200 dark:border-rose-500/30",
+    headline: "Telemetry exists, but the detection did not trigger.",
+    detail: "This usually points to rule logic drift, bad field mappings, or thresholds that now miss the signal.",
+  },
+  TELEMETRY_MISSING: {
+    label: "Telemetry gap",
+    badge: "border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-300",
+    tone: "text-amber-600 dark:text-amber-300",
+    bg: "bg-amber-400",
+    border: "border-amber-200 dark:border-amber-500/30",
+    headline: "The test ran, but no usable telemetry reached the SIEM.",
+    detail: "Treat this as a pipeline problem first. Validation cannot prove trust while data is missing.",
+  },
+  UNKNOWN: {
+    label: "Untested",
+    badge: "border-slate-200 bg-slate-100 text-slate-700 dark:border-white/10 dark:bg-white/5 dark:text-slate-300",
+    tone: "text-slate-600 dark:text-slate-300",
+    bg: "bg-slate-300 dark:bg-slate-600",
+    border: "border-slate-200 dark:border-white/10",
+    headline: "PurveX has no validation evidence yet.",
+    detail: "This detection may be important, but it is still a claim until it has passed a real validation flow.",
+  },
+};
 
-  const result = (d.last_result || "").toUpperCase();
-
-  // This mirrors the backend logic:
-  // - PASS          → logs present + detection fired      → Healthy
-  // - FAIL          → logs present, detection not fired   → Detection Failed
-  // - INCONCLUSIVE  → typically no logs                   → Telemetry Missing
-  switch (result) {
+function deriveHealthState(detection: Detection): HealthStateKey {
+  if (!detection.last_tested_at) return "UNKNOWN";
+  switch ((detection.last_result || "").toUpperCase()) {
     case "PASS":
       return "HEALTHY";
     case "FAIL":
@@ -52,436 +104,171 @@ function deriveHealthState(d: Detection): HealthStateKey {
   }
 }
 
-function getHealthBadgeClass(state: HealthStateKey) {
-  switch (state) {
-    case "HEALTHY":
-      return "bg-emerald-500/15 text-emerald-300 border border-emerald-500/40";
-    case "DETECTION_FAILED":
-      return "bg-red-500/15 text-red-300 border border-red-500/40";
-    case "TELEMETRY_MISSING":
-      return "bg-amber-500/15 text-amber-300 border border-amber-500/40";
-    case "UNKNOWN":
-    default:
-      return "bg-slate-700/40 text-slate-300 border border-slate-600/60";
-  }
+function normalizeStage(stage?: string | null): LifecycleStage {
+  const value = (stage || "DRAFT").toUpperCase();
+  if (value === "ACTIVE" || value === "NEEDS_IMPROVEMENT" || value === "RETIRED") return value;
+  return "DRAFT";
 }
 
-function getHealthLabel(state: HealthStateKey) {
-  switch (state) {
-    case "HEALTHY":
-      return "Healthy";
-    case "DETECTION_FAILED":
-      return "Detection Failed";
-    case "TELEMETRY_MISSING":
-      return "Telemetry Missing";
-    case "UNKNOWN":
-    default:
-      return "Unknown";
-  }
+function isStaleDetection(detection: Detection) {
+  if (!detection.last_tested_at) return false;
+  return Date.now() - new Date(detection.last_tested_at).getTime() > 1000 * 60 * 60 * 24 * 21;
 }
 
-function getHealthNarrative(state: HealthStateKey) {
-  switch (state) {
-    case "HEALTHY":
-      return {
-        headline: "Logs present and detection fired.",
-        detail:
-          "The atomic test reached your environment, telemetry landed in the SIEM, and the detection logic triggered on that signal. Both the pipeline and the rule are behaving as designed.",
-        action:
-          "No immediate tuning required. Keep this rule under normal lifecycle review and watch for drift over time.",
-      };
-    case "DETECTION_FAILED":
-      return {
-        headline: "Telemetry arrived, but the detection did not fire.",
-        detail:
-          "The atomic test reached the SIEM and logs containing the PurveX marker are present, but the rule never triggered. This usually points to field mismatches, over‑aggressive filtering, normalization gaps, or thresholds set too high.",
-        action:
-          "Open the relevant index/sourcetype, inspect events with the PurveX marker, and align your SPL/KQL fields, filters, and thresholds to those events. Re‑run a validation after tuning the detection.",
-      };
-    case "TELEMETRY_MISSING":
-      return {
-        headline: "Atomic test ran but no telemetry was observed.",
-        detail:
-          "Within the validation window, PurveX did not see any events containing the marker in the SIEM. This typically indicates an agent or collector problem, incorrect index/sourcetype routing, or that the test did not execute on a host that is sending telemetry.",
-        action:
-          "Confirm the atomic test executed on the expected host, then verify the endpoint agent, forwarder, and index/sourcetype configuration. Fix the telemetry path first, then re‑run the test.",
-      };
-    case "UNKNOWN":
-    default:
-      return {
-        headline: "This detection has never been validated in PurveX.",
-        detail:
-          "No PurveX atomic tests have been run against this detection yet, so we cannot tell whether issues would come from the telemetry path or from the detection logic.",
-        action:
-          "Run a lab validation before treating this rule as trusted coverage or promoting it further in the lifecycle.",
-      };
-  }
+function getNextAction(detection: Detection) {
+  const health = deriveHealthState(detection);
+  if (health === "TELEMETRY_MISSING") return "Fix telemetry path";
+  if (health === "DETECTION_FAILED") return "Tune detection logic";
+  if (health === "UNKNOWN") return "Run first validation";
+  if (isStaleDetection(detection)) return "Revalidate for drift";
+  return "Monitor normally";
 }
 
-function getStatusBadgeClass(status?: string) {
-  switch ((status || "").toUpperCase()) {
-    case "ACTIVE":
-      return "bg-emerald-100 text-emerald-700 border border-emerald-200";
-    case "NEEDS_IMPROVEMENT":
-      return "bg-amber-100 text-amber-700 border border-amber-200";
-    case "DRAFT":
-      return "bg-slate-100 text-slate-700 border border-slate-200";
-    case "RETIRED":
-      return "bg-slate-200 text-slate-700 border border-slate-300";
-    default:
-      return "bg-slate-100 text-slate-700 border border-slate-200";
-  }
+function getPriorityRank(detection: Detection) {
+  const health = deriveHealthState(detection);
+  if (health === "TELEMETRY_MISSING") return 0;
+  if (health === "DETECTION_FAILED") return 1;
+  if (health === "UNKNOWN") return 2;
+  if (isStaleDetection(detection)) return 3;
+  return 4;
 }
 
-function DetectionsPageContent() {
-  const { hasPermission } = usePermissions();
+function hasTechniqueMapping(detection: Detection) {
+  return Boolean(detection.technique_id && detection.technique_id.trim().length > 0);
+}
+
+function getRelativeDate(value?: string | null) {
+  if (!value) return "Never";
+  const parsed = new Date(value);
+  return isNaN(parsed.getTime()) ? "Never" : formatRelative(parsed, new Date());
+}
+
+function getShortDate(value?: string | null) {
+  if (!value) return "Never";
+  const parsed = new Date(value);
+  return isNaN(parsed.getTime()) ? "Never" : format(parsed, "MMM dd, yyyy");
+}
+
+function DetectionsWorkspace() {
+  const router = useRouter();
   const searchParams = useSearchParams();
+
   const [detections, setDetections] = useState<Detection[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [creating, setCreating] = useState(false);
-  const [selectedDetection, setSelectedDetection] = useState<Detection | null>(null);
-  const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [alerts, setAlerts] = useState<DetectionAlert[]>([]);
-  
-  // Auto-open sidebar when detection is selected
-  useEffect(() => {
-    if (selectedDetection) {
-      setSidebarOpen(true);
-    }
-  }, [selectedDetection]);
-  const [alertsLoading, setAlertsLoading] = useState(false);
-  const [alertsError, setAlertsError] = useState<string | null>(null);
-  const [selectedAlertId, setSelectedAlertId] = useState<number | null>(null);
-  const [searchTitle, setSearchTitle] = useState("");
-  const [searchTechnique, setSearchTechnique] = useState("");
-  const [searchSiem, setSearchSiem] = useState("");
-  const [alertSearch, setAlertSearch] = useState("");
-  const [alertSeverityFilter, setAlertSeverityFilter] = useState<string>("all");
-  const [filterSeverity, setFilterSeverity] = useState<string>("all");
-  const [filterPriority, setFilterPriority] = useState<string>("all");
-  const [filterHealthState, setFilterHealthState] = useState<string>("all");
-  const [filterSiemType, setFilterSiemType] = useState<string>("all");
-  const [testingFilter, setTestingFilter] = useState<"all" | "tested" | "untested">(
-    "all"
-  );
-  const [lifecycleFilter, setLifecycleFilter] = useState<
-    "all" | "DRAFT" | "ACTIVE" | "NEEDS_IMPROVEMENT" | "RETIRED" | "AT_RISK"
-  >("all");
-  const [selectedDetections, setSelectedDetections] = useState<Set<string>>(new Set());
-  const [sortField, setSortField] = useState<"title" | "technique_id" | "last_tested_at" | "last_score" | "last_result" | "last_pass_at" | "last_fail_at" | null>(null);
-  const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc");
-  const [refreshing, setRefreshing] = useState(false);
-  const [catalogPage, setCatalogPage] = useState(0);
-  const [catalogTimeFilter, setCatalogTimeFilter] = useState<"24h" | "7d" | "30d" | "90d" | "all">("90d");
-  // Client-side date state to avoid hydration mismatches
-  const [now, setNow] = useState<Date | null>(null);
+  const [search, setSearch] = useState("");
+  const [opened, setOpened] = useState<Detection | null>(null);
+  const [coverageOpen, setCoverageOpen] = useState(false);
 
-  const loadDetections = useCallback(async () => {
+  const requestedView = (searchParams.get("view") || "queue").toLowerCase() as WorkspaceView;
+  const activeView = WORKSPACE_VIEWS.includes(requestedView) ? requestedView : "queue";
+  const requestedSearch = (searchParams.get("search") || "").trim();
+
+  useEffect(() => {
+    setSearch(requestedSearch);
+  }, [requestedSearch]);
+
+  useEffect(() => {
+    async function load() {
       try {
-        setLoading(true);
-      setRefreshing(true);
         const data = await getDetections();
-        // Deduplicate by ID in case backend returns duplicates
-        const uniqueDetections = Array.from(
-          new Map(data.map((d) => [d.id, d])).values()
-        );
-        setDetections(uniqueDetections);
-      setError(null);
-      } catch (err: any) {
-        setError(err.message || "Failed to load detections.");
+        const unique = Array.from(new Map(data.map((item) => [item.id, item])).values());
+        setDetections(unique);
+        setError(null);
+      } catch (err: unknown) {
+        setError(err instanceof Error ? err.message : "Failed to load detections.");
       } finally {
         setLoading(false);
-      setRefreshing(false);
       }
-  }, []);
-
-  useEffect(() => {
-    loadDetections();
-  }, []);
-
-  useEffect(() => {
-    const resultParam = (searchParams.get("result") || "").toUpperCase();
-    if (resultParam === "PASS" || resultParam === "FAIL" || resultParam === "INCONCLUSIVE") {
-      setFilterSeverity(resultParam);
     }
-  }, [searchParams]);
+    load();
+  }, []);
 
-  // Keyboard shortcuts - must be before early returns to follow Rules of Hooks
-  useEffect(() => {
-    const handleKeyPress = (e: KeyboardEvent) => {
-      // Ctrl/Cmd + R for refresh
-      if ((e.ctrlKey || e.metaKey) && e.key === "r") {
-        e.preventDefault();
-        loadDetections();
-      }
-      // Ctrl/Cmd + A for select all (works on all detections, not just filtered)
-      if ((e.ctrlKey || e.metaKey) && e.key === "a" && e.target instanceof HTMLInputElement === false) {
-        e.preventDefault();
-        if (detections.length > 0) {
-          setSelectedDetections(new Set(detections.map(d => d.id)));
-        }
-      }
-      // Escape to deselect all
-      if (e.key === "Escape") {
-        setSelectedDetections(new Set());
-      }
+  const filteredDetections = useMemo(() => {
+    const query = search.toLowerCase().trim();
+    return detections
+      .filter((detection) => {
+        if (!query) return true;
+        const haystack = [
+          detection.title,
+          detection.technique_id,
+          detection.siem_type,
+          detection.owner,
+          detection.status,
+          detection.lifecycle_stage,
+        ]
+          .filter(Boolean)
+          .join(" ")
+          .toLowerCase();
+        return haystack.includes(query);
+      })
+      .sort((left, right) => {
+        const rank = getPriorityRank(left) - getPriorityRank(right);
+        if (rank !== 0) return rank;
+        const leftTime = left.last_tested_at ? new Date(left.last_tested_at).getTime() : 0;
+        const rightTime = right.last_tested_at ? new Date(right.last_tested_at).getTime() : 0;
+        return rightTime - leftTime;
+      });
+  }, [detections, search]);
+
+  const buckets = useMemo(() => {
+    const b: Record<HealthStateKey, Detection[]> = {
+      TELEMETRY_MISSING: [],
+      DETECTION_FAILED: [],
+      UNKNOWN: [],
+      HEALTHY: [],
     };
+    for (const d of filteredDetections) {
+      b[deriveHealthState(d)].push(d);
+    }
+    return b;
+  }, [filteredDetections]);
 
-    window.addEventListener("keydown", handleKeyPress);
-    return () => window.removeEventListener("keydown", handleKeyPress);
-  }, [detections, loadDetections]);
+  const counts = useMemo(() => {
+    const total = detections.length;
+    const trusted = detections.filter((d) => deriveHealthState(d) === "HEALTHY" && !isStaleDetection(d)).length;
+    const needsTuning = detections.filter((d) => deriveHealthState(d) === "DETECTION_FAILED").length;
+    const telemetryGap = detections.filter((d) => deriveHealthState(d) === "TELEMETRY_MISSING").length;
+    const untested = detections.filter((d) => deriveHealthState(d) === "UNKNOWN").length;
+    const stale = detections.filter((d) => deriveHealthState(d) === "HEALTHY" && isStaleDetection(d)).length;
+    return { total, trusted, needsTuning, telemetryGap, untested, stale };
+  }, [detections]);
 
-  // Set client-side date to avoid hydration mismatches
+  const workspaceGaps = useMemo(() => {
+    const unassigned = detections.filter((d) => !d.owner).length;
+    const unmapped = detections.filter((d) => !hasTechniqueMapping(d)).length;
+    const activeBlockers = detections.filter((d) => {
+      const health = deriveHealthState(d);
+      return health === "TELEMETRY_MISSING" || health === "DETECTION_FAILED";
+    }).length;
+    return { unassigned, unmapped, activeBlockers };
+  }, [detections]);
+
+  function setView(view: WorkspaceView) {
+    const params = new URLSearchParams(searchParams.toString());
+    if (view === "queue") params.delete("view");
+    else params.set("view", view);
+    router.replace(params.toString() ? `/detections?${params.toString()}` : "/detections");
+  }
+
   useEffect(() => {
-    setNow(new Date());
-  }, []);
+    const normalizedSearch = search.trim();
+    if (normalizedSearch === requestedSearch) return;
 
-  // Screen reader announcements for filter changes
-  const [announcement, setAnnouncement] = useState<string>("");
-  useEffect(() => {
-    if (announcement) {
-      const timer = setTimeout(() => setAnnouncement(""), 1000);
-      return () => clearTimeout(timer);
-    }
-  }, [announcement]);
+    const timeoutId = setTimeout(() => {
+      const params = new URLSearchParams(searchParams.toString());
+      if (normalizedSearch) params.set("search", normalizedSearch);
+      else params.delete("search");
+      router.replace(params.toString() ? `/detections?${params.toString()}` : "/detections");
+    }, 250);
 
-  async function loadAlertsForDetection(det: Detection) {
-    try {
-      setAlertsLoading(true);
-      setAlertsError(null);
-      const data = await getDetectionAlerts(det.id);
-      // getDetectionAlerts now returns empty array for 404s instead of throwing
-      setAlerts(data);
-      setSelectedAlertId(data[0]?.id ?? null);
-    } catch (err: any) {
-      // Only set error for non-404 errors
-      const is404 = (err as any)?.is404 || 
-                    err?.message?.toLowerCase().includes("not found") || 
-                    err?.message?.toLowerCase().includes("404");
-      if (!is404) {
-        setAlertsError(err.message || "Failed to load recent SIEM events for this detection.");
-      }
-      setAlerts([]);
-      setSelectedAlertId(null);
-    } finally {
-      setAlertsLoading(false);
-    }
-  }
-
-  async function handleCreateSampleDetection() {
-    setError(null);
-    setCreating(true);
-    try {
-      // Minimal, safe sample detection so you can exercise the test pipeline and Test Detail page.
-      const payload = {
-        technique_id: "T1003",
-        title: "Sample LSASS credential dumping detection (PurveX demo)",
-        description:
-          "Sample detection rule for validating the PurveX Atomic → SIEM → Score → AI pipeline in a lab environment.",
-        sigma_rule: null,
-        siem_type: "splunk",
-        siem_query: 'index=security_logs "purvex_"',
-        scheduled: false,
-      };
-
-      const created = await apiFetch("/detections", {
-        method: "POST",
-        body: JSON.stringify(payload),
-      });
-
-      // Prepend the new detection so it appears at the top, avoiding duplicates
-      setDetections((prev) => {
-        const newDetection = created as Detection;
-        // Remove any existing detection with the same ID, then prepend
-        const filtered = prev.filter((d) => d.id !== newDetection.id);
-        return [newDetection, ...filtered];
-      });
-    } catch (err: any) {
-      setError(err.message || "Failed to create sample detection.");
-    } finally {
-      setCreating(false);
-    }
-  }
-
-  // Helper functions - must be defined before filteredDetections
-  const statusNormalized = (status?: string | null) =>
-    (status || "DRAFT").toUpperCase();
-
-  const AT_RISK_THRESHOLD_DAYS = 30;
-  function isAtRisk(det: Detection) {
-    if (!det.last_tested_at) return true;
-    const last = new Date(det.last_tested_at);
-    if (Number.isNaN(last.getTime())) return true;
-    const currentTime = nowRef;
-    const diffMs = currentTime.getTime() - last.getTime();
-    const diffDays = diffMs / (1000 * 60 * 60 * 24);
-    return diffDays >= AT_RISK_THRESHOLD_DAYS;
-  }
-
-  function getPriorityLabel(score?: number | null): "High" | "Medium" | "Low" | null {
-    if (score == null) return null;
-    if (score >= 80) return "High";
-    if (score >= 50) return "Medium";
-    return "Low";
-  }
-
-  // Sorting function
-  const sortDetections = (detections: Detection[]) => {
-    if (!sortField) return detections;
-    
-    return [...detections].sort((a, b) => {
-      let aVal: any;
-      let bVal: any;
-      
-      switch (sortField) {
-        case "title":
-          aVal = a.title?.toLowerCase() || "";
-          bVal = b.title?.toLowerCase() || "";
-          break;
-        case "technique_id":
-          aVal = a.technique_id || "";
-          bVal = b.technique_id || "";
-          break;
-        case "last_tested_at":
-          aVal = a.last_tested_at ? new Date(a.last_tested_at).getTime() : 0;
-          bVal = b.last_tested_at ? new Date(b.last_tested_at).getTime() : 0;
-          break;
-        case "last_score":
-          aVal = a.last_score ?? 0;
-          bVal = b.last_score ?? 0;
-          break;
-        case "last_result":
-          aVal = (a.last_result || "").toUpperCase();
-          bVal = (b.last_result || "").toUpperCase();
-          break;
-        case "last_pass_at":
-          aVal = a.last_pass_at ? new Date(a.last_pass_at).getTime() : 0;
-          bVal = b.last_pass_at ? new Date(b.last_pass_at).getTime() : 0;
-          break;
-        case "last_fail_at":
-          aVal = a.last_fail_at ? new Date(a.last_fail_at).getTime() : 0;
-          bVal = b.last_fail_at ? new Date(b.last_fail_at).getTime() : 0;
-          break;
-        default:
-          return 0;
-      }
-      
-      if (aVal < bVal) return sortDirection === "asc" ? -1 : 1;
-      if (aVal > bVal) return sortDirection === "asc" ? 1 : -1;
-      return 0;
-    });
-  };
-
-  // Compute filteredDetections - must be before hooks that depend on it
-  const filteredDetections = sortDetections(detections.filter((d) => {
-    const matchesTitle =
-      !searchTitle ||
-      d.title.toLowerCase().includes(searchTitle.toLowerCase().trim());
-
-    const matchesTechnique =
-      !searchTechnique ||
-      (d.technique_id || "").toLowerCase().includes(searchTechnique.toLowerCase().trim());
-
-    const matchesSiem =
-      !searchSiem ||
-      (d.siem_type || "").toLowerCase().includes(searchSiem.toLowerCase().trim());
-
-    const matchesSeverity =
-      filterSeverity === "all" ||
-      (d.last_result || "N/A").toUpperCase() === filterSeverity.toUpperCase();
-
-    const priorityLabel = getPriorityLabel(d.last_score);
-    const matchesPriority =
-      filterPriority === "all" ||
-      (priorityLabel ? priorityLabel.toLowerCase() === filterPriority : false);
-
-    const healthState = deriveHealthState(d);
-    const matchesHealthState =
-      filterHealthState === "all" ||
-      healthState === filterHealthState;
-
-    const matchesSiemType =
-      filterSiemType === "all" ||
-      (d.siem_type || "").toUpperCase() === filterSiemType.toUpperCase();
-
-    const status = statusNormalized(d.status);
-    const matchesLifecycle =
-      lifecycleFilter === "all"
-        ? true
-        : lifecycleFilter === "AT_RISK"
-        ? isAtRisk(d)
-        : status === lifecycleFilter;
-    const matchesTesting =
-      testingFilter === "all"
-        ? true
-        : testingFilter === "tested"
-        ? !!d.last_tested_at
-        : !d.last_tested_at;
-
-    return (
-      matchesTitle &&
-      matchesTechnique &&
-      matchesSiem &&
-      matchesSeverity &&
-      matchesPriority &&
-      matchesHealthState &&
-      matchesSiemType &&
-      matchesLifecycle &&
-      matchesTesting
-    );
-  }));
-
-  // Filter for Detection Catalog: filter by selected time period
-  // MUST be after filteredDetections but before conditional returns to follow Rules of Hooks
-  const catalogDetections = useMemo(() => {
-    if (!now) return []; // Return empty array during SSR/initial render
-    if (catalogTimeFilter === "all") return filteredDetections;
-    
-    let cutoffDate: Date;
-    switch (catalogTimeFilter) {
-      case "24h":
-        cutoffDate = subDays(now, 1);
-        break;
-      case "7d":
-        cutoffDate = subDays(now, 7);
-        break;
-      case "30d":
-        cutoffDate = subDays(now, 30);
-        break;
-      case "90d":
-        cutoffDate = subDays(now, 90);
-        break;
-      default:
-        cutoffDate = subDays(now, 90);
-    }
-    
-    return filteredDetections.filter((d) => {
-      if (!d.last_tested_at) return false;
-      const testedDate = new Date(d.last_tested_at);
-      return isAfter(testedDate, cutoffDate);
-    });
-  }, [filteredDetections, now, catalogTimeFilter]);
-
-  // Pagination for Detection Catalog (5 per page)
-  const itemsPerPage = 5;
-  const totalCatalogPages = Math.ceil(catalogDetections.length / itemsPerPage);
-  const paginatedCatalogDetections = catalogDetections.slice(
-    catalogPage * itemsPerPage,
-    (catalogPage + 1) * itemsPerPage
-  );
-
-  // Reset to page 0 when filters change - MUST be before conditional returns
-  useEffect(() => {
-    setCatalogPage(0);
-  }, [searchTitle, searchTechnique, searchSiem, filterSeverity, filterPriority, filterHealthState, filterSiemType, testingFilter, lifecycleFilter]);
+    return () => clearTimeout(timeoutId);
+  }, [router, search, searchParams, requestedSearch]);
 
   if (loading) {
     return (
       <PageContainer>
-        <Card className="elite-card">
-          <CardContent className="pt-6 text-slate-700">Loading detections…</CardContent>
-        </Card>
+        <Card><CardContent className="pt-6 text-sm text-slate-600 dark:text-slate-300">Loading detections workspace...</CardContent></Card>
       </PageContainer>
     );
   }
@@ -489,1024 +276,415 @@ function DetectionsPageContent() {
   if (error) {
     return (
       <PageContainer>
-        <Card className="elite-card">
-          <CardContent className="pt-6">
-            <p className="text-red-400">{error}</p>
-            <p className="text-xs text-slate-500 mt-2">
-              Verify the PurveX API is running and then refresh this page.
-            </p>
+        <Card>
+          <CardContent className="space-y-2 pt-6">
+            <p className="text-sm font-semibold text-rose-600 dark:text-rose-300">{error}</p>
+            <p className="text-xs text-slate-500 dark:text-slate-400">Verify the PurveX API is running and refresh this page.</p>
           </CardContent>
         </Card>
       </PageContainer>
     );
   }
 
-  const totalDetections = detections.length;
-  const validatedDetections = detections.filter((d) => d.last_tested_at).length;
-  const neverTestedCount = totalDetections - validatedDetections;
-
-  const draftCount = detections.filter(
-    (d) => statusNormalized(d.status) === "DRAFT"
-  ).length;
-  const activeCount = detections.filter(
-    (d) => statusNormalized(d.status) === "ACTIVE"
-  ).length;
-  const needsImprovementCount = detections.filter(
-    (d) => statusNormalized(d.status) === "NEEDS_IMPROVEMENT"
-  ).length;
-  const retiredCount = detections.filter(
-    (d) => statusNormalized(d.status) === "RETIRED"
-  ).length;
-  const atRiskCount = detections.filter((d) => isAtRisk(d)).length;
-
-  const nowRef = now ?? new Date();
-
-  const lifecycleStages = [
-    {
-      id: "DRAFT",
-      label: "Draft",
-      description: "Authored, not yet validated.",
-      accent: "sky",
-    },
-    {
-      id: "NEEDS_IMPROVEMENT",
-      label: "Staged / Monitor",
-      description: "Monitor-only; watching FP/TP and noise.",
-      accent: "amber",
-    },
-    {
-      id: "ACTIVE",
-      label: "Active",
-      description: "Enforced with runbook/owner.",
-      accent: "emerald",
-    },
-    {
-      id: "RETIRED",
-      label: "Retired / Superseded",
-      description: "Disabled or replaced; rationale logged.",
-      accent: "slate",
-    },
-  ];
-
-  const accentMap: Record<
-    string,
-    {
-      iconBg: string;
-      iconText: string;
-      borderActive: string;
-      badge: string;
-      badgeMuted: string;
-      bar: string;
-    }
-  > = {
-    sky: {
-      iconBg: "bg-sky-50",
-      iconText: "text-sky-700",
-      borderActive: "border-sky-300 shadow-sky-100",
-      badge: "bg-sky-50 text-sky-700 border-sky-200",
-      badgeMuted: "bg-slate-100 text-slate-600 border-slate-200",
-      bar: "bg-sky-400",
-    },
-    amber: {
-      iconBg: "bg-amber-50",
-      iconText: "text-amber-700",
-      borderActive: "border-amber-300 shadow-amber-100",
-      badge: "bg-amber-50 text-amber-800 border-amber-200",
-      badgeMuted: "bg-slate-100 text-slate-600 border-slate-200",
-      bar: "bg-amber-400",
-    },
-    emerald: {
-      iconBg: "bg-emerald-50",
-      iconText: "text-emerald-700",
-      borderActive: "border-emerald-300 shadow-emerald-100",
-      badge: "bg-emerald-50 text-emerald-800 border-emerald-200",
-      badgeMuted: "bg-slate-100 text-slate-600 border-slate-200",
-      bar: "bg-emerald-400",
-    },
-    slate: {
-      iconBg: "bg-slate-50",
-      iconText: "text-slate-700",
-      borderActive: "border-slate-300 shadow-slate-100",
-      badge: "bg-slate-100 text-slate-700 border-slate-200",
-      badgeMuted: "bg-slate-100 text-slate-600 border-slate-200",
-      bar: "bg-slate-400",
-    },
-  };
-
-  const stageStats = lifecycleStages.map((stage) => {
-    const stageItems = detections.filter(
-      (d) => statusNormalized(d.status) === stage.id
-    );
-
-    const tested = stageItems.filter((d) => !!d.last_tested_at);
-    const passed = tested.filter(
-      (d) => (d.last_result || "").toUpperCase() === "PASS"
-    ).length;
-    const failed = tested.filter(
-      (d) => (d.last_result || "").toUpperCase() === "FAIL"
-    ).length;
-    const lastValidatedTs = stageItems.reduce<number | null>((acc, d) => {
-      if (!d.last_tested_at) return acc;
-      const ts = new Date(d.last_tested_at).getTime();
-      return acc === null || ts > acc ? ts : acc;
-    }, null);
-
-    // Avoid noisy percentages with very small samples.
-    const passRate =
-      tested.length >= 3 ? Math.round((passed / tested.length) * 100) : null;
-
-    const stale =
-      !!lastValidatedTs && !isAfter(new Date(lastValidatedTs), subDays(nowRef, 30));
-
-    const needsAttention =
-      stage.id !== "RETIRED" &&
-      (failed > 0 || tested.length === 0 || stale);
-
-    const certified =
-      stage.id === "ACTIVE" &&
-      stageItems.length > 0 &&
-      failed === 0 &&
-      tested.length > 0 &&
-      !stale;
-
-    return {
-      ...stage,
-      count:
-        stage.id === "DRAFT"
-          ? draftCount
-          : stage.id === "ACTIVE"
-          ? activeCount
-          : stage.id === "NEEDS_IMPROVEMENT"
-          ? needsImprovementCount
-          : retiredCount,
-      passRate,
-      needsAttention,
-      certified,
-      lastValidatedLabel: lastValidatedTs
-        ? formatRelative(new Date(lastValidatedTs), nowRef)
-        : "Never",
-      accent: accentMap[stage.accent] || accentMap.slate,
-      icon:
-        stage.id === "DRAFT"
-          ? Activity
-          : stage.id === "ACTIVE"
-          ? CheckSquare
-          : stage.id === "NEEDS_IMPROVEMENT"
-          ? AlertTriangle
-          : Square,
-    };
-  });
-  const healthyCount = detections.filter((d) => {
-    const healthState = deriveHealthState(d);
-    return healthState === "HEALTHY";
-  }).length;
-
-  // Keep lifecycle logic in code for future reuse, but hide the UI block per request.
-  const showLifecycleStages = false;
-
-  const handleSort = (field: "title" | "technique_id" | "last_tested_at" | "last_score" | "last_result" | "last_pass_at" | "last_fail_at") => {
-    if (sortField === field) {
-      setSortDirection(sortDirection === "asc" ? "desc" : "asc");
-    } else {
-      setSortField(field);
-      setSortDirection("asc");
-    }
-  };
-
-  const filteredAlerts = alerts.filter((a) => {
-    const matchesText =
-      !alertSearch ||
-      a.name.toLowerCase().includes(alertSearch.toLowerCase().trim()) ||
-      (a.host || "").toLowerCase().includes(alertSearch.toLowerCase().trim());
-
-    const matchesSeverity =
-      alertSeverityFilter === "all" ||
-      (a.severity || "").toLowerCase() === alertSeverityFilter.toLowerCase();
-
-    return matchesText && matchesSeverity;
-  });
-
-  const isLifecycleFiltered = lifecycleFilter !== "all";
-  const isOtherFiltered =
-    !!searchTitle ||
-    !!searchTechnique ||
-    !!searchSiem ||
-    filterSeverity !== "all" ||
-    filterPriority !== "all" ||
-    filterHealthState !== "all" ||
-    filterSiemType !== "all" ||
-    testingFilter !== "all";
-
-  const activeFilterCount = [
-    searchTitle ? 1 : 0,
-    searchTechnique ? 1 : 0,
-    searchSiem ? 1 : 0,
-    filterSeverity !== "all" ? 1 : 0,
-    filterPriority !== "all" ? 1 : 0,
-    filterHealthState !== "all" ? 1 : 0,
-    filterSiemType !== "all" ? 1 : 0,
-    testingFilter !== "all" ? 1 : 0,
-    lifecycleFilter !== "all" ? 1 : 0,
-  ].reduce((a, b) => a + b, 0);
-
-  const clearAllFilters = () => {
-    setSearchTitle("");
-    setSearchTechnique("");
-    setSearchSiem("");
-    setFilterSeverity("all");
-    setFilterPriority("all");
-    setFilterHealthState("all");
-    setFilterSiemType("all");
-    setTestingFilter("all");
-    setLifecycleFilter("all");
-  };
-
-  // Bulk actions
-  const handleSelectAll = () => {
-    if (selectedDetections.size === filteredDetections.length) {
-      setSelectedDetections(new Set());
-    } else {
-      setSelectedDetections(new Set(filteredDetections.map(d => d.id)));
-    }
-  };
-
-  const handleSelectDetection = (id: string) => {
-    const newSelected = new Set(selectedDetections);
-    const detection = detections.find(d => d.id === id);
-    
-    if (newSelected.has(id)) {
-      newSelected.delete(id);
-      // If this was the selected detection, clear it
-      if (selectedDetection?.id === id) {
-        setSelectedDetection(null);
-        setAlerts([]);
-        setSidebarOpen(false);
-      }
-    } else {
-      newSelected.add(id);
-      // Select this detection for details view
-      if (detection) {
-        setSelectedDetection(detection);
-        setSidebarOpen(true);
-        void loadAlertsForDetection(detection);
-      }
-    }
-    setSelectedDetections(newSelected);
-  };
-
-  const handleExport = () => {
-    const selected = filteredDetections.filter(d => selectedDetections.has(d.id));
-    const dataToExport = selected.length > 0 ? selected : filteredDetections;
-    
-    const csv = [
-      ["ID", "Title", "Technique ID", "SIEM Type", "Status", "Health Score", "Last Tested", "Last Result"].join(","),
-      ...dataToExport.map(d => [
-        d.id,
-        `"${(d.title || "").replace(/"/g, '""')}"`,
-        d.technique_id || "",
-        d.siem_type || "",
-        d.status || "",
-        d.last_score?.toString() || "",
-        d.last_tested_at || "",
-        d.last_result || "",
-      ].join(","))
-    ].join("\n");
-
-    const blob = new Blob([csv], { type: "text/csv" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `detections-${format(now || new Date(), "yyyy-MM-dd")}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
-  };
-
-  const allSelected = filteredDetections.length > 0 && selectedDetections.size === filteredDetections.length;
-  const someSelected = selectedDetections.size > 0 && selectedDetections.size < filteredDetections.length;
+  const trustPercent = counts.total > 0 ? Math.round((counts.trusted / counts.total) * 100) : 0;
 
   return (
-    <div className="min-h-screen flex flex-col" role="main" aria-label="Detection Workspace">
-      {/* Screen reader announcements */}
-      <div role="status" aria-live="polite" aria-atomic="true" className="sr-only">
-        {announcement}
+    <PageContainer maxWidth="full" className="space-y-5">
+      {/* Ã¢â€â‚¬Ã¢â€â‚¬ Trust posture hero Ã¢â€â‚¬Ã¢â€â‚¬ */}
+      <div className="rounded-2xl border border-[var(--stroke-soft)] bg-[var(--surface-card)] p-6 shadow-[var(--shadow-soft)]">
+        <div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
+          <div className="flex items-center gap-4">
+            <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-slate-100 dark:bg-white/5">
+              <Shield className="h-6 w-6 text-slate-700 dark:text-slate-200" />
+            </div>
+            <div>
+              <h1 className="text-2xl font-bold text-[var(--foreground)]">Detections</h1>
+              <p className="text-sm text-slate-500 dark:text-slate-400">
+                {counts.total} detections &middot; {trustPercent}% trusted posture
+              </p>
+            </div>
           </div>
+          <div className="flex items-center gap-2">
+            <Link href="/run-test">
+              <Button className="h-10 rounded-full bg-black px-5 text-white hover:bg-slate-800 dark:bg-white dark:text-black dark:hover:bg-slate-200">
+                <Play className="mr-2 h-4 w-4" />
+                Start validation
+              </Button>
+            </Link>
+          </div>
+        </div>
 
-      {/* Unified hero header */}
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-1 pb-6">
-        <PageHeader
-          eyebrow="Detection workspace"
-          title="Detection Workspace"
-          subtitle="Manage and validate your detection engineering portfolio"
-          icon={<Shield className="h-5 w-5" />}
-        />
+        {/* Segmented trust bar */}
+        {counts.total > 0 && (
+          <div className="mt-5">
+            <div className="flex h-3 overflow-hidden rounded-full bg-slate-100 dark:bg-white/5">
+              {counts.trusted > 0 && (
+                <div className="bg-emerald-500 transition-all" style={{ width: `${(counts.trusted / counts.total) * 100}%` }} />
+              )}
+              {counts.stale > 0 && (
+                <div className="bg-emerald-300 transition-all" style={{ width: `${(counts.stale / counts.total) * 100}%` }} />
+              )}
+              {counts.needsTuning > 0 && (
+                <div className="bg-rose-400 transition-all" style={{ width: `${(counts.needsTuning / counts.total) * 100}%` }} />
+              )}
+              {counts.telemetryGap > 0 && (
+                <div className="bg-amber-400 transition-all" style={{ width: `${(counts.telemetryGap / counts.total) * 100}%` }} />
+              )}
+              {counts.untested > 0 && (
+                <div className="bg-slate-300 dark:bg-slate-600 transition-all" style={{ width: `${(counts.untested / counts.total) * 100}%` }} />
+              )}
+            </div>
+            <div className="mt-3 flex flex-wrap gap-x-6 gap-y-1 text-xs">
+              <span className="flex items-center gap-1.5">
+                <span className="h-2 w-2 rounded-full bg-emerald-500" />
+                <span className="text-slate-600 dark:text-slate-400">Trusted {counts.trusted}</span>
+              </span>
+              {counts.stale > 0 && (
+                <span className="flex items-center gap-1.5">
+                  <span className="h-2 w-2 rounded-full bg-emerald-300" />
+                  <span className="text-slate-600 dark:text-slate-400">Stale {counts.stale}</span>
+                </span>
+              )}
+              <span className="flex items-center gap-1.5">
+                <span className="h-2 w-2 rounded-full bg-rose-400" />
+                <span className="text-slate-600 dark:text-slate-400">Needs tuning {counts.needsTuning}</span>
+              </span>
+              <span className="flex items-center gap-1.5">
+                <span className="h-2 w-2 rounded-full bg-amber-400" />
+                <span className="text-slate-600 dark:text-slate-400">Telemetry gap {counts.telemetryGap}</span>
+              </span>
+              <span className="flex items-center gap-1.5">
+                <span className="h-2 w-2 rounded-full bg-slate-300 dark:bg-slate-600" />
+                <span className="text-slate-600 dark:text-slate-400">Untested {counts.untested}</span>
+              </span>
+            </div>
+          </div>
+        )}
       </div>
 
-      {/* Main Content Area - Dynamic Layout */}
-      <div className="flex-1 w-full">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pb-12">
-          <div className="flex gap-6">
-            <div className="flex-1 space-y-6">
-              {/* Workspace Summary Section */}
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
-                <Link href="/detections/inventory" className="block h-full">
-                  <Card className="h-full border border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50 transition-all shadow-sm">
-                    <CardContent className="h-full flex items-center justify-between gap-4 px-5 py-6">
-                      <div className="space-y-1">
-                        <p className="text-xs font-display font-semibold text-slate-500 uppercase tracking-wider">Inventory</p>
-                        <p className="text-sm text-slate-600">Browse all detections</p>
-                      </div>
-                      <div className="h-12 w-12 rounded-xl bg-blue-50 border-2 border-blue-200 flex items-center justify-center shadow-sm">
-                        <Shield className="h-6 w-6 text-blue-500" />
-                      </div>
-                    </CardContent>
-                  </Card>
-                </Link>
-                <Link href="/mitre" className="block h-full">
-                  <Card className="h-full border border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50 transition-all shadow-sm">
-                    <CardContent className="h-full flex items-center justify-between gap-4 px-5 py-6">
-                      <div className="space-y-1">
-                        <p className="text-xs font-display font-semibold text-slate-500 uppercase tracking-wider">MITRE Coverage</p>
-                        <p className="text-sm text-slate-600">View ATT&CK coverage</p>
-                      </div>
-                      <div className="h-12 w-12 rounded-xl bg-emerald-50 border-2 border-emerald-200 flex items-center justify-center shadow-sm">
-                        <Target className="h-6 w-6 text-emerald-600" />
-                      </div>
-                    </CardContent>
-                  </Card>
-                </Link>
-                <Link href="/events" className="block h-full">
-                  <Card className="h-full border border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50 transition-all shadow-sm">
-                    <CardContent className="h-full flex items-center justify-between gap-4 px-5 py-6">
-                      <div className="space-y-1">
-                        <p className="text-xs font-display font-semibold text-slate-500 uppercase tracking-wider">Events</p>
-                        <p className="text-sm text-slate-600">Review events and related tests</p>
-                      </div>
-                      <div className="h-12 w-12 rounded-xl bg-amber-50 border-2 border-amber-200 flex items-center justify-center shadow-sm">
-                        <AlertTriangle className="h-6 w-6 text-amber-600" />
-                      </div>
-                    </CardContent>
-                  </Card>
-                </Link>
-              </div>
-
-              {/* Filter Banner - Show when filters are active */}
-              {activeFilterCount > 0 && catalogDetections.length === 0 && (
-                <div className="mb-3 p-3 rounded-lg border border-amber-500/30 bg-amber-500/10 backdrop-blur-sm flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <AlertTriangle className="h-4 w-4 text-amber-400" />
-                    <p className="text-sm text-amber-200">
-                      Results filtered by {activeFilterCount} filter{activeFilterCount > 1 ? "s" : ""} — 
-                      <button 
-                        onClick={clearAllFilters}
-                        className="ml-1 underline hover:text-amber-100 font-medium"
-                      >
-                        click to clear
-                      </button>
-                    </p>
-                  </div>
-                </div>
+      {/* Ã¢â€â‚¬Ã¢â€â‚¬ View switcher + search Ã¢â€â‚¬Ã¢â€â‚¬ */}
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex items-center gap-1 rounded-lg border border-[var(--stroke-soft)] bg-[var(--surface-elevated)] p-1">
+          {(["queue", "library"] as WorkspaceView[]).map((v) => (
+            <button
+              key={v}
+              type="button"
+              onClick={() => setView(v)}
+              className={cn(
+                "rounded-md px-4 py-2 text-sm font-medium transition",
+                activeView === v
+                  ? "bg-[var(--surface-card)] text-[var(--foreground)] shadow-sm"
+                  : "text-slate-500 hover:text-[var(--foreground)] dark:text-slate-400"
               )}
-
-              {/* Filters Section - Unique Card Design */}
-              <div className="grid grid-cols-1 gap-4 w-full flex-shrink-0">
-                {showLifecycleStages && (
-                  <Card
-                    className="overflow-hidden border border-slate-200 bg-white shadow-sm w-full"
-                    data-tour="lifecycle-filter"
-                  >
-                    <CardHeader className="pb-3 border-b border-slate-200">
-                      <div className="flex items-center justify-between gap-3 flex-wrap">
-                        <div className="flex items-center gap-2">
-                          <div className="h-9 w-9 rounded-lg bg-slate-100 border border-slate-200 flex items-center justify-center">
-                            <Activity className="h-4 w-4 text-slate-700" />
-                          </div>
-                          <div>
-                            <CardTitle className="text-base font-display font-semibold text-slate-900">
-                              Lifecycle Stages
-                            </CardTitle>
-                            <p className="text-xs font-body text-slate-500 mt-0.5">
-                              Track progress and tune detections by stage
-                            </p>
-                          </div>
-                        </div>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => setLifecycleFilter("all")}
-                          className="h-8 px-3 text-xs text-slate-700 hover:bg-slate-100"
-                          aria-label="Show all lifecycle stages"
-                        >
-                          Show all
-                        </Button>
-                      </div>
-                    </CardHeader>
-
-                    <CardContent className="pt-3">
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                        {stageStats.map((stage, idx) => {
-                          const Icon = stage.icon;
-                          const isActive = lifecycleFilter === stage.id;
-                          const accent = stage.accent;
-                          return (
-                            <div
-                              key={stage.id}
-                              role="button"
-                              tabIndex={0}
-                              onClick={() =>
-                                setLifecycleFilter(
-                                  stage.id as typeof lifecycleFilter
-                                )
-                              }
-                              onKeyDown={(e) => {
-                                if (e.key === "Enter" || e.key === " ") {
-                                  e.preventDefault();
-                                  setLifecycleFilter(
-                                    stage.id as typeof lifecycleFilter
-                                  );
-                                }
-                              }}
-                              aria-label={`Filter by ${stage.label} (${stage.count} detections)`}
-                              aria-pressed={isActive}
-                              className={cn(
-                                "group relative w-full text-left rounded-xl border transition-all duration-200 bg-white cursor-pointer",
-                                "hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:ring-offset-2",
-                                isActive
-                                  ? `border ${accent.borderActive} shadow-lg`
-                                  : "border-slate-200"
-                              )}
-                              style={{ animationDelay: `${idx * 40}ms` }}
-                            >
-                              <div className="relative z-10 p-4 space-y-2">
-                                <div className="flex items-start justify-between gap-3">
-                                  <div
-                                    className={cn(
-                                      "h-9 w-9 rounded-lg flex items-center justify-center border",
-                                      accent.iconBg,
-                                      isActive
-                                        ? accent.borderActive
-                                        : "border-slate-200"
-                                    )}
-                                  >
-                                    <Icon
-                                      className={cn(
-                                        "h-4 w-4",
-                                        accent.iconText,
-                                        isActive && "opacity-90"
-                                      )}
-                                    />
-                                  </div>
-                                  <div className="flex items-center gap-2">
-                                    {stage.certified && (
-                                      <Badge className="text-[11px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
-                                        Certified
-                                      </Badge>
-                                    )}
-                                    {stage.needsAttention && (
-                                      <Badge className="text-[11px] font-semibold bg-amber-50 text-amber-700 border border-amber-200">
-                                        Needs attention
-                                      </Badge>
-                                    )}
-                                    <Badge
-                                      className={cn(
-                                        "text-[11px] font-bold px-2 py-0.5 border",
-                                        isActive ? accent.badge : accent.badgeMuted
-                                      )}
-                                    >
-                                      {stage.count}
-                                    </Badge>
-                                  </div>
-                                </div>
-                                <div>
-                                  <p className="text-sm font-semibold text-slate-900">
-                                    {stage.label}
-                                  </p>
-                                  <p className="text-xs text-slate-600 leading-relaxed">
-                                    {stage.description}
-                                  </p>
-                                </div>
-                                <div className="flex items-center justify-between text-xs text-slate-600">
-                                  <div className="flex items-center gap-2">
-                                    <Clock className="h-3.5 w-3.5 text-slate-400" />
-                                    <span>
-                                      Last validated: {stage.lastValidatedLabel}
-                                    </span>
-                                  </div>
-                                  <div className="flex items-center gap-2">
-                                    <TrendingUp className="h-3.5 w-3.5 text-slate-400" />
-                                    <span>
-                                      {stage.passRate !== null
-                                        ? `Pass rate: ${stage.passRate}%`
-                                        : "Pass rate: n/a"}
-                                    </span>
-                                  </div>
-                                </div>
-                                <div className="flex items-center gap-2 pt-1">
-                                  <Button
-                                    variant="outline"
-                                    size="sm"
-                                    className="h-8 px-3 text-xs border-slate-200 text-slate-800 hover:border-slate-300"
-                                    onClick={(e) => {
-                                      e.preventDefault();
-                                      setLifecycleFilter(
-                                        stage.id as typeof lifecycleFilter
-                                      );
-                                    }}
-                                  >
-                                    View items
-                                  </Button>
-                                  <Link href="/tests">
-                                    <Button
-                                      variant="ghost"
-                                      size="sm"
-                                      className="h-8 px-3 text-xs text-indigo-700 hover:bg-indigo-50"
-                                    >
-                                      Run validation
-                                    </Button>
-                                  </Link>
-                                </div>
-                              </div>
-                              {isActive && (
-                                <div className={cn("absolute bottom-0 left-0 right-0 h-1", accent.bar)} />
-                              )}
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </CardContent>
-                  </Card>
-                )}
-              </div>
-
-              {/* Detection Catalog - Enhanced & Seamless */}
-              <div className="mt-2">
-                  {/* Detection Catalog - Table Widget */}
-                  <Card>
-                    <CardHeader className="flex flex-row items-center justify-between pb-3">
-                      <div className="flex items-center gap-2">
-                        <Shield className="h-4 w-4 text-indigo-300" />
-                        <CardTitle className="text-base font-display font-semibold text-slate-100">
-                          Detection Catalog
-                        </CardTitle>
-                        {catalogDetections.length > 0 && (
-                          <Badge className="text-[10px] px-1.5 py-0 bg-slate-800/50 text-slate-400">
-                            {catalogDetections.length}
-                          </Badge>
-                        )}
-                      </div>
-                      <div className="flex items-center gap-2">
-                        {selectedDetections.size > 0 && selectedDetection && (
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => setSidebarOpen(!sidebarOpen)}
-                            className="h-7 px-2 text-xs"
-                            title={sidebarOpen ? "Hide Details" : "Show Details"}
-                          >
-                            {sidebarOpen ? <PanelRightClose className="h-3.5 w-3.5" /> : <PanelRightOpen className="h-3.5 w-3.5" />}
-                          </Button>
-                        )}
-                        {selectedDetections.size > 0 && (
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={handleExport}
-                            className="h-7 px-2 text-xs"
-                          >
-                            <Download className="h-3.5 w-3.5 mr-1" />
-                            Export ({selectedDetections.size})
-                          </Button>
-                        )}
-                        <Select value={catalogTimeFilter} onValueChange={(value: "24h" | "7d" | "30d" | "90d" | "all") => setCatalogTimeFilter(value)}>
-                          <SelectTrigger className="h-9 w-[140px] text-xs bg-white border-slate-200 text-slate-900 hover:border-indigo-200 hover:bg-indigo-50">
-                            <Clock className="h-3.5 w-3.5 mr-1.5 text-slate-500" />
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent className="bg-white border border-slate-200 shadow-lg">
-                            <SelectItem value="24h" className="text-xs">24h</SelectItem>
-                            <SelectItem value="7d" className="text-xs">7d</SelectItem>
-                            <SelectItem value="30d" className="text-xs">30d</SelectItem>
-                            <SelectItem value="90d" className="text-xs">90d</SelectItem>
-                            <SelectItem value="all" className="text-xs">All</SelectItem>
-                          </SelectContent>
-                        </Select>
-                      </div>
-                    </CardHeader>
-                    <CardContent className="p-0">
-                      {catalogDetections.length === 0 ? (
-                        <div className="p-12 text-center" role="status" aria-live="polite">
-                          <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-muted/30 mb-4">
-                            <AlertTriangle className="h-8 w-8 text-muted-foreground/60" aria-hidden="true" />
-                          </div>
-                          <h3 className="text-lg font-semibold text-foreground mb-2">No detections found</h3>
-                          <p className="text-sm text-muted-foreground mb-6 max-w-md mx-auto">
-                            {catalogTimeFilter === "all" 
-                              ? "No detections have been tested yet." 
-                              : `No detections tested ${catalogTimeFilter === "24h" ? "in the last 24 hours" : catalogTimeFilter === "7d" ? "in the last 7 days" : catalogTimeFilter === "30d" ? "in the last 30 days" : "in the last 90 days"}.`}
-                          </p>
-                          {activeFilterCount > 0 && (
-                            <Button variant="outline" onClick={clearAllFilters} className="mt-2">
-                              Clear Filters
-                            </Button>
-                          )}
-                        </div>
-                      ) : (
-                    <>
-                    <div className={cn(
-                      "w-full transition-all duration-300 flex-1 overflow-y-auto overflow-x-hidden",
-                      "hide-scrollbar"
-                    )}>
-                      <div className="overflow-y-auto overflow-x-hidden hide-scrollbar">
-                      <Table className="w-full" data-tour="detection-table">
-                    <TableHeader>
-                          <TableRow className="border-slate-200 bg-slate-50">
-                            <TableHead className="w-[40px] px-3 py-2">
-                              <Checkbox
-                                checked={paginatedCatalogDetections.length > 0 && paginatedCatalogDetections.every(d => selectedDetections.has(d.id))}
-                                onCheckedChange={(checked) => {
-                                  if (checked) {
-                                    const newSelected = new Set(selectedDetections);
-                                    paginatedCatalogDetections.forEach(d => newSelected.add(d.id));
-                                    setSelectedDetections(newSelected);
-                                  } else {
-                                    const newSelected = new Set(selectedDetections);
-                                    paginatedCatalogDetections.forEach(d => newSelected.delete(d.id));
-                                    setSelectedDetections(newSelected);
-                                  }
-                                }}
-                                className="data-[state=checked]:bg-emerald-500"
-                              />
-                        </TableHead>
-                            <TableHead className="text-xs font-display text-slate-400 font-semibold uppercase tracking-wider px-3 py-2 min-w-[180px]">Detection</TableHead>
-                            <TableHead className="text-xs font-display text-slate-400 font-semibold uppercase tracking-wider px-3 py-2 whitespace-nowrap">
-                              <button
-                                type="button"
-                                onClick={() => handleSort("last_result")}
-                                className="flex items-center gap-1.5 hover:text-slate-700 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500/50 rounded px-1 py-0.5"
-                                aria-label={`Sort by Last Result ${sortField === "last_result" ? (sortDirection === "asc" ? "ascending" : "descending") : ""}`}
-                                aria-sort={sortField === "last_result" ? (sortDirection === "asc" ? "ascending" : "descending") : "none"}
-                              >
-                                Last Result
-                                <ArrowUpDown className="h-3.5 w-3.5" />
-                              </button>
-                        </TableHead>
-                            <TableHead className="text-[10px] text-slate-400 font-semibold uppercase tracking-wider px-2 py-1.5 whitespace-nowrap">
-                              <button
-                                type="button"
-                                onClick={() => handleSort("last_score")}
-                                className="flex items-center gap-1.5 hover:text-slate-700 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500/50 rounded px-1 py-0.5"
-                                aria-label={`Sort by Health Score ${sortField === "last_score" ? (sortDirection === "asc" ? "ascending" : "descending") : ""}`}
-                                aria-sort={sortField === "last_score" ? (sortDirection === "asc" ? "ascending" : "descending") : "none"}
-                              >
-                                Health Score
-                                <ArrowUpDown className="h-3.5 w-3.5" />
-                              </button>
-                            </TableHead>
-                            <TableHead className="text-xs font-display text-slate-400 font-semibold uppercase tracking-wider px-3 py-2 whitespace-nowrap">Health State</TableHead>
-                            <TableHead className="text-xs font-display text-slate-400 font-semibold uppercase tracking-wider px-3 py-2 whitespace-nowrap">
-                              <button
-                                type="button"
-                                onClick={() => handleSort("last_tested_at")}
-                                className="flex items-center gap-1.5 hover:text-slate-700 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500/50 rounded px-1 py-0.5"
-                                aria-label={`Sort by Last Tested ${sortField === "last_tested_at" ? (sortDirection === "asc" ? "ascending" : "descending") : ""}`}
-                                aria-sort={sortField === "last_tested_at" ? (sortDirection === "asc" ? "ascending" : "descending") : "none"}
-                              >
-                                Last Tested
-                                <ArrowUpDown className="h-3.5 w-3.5" />
-                              </button>
-                            </TableHead>
-                            <TableHead className="text-[10px] text-slate-400 font-semibold uppercase tracking-wider px-2 py-1.5 whitespace-nowrap">
-                              <button
-                                type="button"
-                                onClick={() => handleSort("last_pass_at")}
-                                className="flex items-center gap-1.5 hover:text-slate-700 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500/50 rounded px-1 py-0.5"
-                                aria-label={`Sort by Last Pass ${sortField === "last_pass_at" ? (sortDirection === "asc" ? "ascending" : "descending") : ""}`}
-                                aria-sort={sortField === "last_pass_at" ? (sortDirection === "asc" ? "ascending" : "descending") : "none"}
-                              >
-                                Last Pass
-                                <ArrowUpDown className="h-3.5 w-3.5" />
-                              </button>
-                            </TableHead>
-                            <TableHead className="text-[10px] text-slate-400 font-semibold uppercase tracking-wider px-2 py-1.5 whitespace-nowrap">
-                              <button
-                                type="button"
-                                onClick={() => handleSort("last_fail_at")}
-                                className="flex items-center gap-1.5 hover:text-slate-700 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500/50 rounded px-1 py-0.5"
-                                aria-label={`Sort by Last Fail ${sortField === "last_fail_at" ? (sortDirection === "asc" ? "ascending" : "descending") : ""}`}
-                                aria-sort={sortField === "last_fail_at" ? (sortDirection === "asc" ? "ascending" : "descending") : "none"}
-                              >
-                                Last Fail
-                                <ArrowUpDown className="h-3.5 w-3.5" />
-                              </button>
-                        </TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {paginatedCatalogDetections.map((detection, index) => {
-                        const isSelected = selectedDetection?.id === detection.id;
-                        const healthState = deriveHealthState(detection);
-                            
-                        return (
-                          <TableRow
-                            key={detection.id}
-                                className={cn(
-                                  "border-slate-200 bg-white cursor-pointer transition-colors duration-150",
-                                  "hover:bg-slate-50 focus-within:bg-slate-50 focus-within:ring-2 focus-within:ring-indigo-200",
-                                  isSelected && "border-l-4 border-l-indigo-400 bg-indigo-50 shadow-sm",
-                                  "animate-fade-in-scale"
-                                )}
-                                style={{ animationDelay: `${index * 30}ms` }}
-                            onClick={() => {
-                              // Toggle checkbox selection when clicking row
-                              handleSelectDetection(detection.id);
-                            }}
-                            onKeyDown={(e) => {
-                              if (e.key === "Enter" || e.key === " ") {
-                                e.preventDefault();
-                                handleSelectDetection(detection.id);
-                              }
-                            }}
-                            role="button"
-                            tabIndex={0}
-                            aria-label={`Select ${detection.title}, ${healthState} health state`}
-                            aria-selected={isSelected}
-                          >
-                                <TableCell className="w-[40px] px-3 py-2">
-                                  <Checkbox
-                                    checked={selectedDetections.has(detection.id)}
-                                    onCheckedChange={() => handleSelectDetection(detection.id)}
-                                    onClick={(e) => e.stopPropagation()}
-                                    className="data-[state=checked]:bg-emerald-500 focus-visible:ring-2 focus-visible:ring-emerald-500/50 transition-all duration-200"
-                                    aria-label={`Select ${detection.title}`}
-                                  />
-                                </TableCell>
-                                <TableCell className="px-3 py-2.5">
-                                  <div className="flex flex-col gap-1.5">
-                                    <span className="font-semibold text-slate-900 text-sm leading-tight">{detection.title}</span>
-                                    <div className="flex items-center gap-2 text-xs text-slate-600">
-                                      {detection.technique_id && (
-                                        <span className="font-mono text-slate-700">{detection.technique_id}</span>
-                                      )}
-                                      {detection.technique_id && detection.siem_type && (
-                                        <span className="text-slate-500">·</span>
-                                      )}
-                                      {detection.siem_type && (
-                                        <span className="uppercase text-slate-700">{detection.siem_type}</span>
-                                )}
-                                    </div>
-                                  </div>
-                            </TableCell>
-                                <TableCell className="px-3 py-2.5 whitespace-nowrap">
-                                  {detection.last_result ? (
-                                    <Badge className={cn(
-                                      "text-xs font-semibold px-2 py-0.5",
-                                      detection.last_result === "PASS" && "bg-emerald-50 text-emerald-700 border border-emerald-200",
-                                      detection.last_result === "FAIL" && "bg-red-50 text-red-700 border border-red-200",
-                                      detection.last_result === "INCONCLUSIVE" && "bg-amber-50 text-amber-700 border border-amber-200",
-                                      !["PASS", "FAIL", "INCONCLUSIVE"].includes(detection.last_result) && "bg-slate-100 text-slate-700 border border-slate-200"
-                                    )}>
-                                      {detection.last_result}
-                                    </Badge>
-                                  ) : (
-                                    <span className="text-slate-500 text-xs font-medium">Never tested</span>
-                                  )}
-                            </TableCell>
-                                <TableCell className="px-3 py-2.5 whitespace-nowrap">
-                                  <div className="flex items-center gap-2">
-                                    {typeof detection.last_score === "number" ? (
-                                      <>
-                                        <span className={cn(
-                                          "text-sm font-bold",
-                                          detection.last_score >= 80 && "text-emerald-400",
-                                          detection.last_score >= 50 && detection.last_score < 80 && "text-amber-400",
-                                          detection.last_score < 50 && "text-red-400"
-                                        )}>
-                                          {detection.last_score}
-                                </span>
-                                        <span className="text-xs text-slate-500">/100</span>
-                                      </>
-                                    ) : (
-                                      <span className="text-slate-500 text-xs font-medium">N/A</span>
-                                    )}
-                              </div>
-                            </TableCell>
-                                <TableCell className="px-3 py-2.5 whitespace-nowrap">
-                                  <Badge className={cn(getHealthBadgeClass(healthState), "text-xs font-semibold px-2 py-0.5")}>
-                                    {getHealthLabel(healthState)}
-                              </Badge>
-                            </TableCell>
-                                <TableCell className="text-slate-400 text-xs font-body px-3 py-2.5 font-medium whitespace-nowrap">
-                              {detection.last_tested_at
-                                    ? now ? formatRelative(new Date(detection.last_tested_at), now) : format(new Date(detection.last_tested_at), "MMM dd, yyyy")
-                                : "Never"}
-                            </TableCell>
-                                <TableCell className="text-slate-400 text-xs font-body px-3 py-2.5 font-medium whitespace-nowrap">
-                                  {detection.last_pass_at
-                                    ? now ? formatRelative(new Date(detection.last_pass_at), now) : format(new Date(detection.last_pass_at), "MMM dd, yyyy")
-                                    : "—"}
-                                </TableCell>
-                                <TableCell className="text-slate-400 text-xs font-body px-3 py-2.5 font-medium whitespace-nowrap">
-                                  {detection.last_fail_at
-                                    ? now ? formatRelative(new Date(detection.last_fail_at), now) : format(new Date(detection.last_fail_at), "MMM dd, yyyy")
-                                    : "—"}
-                            </TableCell>
-                          </TableRow>
-                        );
-                      })}
-                    </TableBody>
-                  </Table>
-                      </div>
-                </div>
-                      {/* Pagination Controls */}
-                      {catalogDetections.length > itemsPerPage && (
-                        <div className="flex items-center justify-between px-4 sm:px-6 py-4 border-t border-slate-200/70">
-                          <div className="text-sm text-slate-400">
-                            Showing {catalogPage * itemsPerPage + 1}-{Math.min((catalogPage + 1) * itemsPerPage, catalogDetections.length)} of {catalogDetections.length} detections
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              onClick={() => setCatalogPage((p) => Math.max(0, p - 1))}
-                              disabled={catalogPage === 0}
-                              className="h-8 w-8 p-0 focus-visible:ring-2 focus-visible:ring-indigo-500/50 transition-all duration-200 disabled:opacity-40 disabled:cursor-not-allowed"
-                              title="Previous page"
-                              aria-label="Go to previous page"
-                            >
-                              <ChevronLeft className="h-4 w-4" />
-                            </Button>
-                            <div className="text-sm text-slate-400 px-3">
-                              Page {catalogPage + 1} of {totalCatalogPages}
-                            </div>
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              onClick={() => setCatalogPage((p) => Math.min(totalCatalogPages - 1, p + 1))}
-                              disabled={catalogPage >= totalCatalogPages - 1}
-                              className="h-8 w-8 p-0 focus-visible:ring-2 focus-visible:ring-indigo-500/50 transition-all duration-200 disabled:opacity-40 disabled:cursor-not-allowed"
-                              title="Next page"
-                              aria-label="Go to next page"
-                            >
-                              <ChevronRight className="h-4 w-4" />
-                            </Button>
-                          </div>
-                        </div>
-                      )}
-                    </>
-                  )}
-                    </CardContent>
-                  </Card>
-                </div>
-              </div>
-            </div>
-          </div>
-
-        {/* Backdrop overlay when panel is open */}
-        {selectedDetection && sidebarOpen && (
-          <div 
-            className="fixed inset-0 bg-black/20 backdrop-blur-sm z-40 transition-opacity duration-300"
-            onClick={() => {
-              setSelectedDetection(null);
-              setAlerts([]);
-              setSidebarOpen(false);
-            }}
+            >
+              {v === "queue" ? "Queue" : "Library"}
+            </button>
+          ))}
+        </div>
+        <div className="relative max-w-sm flex-1">
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400 dark:text-slate-500" />
+          <Input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search detections..."
+            className="h-10 border-[var(--stroke-soft)] bg-[var(--surface-card)] pl-9"
           />
-        )}
-
-        {/* Right Panel - Detail View - Slide in from the right side */}
-        <div className={cn(
-          "fixed right-0 top-0 bottom-0 border-l border-slate-200 bg-white shadow-2xl overflow-hidden z-50",
-          selectedDetection && sidebarOpen
-            ? "w-[420px] opacity-100 visible flex flex-col min-h-0" 
-            : "w-0 opacity-0 invisible pointer-events-none border-0"
-        )}
-        style={{
-          transform: selectedDetection && sidebarOpen ? 'translateX(0)' : 'translateX(100%)',
-          transition: 'transform 300ms cubic-bezier(0.4, 0, 0.2, 1), width 300ms cubic-bezier(0.4, 0, 0.2, 1), opacity 200ms ease-in-out',
-        }}>
-          {selectedDetection && sidebarOpen && (
-            <div className="flex-1 overflow-y-auto overflow-x-hidden hide-scrollbar p-4 sm:p-5 lg:p-6 relative z-10 min-h-0">
-              {(() => {
-                const healthState = deriveHealthState(selectedDetection);
-                const narrative = getHealthNarrative(healthState);
-                const HealthIcon = healthState === "HEALTHY" ? CheckCircle2 : healthState === "DETECTION_FAILED" ? XCircle : healthState === "TELEMETRY_MISSING" ? AlertTriangle : Clock;
-                
-                return (
-                  <div className="space-y-6">
-                    {/* Close Button */}
-                    <div className="flex justify-end mb-4">
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => {
-                          setSelectedDetection(null);
-                          setAlerts([]);
-                          setSidebarOpen(false);
-                        }}
-                        className="h-8 w-8 p-0 hover:bg-slate-100 rounded-lg border border-slate-200"
-                        title="Close"
-                      >
-                        <X className="h-4 w-4 text-slate-600" />
-                      </Button>
-                    </div>
-
-                    {/* Header Section */}
-                    <div className="pb-5 border-b border-slate-200">
-                      <div className="flex items-start gap-4 mb-4">
-                        <div className={cn(
-                          "h-12 w-12 rounded-xl flex items-center justify-center shadow-lg transition-all",
-                          getHealthBadgeClass(healthState)
-                        )}>
-                          <HealthIcon className="h-6 w-6" />
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <h3 className="text-lg font-display font-bold text-slate-900 mb-2 leading-tight">
-                            {selectedDetection.title}
-                          </h3>
-                          <div className="flex items-center gap-2.5 text-xs text-slate-600">
-                            <span className="font-mono bg-slate-100 px-2 py-1 rounded border border-slate-200 text-slate-700">{selectedDetection.technique_id}</span>
-                            <span className="text-slate-400">·</span>
-                            <span className="uppercase bg-slate-100 px-2 py-1 rounded border border-slate-200 text-slate-700">{selectedDetection.siem_type}</span>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Metrics Grid */}
-                    <div className="grid grid-cols-2 gap-3">
-                      <div className="rounded-xl border border-slate-200 bg-white p-4 hover:border-slate-300 transition-colors shadow-sm">
-                        <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-2 font-semibold">Last Test</div>
-                        <div className="text-base font-bold text-slate-900">
-                          {selectedDetection.last_tested_at
-                            ? now ? formatRelative(new Date(selectedDetection.last_tested_at), now) : format(new Date(selectedDetection.last_tested_at), "MMM dd, yyyy")
-                            : "Never"}
-                        </div>
-                      </div>
-                      <div className="rounded-xl border border-slate-200 bg-white p-4 hover:border-slate-300 transition-colors shadow-sm">
-                        <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-2 font-semibold">Score</div>
-                        <div className="text-base font-bold text-slate-900">
-                          {selectedDetection.last_score ?? "N/A"}
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Health Narrative */}
-                    <div className="rounded-xl border border-slate-200 bg-white p-6 space-y-5 shadow-sm">
-                      <div>
-                        <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-2 flex items-center gap-2">
-                          <Zap className="h-3 w-3" />
-                          What This Means
-                        </div>
-                        <p className="text-sm font-semibold text-slate-900 mb-2">{narrative.headline}</p>
-                        <p className="text-xs text-slate-600 leading-relaxed">{narrative.detail}</p>
-                      </div>
-                      <div className="pt-3 border-t border-slate-200">
-                        <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-2">Recommended Action</div>
-                        <p className="text-xs text-slate-700 leading-relaxed">{narrative.action}</p>
-                      </div>
-                    </div>
-
-                    {/* Action Buttons */}
-                    <div className="flex flex-col gap-3 pt-2">
-                      <Link href={`/detections/${selectedDetection.id}`}>
-                        <Button variant="outline" className="w-full border-slate-200 text-slate-700 hover:bg-slate-50">
-                          <Eye className="h-4 w-4 mr-2" />
-                          View Details
-                      </Button>
-                    </Link>
-                    <Link href={`/run-test?detectionId=${selectedDetection.id}`}>
-                      <Button variant="outline" className="w-full border-slate-200 text-slate-700 hover:bg-slate-50">
-                        <Play className="h-4 w-4 mr-2" />
-                        Re-run Validation
-                      </Button>
-                    </Link>
-                    <Button
-                      variant="outline"
-                      className="w-full border-slate-200 text-slate-700 hover:bg-slate-50"
-                      onClick={() => {
-                        if (typeof window !== "undefined") {
-                          window.location.href = `/agent?detectionId=${selectedDetection.id}`;
-                          }
-                        }}
-                      >
-                        <Cpu className="h-4 w-4 mr-2" />
-                        AI Insights
-                      </Button>
-                    </div>
-                  </div>
-                );
-              })()}
-            </div>
-          )}
         </div>
       </div>
+
+      {/* Ã¢â€â‚¬Ã¢â€â‚¬ Board (kanban) view Ã¢â€â‚¬Ã¢â€â‚¬ */}
+      {/* Coverage summary (collapsible) */}
+      <div className="rounded-2xl border border-[var(--stroke-soft)] bg-[var(--surface-card)] shadow-[var(--shadow-soft)] overflow-hidden">
+        <button
+          type="button"
+          onClick={() => setCoverageOpen(!coverageOpen)}
+          className="flex w-full cursor-pointer items-center justify-between px-5 py-4 text-left transition hover:bg-[var(--surface-elevated)]"
+        >
+          <div className="flex items-center gap-3">
+            <Radar className="h-5 w-5 text-slate-500 dark:text-slate-400" />
+            <div>
+              <span className="text-sm font-semibold text-[var(--foreground)]">Coverage Summary</span>
+              <span className="ml-3 text-xs text-slate-500 dark:text-slate-400">
+                {counts.untested} untested · {workspaceGaps.activeBlockers} blockers · {workspaceGaps.unmapped} unmapped
+              </span>
+            </div>
+          </div>
+          <ChevronDown className={cn("h-4 w-4 text-slate-400 transition-transform", coverageOpen && "rotate-180")} />
+        </button>
+        {coverageOpen && (
+          <div className="border-t border-[var(--stroke-soft)] px-5 py-5">
+            <div className="grid gap-6 lg:grid-cols-2">
+              <div className="space-y-3">
+                <h4 className="text-xs font-bold uppercase tracking-wider text-slate-400">Trust blockers</h4>
+                <CoverageRow label="Untested" count={counts.untested} total={counts.total} color="bg-slate-400" />
+                <CoverageRow label="Telemetry gap" count={counts.telemetryGap} total={counts.total} color="bg-amber-400" />
+                <CoverageRow label="Needs tuning" count={counts.needsTuning} total={counts.total} color="bg-rose-400" />
+                <CoverageRow label="Stale trust" count={counts.stale} total={counts.total} color="bg-emerald-300" />
+              </div>
+              <div className="space-y-3">
+                <h4 className="text-xs font-bold uppercase tracking-wider text-slate-400">Operational gaps</h4>
+                <GapRow label="Unassigned owners" value={workspaceGaps.unassigned} detail="Detections without someone accountable for tuning." />
+                <GapRow label="Active blockers" value={workspaceGaps.activeBlockers} detail="Blocked by telemetry gaps or failed validation." />
+                <GapRow label="Unmapped technique" value={workspaceGaps.unmapped} detail="Missing a MITRE technique mapping." />
+                <GapRow label="Stale trust" value={counts.stale} detail="Evidence old enough to warrant revalidation." />
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {activeView === "queue" && (
+        <div className="space-y-4">
+          <div className="rounded-2xl border border-[var(--stroke-soft)] bg-[var(--surface-card)] p-5 shadow-[var(--shadow-soft)]">
+            <h2 className="text-base font-semibold text-[var(--foreground)]">Detection queue</h2>
+            <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
+              Start with the items blocking trust, then work through first validations and stale records.
+            </p>
+          </div>
+          <div className="grid gap-4 lg:grid-cols-4">
+          {(["TELEMETRY_MISSING", "DETECTION_FAILED", "UNKNOWN", "HEALTHY"] as HealthStateKey[]).map((key) => {
+            const meta = HEALTH_META[key];
+            const items = buckets[key];
+            return (
+              <div key={key} className="flex flex-col rounded-2xl border border-[var(--stroke-soft)] bg-[var(--surface-elevated)]">
+                <div className="flex items-center gap-2 border-b border-[var(--stroke-soft)] px-4 py-3">
+                  <span className={cn("h-2.5 w-2.5 rounded-full", meta.bg)} />
+                  <span className="text-sm font-semibold text-[var(--foreground)]">{meta.label}</span>
+                  <span className="ml-auto rounded-full bg-[var(--surface-card)] px-2 py-0.5 text-xs font-semibold text-slate-500">
+                    {items.length}
+                  </span>
+                </div>
+                <div className="flex-1 space-y-2 overflow-y-auto p-3" style={{ maxHeight: "520px" }}>
+                  {items.length === 0 ? (
+                    <p className="px-2 py-6 text-center text-xs text-slate-400 dark:text-slate-500">
+                      {key === "HEALTHY" ? "No trusted detections yet" : "No items in queue"}
+                    </p>
+                  ) : (
+                    items.map((d) => (
+                      <button
+                        key={d.id}
+                        type="button"
+                        onClick={() => setOpened(d)}
+                        className="group w-full cursor-pointer rounded-xl border border-[var(--stroke-soft)] bg-[var(--surface-card)] p-3.5 text-left transition hover:border-slate-400 hover:shadow-[var(--shadow-soft)] dark:hover:border-white/20"
+                      >
+                        <div className="flex items-start justify-between gap-2">
+                          <p className="text-sm font-semibold text-[var(--foreground)] line-clamp-2">{d.title}</p>
+                          <ChevronRight className="mt-0.5 h-4 w-4 shrink-0 text-slate-300 transition group-hover:text-slate-500 dark:text-slate-600 dark:group-hover:text-slate-400" />
+                        </div>
+                        <div className="mt-2 flex flex-wrap items-center gap-2">
+                          {d.technique_id && (
+                            <span className="font-mono text-[11px] text-indigo-600 dark:text-indigo-400">{d.technique_id}</span>
+                          )}
+                          {d.siem_type && (
+                            <span className="text-[11px] text-slate-400">{d.siem_type.toUpperCase()}</span>
+                          )}
+                        </div>
+                        <div className="mt-2 flex items-center justify-between text-[11px] text-slate-500 dark:text-slate-400">
+                          <span>{getNextAction(d)}</span>
+                          <span>{d.owner || "Unassigned"}</span>
+                        </div>
+                      </button>
+                    ))
+                  )}
+                </div>
+              </div>
+            );
+          })}
+          </div>
+        </div>
+      )}
+
+      {/* Ã¢â€â‚¬Ã¢â€â‚¬ Library (table) view Ã¢â€â‚¬Ã¢â€â‚¬ */}
+      {activeView === "library" && (
+        <div className="space-y-4">
+          <div className="rounded-2xl border border-[var(--stroke-soft)] bg-[var(--surface-card)] p-5 shadow-[var(--shadow-soft)]">
+            <h2 className="text-base font-semibold text-[var(--foreground)]">Detection library</h2>
+            <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
+              Browse the full set by trust state, lifecycle, ownership, and latest validation evidence.
+            </p>
+          </div>
+          <div className="rounded-2xl border border-[var(--stroke-soft)] bg-[var(--surface-card)] shadow-[var(--shadow-soft)] overflow-hidden">
+            <Table>
+            <TableHeader>
+              <TableRow className="border-[var(--stroke-soft)]">
+                <TableHead>Detection</TableHead>
+                <TableHead>Trust state</TableHead>
+                <TableHead>Lifecycle</TableHead>
+                <TableHead>Next action</TableHead>
+                <TableHead>Owner</TableHead>
+                <TableHead>Last validated</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {filteredDetections.map((detection) => {
+                const health = deriveHealthState(detection);
+                const meta = HEALTH_META[health];
+                return (
+                  <TableRow
+                    key={detection.id}
+                    className="group cursor-pointer border-[var(--stroke-soft)] transition hover:bg-[var(--surface-elevated)]"
+                    onClick={() => setOpened(detection)}
+                  >
+                    <TableCell className="min-w-[260px]">
+                      <p className="text-sm font-semibold text-[var(--foreground)]">{detection.title}</p>
+                      <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                        {detection.technique_id || "No technique mapped"}
+                        {detection.siem_type ? ` · ${detection.siem_type.toUpperCase()}` : ""}
+                      </p>
+                    </TableCell>
+                    <TableCell><Badge className={meta.badge}>{meta.label}</Badge></TableCell>
+                    <TableCell className="text-sm text-slate-600 dark:text-slate-300">
+                      {normalizeStage(detection.status || detection.lifecycle_stage).replaceAll("_", " ").toLowerCase()}
+                    </TableCell>
+                    <TableCell className="text-sm text-slate-600 dark:text-slate-300">{getNextAction(detection)}</TableCell>
+                    <TableCell className="text-sm text-slate-600 dark:text-slate-300">{detection.owner || "Unassigned"}</TableCell>
+                    <TableCell className="text-sm text-slate-600 dark:text-slate-300">{getShortDate(detection.last_tested_at)}</TableCell>
+                    <TableCell className="w-8">
+                      <ChevronRight className="h-4 w-4 text-slate-300 transition group-hover:text-slate-500 dark:text-slate-600 dark:group-hover:text-slate-400" />
+                    </TableCell>
+                  </TableRow>
+                );
+              })}
+            </TableBody>
+            </Table>
+          </div>
+        </div>
+      )}
+
+      {/* Ã¢â€â‚¬Ã¢â€â‚¬ Coverage view Ã¢â€â‚¬Ã¢â€â‚¬ */}
+      {opened && <DetailPanel detection={opened} onClose={() => setOpened(null)} />}
+    </PageContainer>
+  );
+}
+
+function CoverageRow({ label, count, total, color }: { label: string; count: number; total: number; color: string }) {
+  const pct = total > 0 ? Math.round((count / total) * 100) : 0;
+  return (
+    <div className="flex items-center gap-4">
+      <span className="w-28 text-sm text-slate-600 dark:text-slate-300">{label}</span>
+      <div className="flex-1 h-2.5 rounded-full bg-slate-100 dark:bg-white/5 overflow-hidden">
+        <div className={cn("h-full rounded-full transition-all", color)} style={{ width: `${pct}%` }} />
+      </div>
+      <span className="w-16 text-right text-sm font-semibold text-[var(--foreground)]">{count}</span>
+    </div>
+  );
+}
+
+function GapRow({ label, value, detail }: { label: string; value: number; detail: string }) {
+  return (
+    <div className="rounded-xl bg-[var(--surface-elevated)] px-4 py-3">
+      <div className="flex items-center justify-between gap-3">
+        <span className="text-sm font-medium text-[var(--foreground)]">{label}</span>
+        <span className="text-lg font-semibold text-[var(--foreground)]">{value}</span>
+      </div>
+      <p className="mt-1 text-xs leading-5 text-slate-500 dark:text-slate-400">{detail}</p>
+    </div>
+  );
+}
+
+function DetailPanel({
+  detection,
+  onClose,
+}: {
+  detection: Detection;
+  onClose: () => void;
+}) {
+  const [visible, setVisible] = useState(false);
+  const health = deriveHealthState(detection);
+  const meta = HEALTH_META[health];
+  const Icon =
+    health === "HEALTHY"
+      ? CheckCircle2
+      : health === "DETECTION_FAILED"
+        ? XCircle
+        : health === "TELEMETRY_MISSING"
+          ? AlertTriangle
+          : Clock3;
+
+  useEffect(() => {
+    const frame = window.requestAnimationFrame(() => setVisible(true));
+    return () => window.cancelAnimationFrame(frame);
+  }, []);
+
+  function handleClose() {
+    setVisible(false);
+    window.setTimeout(onClose, 220);
+  }
+
+  return (
+    <>
+      <div
+        className={cn("fixed inset-0 z-40 bg-black/25 transition-opacity duration-200", visible ? "opacity-100" : "opacity-0")}
+        onClick={handleClose}
+      />
+      <aside
+        className={cn(
+          "fixed right-0 top-0 z-50 flex h-full w-full flex-col border-l border-[var(--stroke-soft)] bg-[var(--surface-card)] shadow-2xl transition-transform duration-300 ease-out sm:right-4 sm:top-4 sm:h-[calc(100vh-2rem)] sm:w-[42vw] sm:min-w-[500px] sm:max-w-[680px] sm:rounded-3xl sm:border",
+          visible ? "translate-x-0" : "translate-x-full"
+        )}
+      >
+        <div className="flex items-start justify-between gap-4 border-b border-[var(--stroke-soft)] p-6">
+          <div className="space-y-2">
+            <div className="flex items-center gap-3">
+              <div className={cn("flex h-11 w-11 items-center justify-center rounded-2xl border", meta.badge)}>
+                <Icon className="h-5 w-5" />
+              </div>
+              <div>
+                <h3 className="text-lg font-semibold text-[var(--foreground)]">{detection.title}</h3>
+                <p className="text-sm text-slate-600 dark:text-slate-400">{meta.headline}</p>
+              </div>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Badge className={meta.badge}>{meta.label}</Badge>
+              {detection.technique_id && <Badge variant="outline">{detection.technique_id}</Badge>}
+              {detection.siem_type && <Badge variant="outline">{detection.siem_type.toUpperCase()}</Badge>}
+            </div>
+          </div>
+          <Button variant="ghost" size="icon" onClick={handleClose}><X className="h-4 w-4" /></Button>
+        </div>
+
+        <div className="flex-1 space-y-4 overflow-y-auto p-6">
+          <DetailStat label="Trust state" value={meta.label} />
+          <DetailStat label="Next action" value={getNextAction(detection)} />
+          <DetailStat label="Owner" value={detection.owner || "Unassigned"} />
+          <DetailStat label="Last validated" value={getRelativeDate(detection.last_tested_at)} />
+          <DetailStat label="Last alert seen" value={getRelativeDate(detection.last_alert_at)} />
+          <DetailStat label="Lifecycle stage" value={normalizeStage(detection.status || detection.lifecycle_stage).replaceAll("_", " ").toLowerCase()} />
+          <div className="rounded-2xl border border-[var(--stroke-soft)] bg-[var(--surface-elevated)] p-5">
+            <p className="text-xs font-semibold uppercase tracking-[0.24em] text-slate-500 dark:text-slate-400">Why it matters</p>
+            <p className="mt-3 text-sm leading-6 text-slate-600 dark:text-slate-300">{meta.detail}</p>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-2 gap-2 border-t border-[var(--stroke-soft)] p-4">
+          <Link href={`/detections/${detection.id}`} className="col-span-2">
+            <Button variant="outline" className="w-full"><Eye className="mr-2 h-4 w-4" />Open trust record</Button>
+          </Link>
+          <Link href={`/run-test?detectionId=${detection.id}`}>
+            <Button variant="outline" className="w-full"><Play className="mr-2 h-4 w-4" />Validate</Button>
+          </Link>
+          <Link href={`/agent?detectionId=${detection.id}`}>
+            <Button variant="outline" className="w-full">Ask Watchtower</Button>
+          </Link>
+        </div>
+      </aside>
+    </>
+  );
+}
+
+function DetailStat({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-2xl border border-[var(--stroke-soft)] bg-[var(--surface-elevated)] p-4">
+      <p className="text-xs font-semibold uppercase tracking-[0.24em] text-slate-500 dark:text-slate-400">{label}</p>
+      <p className="mt-2 text-sm font-medium text-[var(--foreground)]">{value}</p>
     </div>
   );
 }
 
 export default function DetectionsPage() {
   return (
-    <Suspense fallback={<div className="min-h-screen bg-slate-950" />}>
-      <DetectionsPageContent />
+    <Suspense fallback={<div className="min-h-screen bg-[var(--surface-page)]" />}>
+      <DetectionsWorkspace />
     </Suspense>
   );
 }

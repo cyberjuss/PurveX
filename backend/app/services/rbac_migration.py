@@ -325,7 +325,7 @@ async def migrate_existing_users_if_needed():
         try:
             # Get role IDs - handle case where roles don't exist yet
             admin_result = await session.execute(
-                text("SELECT id FROM roles WHERE name = 'ADMINISTRATOR'")
+                text("SELECT id FROM roles WHERE name = 'ADMINISTRATOR' LIMIT 1")
             )
             admin_role = admin_result.scalar_one_or_none()
             if not admin_role:
@@ -335,7 +335,7 @@ async def migrate_existing_users_if_needed():
             admin_id = admin_role
             
             engineer_result = await session.execute(
-                text("SELECT id FROM roles WHERE name = 'DETECTION_ENGINEER'")
+                text("SELECT id FROM roles WHERE name = 'DETECTION_ENGINEER' LIMIT 1")
             )
             engineer_role = engineer_result.scalar_one_or_none()
             if not engineer_role:
@@ -383,6 +383,7 @@ async def migrate_existing_users_if_needed():
                     text("""
                         SELECT id FROM user_roles 
                         WHERE user_id = :user_id AND organization_id = :org_id
+                        LIMIT 1
                     """),
                     {"user_id": user_id, "org_id": user_org_id}
                 )

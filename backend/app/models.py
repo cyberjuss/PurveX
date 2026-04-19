@@ -29,7 +29,7 @@ class User(Base):
     email = Column(String, unique=True, index=True, nullable=False)
     hashed_password = Column(String, nullable=False)
     is_active = Column(Boolean, default=True)
-    is_admin = Column(Boolean, default=True)
+    is_admin = Column(Boolean, default=False)
     # org-level scoping for multi‑tenant deployments. All per-tenant data
     # (detections/tests/etc.) is associated with this organization.
     organization_id = Column(Integer, ForeignKey("organizations.id"), nullable=False, index=True)
@@ -97,7 +97,18 @@ class Detection(Base):
     lifecycle_stage = Column(String, default="identify")
     stage_changed_at = Column(DateTime(timezone=True), nullable=True)
     stage_changed_by = Column(Integer, ForeignKey("users.id"), nullable=True)
-    
+
+    # SIEM sync provenance — set when a detection was pulled from a SIEM
+    # rather than authored in PurveX. (siem_connection_id, external_id) is
+    # the upsert key for sync; content_hash detects upstream rule drift.
+    siem_connection_id = Column(Integer, ForeignKey("siem_connections.id"), nullable=True, index=True)
+    external_id = Column(String, nullable=True, index=True)
+    content_hash = Column(String, nullable=True)
+    source = Column(String, default="manual")  # "manual" | "siem_sync"
+    enabled_upstream = Column(Boolean, nullable=True)
+    last_synced_at = Column(DateTime(timezone=True), nullable=True)
+    drift_detected_at = Column(DateTime(timezone=True), nullable=True)
+
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     last_updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
@@ -182,10 +193,13 @@ class Report(Base):
 
 class Role(Base):
     __tablename__ = "roles"
+    __table_args__ = (
+        UniqueConstraint("organization_id", "name", name="uq_role_org_name"),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
     organization_id = Column(Integer, ForeignKey("organizations.id"), nullable=True, index=True)
-    name = Column(String, unique=True, nullable=False, index=True)
+    name = Column(String, nullable=False, index=True)
     description = Column(Text, nullable=True)
     is_system = Column(Boolean, default=False, nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
@@ -197,10 +211,13 @@ class Role(Base):
 
 class Permission(Base):
     __tablename__ = "permissions"
+    __table_args__ = (
+        UniqueConstraint("organization_id", "name", name="uq_permission_org_name"),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
     organization_id = Column(Integer, ForeignKey("organizations.id"), nullable=True, index=True)
-    name = Column(String, unique=True, nullable=False, index=True)
+    name = Column(String, nullable=False, index=True)
     category = Column(String, nullable=False)
     description = Column(Text, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
@@ -283,6 +300,10 @@ class EnvironmentRunnerConfig(Base):
     runner_token_expires_at = Column(DateTime(timezone=True), nullable=True)
     owner_name = Column(String, nullable=True)
     owner_email = Column(String, nullable=True)
+    # Bind a runner to the SIEM that actually receives its host's telemetry.
+    # The atomic runner uses this to validate against the right SIEM and
+    # refuses to run synced detections from a different connection.
+    siem_connection_id = Column(Integer, ForeignKey("siem_connections.id"), nullable=True, index=True)
 
 
 class AgentCommand(Base):
@@ -366,9 +387,9 @@ class AIAssistantSettings(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     organization_id = Column(Integer, ForeignKey("organizations.id"), nullable=False, index=True)
-    provider = Column(String, default="Local LLaMA")
-    model_name = Column(String, default="gemma2:2b")
-    api_base_url = Column(String, default="http://localhost:11434")
+    provider = Column(String, default="Built-in")
+    model_name = Column(String, default="")
+    api_base_url = Column(String, default="")
     api_key = Column(Text, nullable=True)  # Encrypted in production
     generate_tuning_suggestions = Column(Boolean, default=True)
     explain_test_failures = Column(Boolean, default=True)

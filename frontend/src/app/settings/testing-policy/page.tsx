@@ -2,11 +2,11 @@
 
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { Textarea } from "@/components/ui/textarea";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Switch } from "@/components/ui/switch";
 import { apiFetch } from "@/lib/api";
 import { ShieldCheck } from "lucide-react";
@@ -23,12 +23,44 @@ interface TestingPolicySettings {
   business_hours_start: string;
   business_hours_end: string;
   only_prod_during_maintenance_windows: boolean;
+  test_data_retention_days: number;
   retention_pass_days_lab: number;
   retention_fail_days_lab: number;
   retention_pass_days_dev: number;
   retention_fail_days_dev: number;
   retention_pass_days_prod: number;
   retention_fail_days_prod: number;
+}
+
+type RetentionKey =
+  | "retention_pass_days_lab"
+  | "retention_fail_days_lab"
+  | "retention_pass_days_dev"
+  | "retention_fail_days_dev"
+  | "retention_pass_days_prod"
+  | "retention_fail_days_prod";
+
+const ENVIRONMENT_OPTIONS = [
+  { id: "lab", label: "Lab", detail: "Use for controlled validation and safe first runs." },
+  { id: "dev", label: "Dev", detail: "Use for shared pre-production validation." },
+  { id: "prod", label: "Prod", detail: "Use only when protections and notifications are in place." },
+] as const;
+
+function parseAllowedEnvironments(value: string) {
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed.map(String) : [];
+  } catch {
+    return [];
+  }
+}
+
+function getErrorMessage(error: unknown, fallback: string) {
+  return error instanceof Error ? error.message : fallback;
+}
+
+function getRetentionValue(settings: TestingPolicySettings, key: RetentionKey) {
+  return settings[key];
 }
 
 export default function TestingPolicySettingsPage() {
@@ -44,8 +76,8 @@ export default function TestingPolicySettingsPage() {
         setLoading(true);
         const data = await apiFetch("/settings/testing-policy");
         setSettings(data);
-      } catch (err: any) {
-        setError(err.message || "Failed to load testing policy settings.");
+      } catch (error: unknown) {
+        setError(getErrorMessage(error, "Failed to load testing policy settings."));
       } finally {
         setLoading(false);
       }
@@ -64,6 +96,16 @@ export default function TestingPolicySettingsPage() {
     setSettings(prev => (prev ? { ...prev, [id]: checked } : null));
   };
 
+  const handleAllowedEnvironmentToggle = (environment: string, checked: boolean) => {
+    setSettings((prev) => {
+      if (!prev) return null;
+      const current = new Set(parseAllowedEnvironments(prev.allowed_environments));
+      if (checked) current.add(environment);
+      else current.delete(environment);
+      return { ...prev, allowed_environments: JSON.stringify(Array.from(current)) };
+    });
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!settings) return;
@@ -76,8 +118,8 @@ export default function TestingPolicySettingsPage() {
         body: JSON.stringify(settings),
       });
       router.refresh();
-    } catch (err: any) {
-      setError(err.message || "Failed to save testing policy settings.");
+    } catch (error: unknown) {
+      setError(getErrorMessage(error, "Failed to save testing policy settings."));
     } finally {
       setIsSaving(false);
     }
@@ -85,34 +127,45 @@ export default function TestingPolicySettingsPage() {
 
   if (loading) {
     return (
-      <div className="text-sm text-muted-foreground">
-        Loading testing policy settings...
-      </div>
+      <PageContainer maxWidth="xl" className="space-y-6">
+        <PageHeader
+          eyebrow="Safety controls"
+          title="Testing Policy"
+          subtitle="Configure where validations can run, how production is protected, and how long validation evidence is kept."
+          icon={<ShieldCheck className="h-5 w-5" />}
+        />
+        <Card><CardContent className="pt-6 text-sm text-muted-foreground">Loading testing policy settings...</CardContent></Card>
+      </PageContainer>
     );
   }
   if (error) {
     return (
-      <div className="text-sm text-destructive">
-        Error loading testing policy settings: {error}
-      </div>
+      <PageContainer maxWidth="xl" className="space-y-6">
+        <PageHeader
+          eyebrow="Safety controls"
+          title="Testing Policy"
+          subtitle="Configure where validations can run, how production is protected, and how long validation evidence is kept."
+          icon={<ShieldCheck className="h-5 w-5" />}
+        />
+        <Card><CardContent className="pt-6 text-sm text-destructive">Error loading testing policy settings: {error}</CardContent></Card>
+      </PageContainer>
     );
   }
   if (!settings) {
     return (
-      <div className="text-sm text-muted-foreground">
-        No testing policy settings found.
-      </div>
+      <PageContainer maxWidth="xl" className="space-y-6">
+        <PageHeader
+          eyebrow="Safety controls"
+          title="Testing Policy"
+          subtitle="Configure where validations can run, how production is protected, and how long validation evidence is kept."
+          icon={<ShieldCheck className="h-5 w-5" />}
+        />
+        <Card><CardContent className="pt-6 text-sm text-muted-foreground">No testing policy settings found.</CardContent></Card>
+      </PageContainer>
     );
   }
 
-  const allowedEnvs = (() => {
-    try {
-      const parsed = JSON.parse(settings.allowed_environments);
-      return Array.isArray(parsed) ? parsed.map(String) : [];
-    } catch {
-      return [];
-    }
-  })();
+  const allowedEnvs = parseAllowedEnvironments(settings.allowed_environments);
   const prodAllowed = allowedEnvs.includes("prod");
   const notificationsOn = settings.notify_before_prod_tests;
   const maintenanceRequired = settings.only_prod_during_maintenance_windows;
@@ -121,63 +174,48 @@ export default function TestingPolicySettingsPage() {
 
   return (
     <PageContainer maxWidth="xl" className="space-y-6">
-      <PageHeader
+        <PageHeader
         eyebrow="Safety controls"
         title="Testing Policy"
-        subtitle="Define where tests run, how they are tagged, and the protections around production."
+        subtitle="Configure where validations can run, how production is protected, and how long validation evidence is kept."
         icon={<ShieldCheck className="h-5 w-5" />}
       />
       <Card className="border border-slate-200 bg-white shadow-sm">
-        <CardHeader className="flex flex-row items-start justify-between gap-4 border-b border-slate-200 pb-3">
-          <div>
-            <CardTitle className="flex items-center gap-2 text-2xl font-display font-semibold">
-              <span className="inline-flex h-8 w-8 items-center justify-center rounded-xl bg-slate-100 text-slate-700 border border-slate-200">
-                <ShieldCheck className="h-4 w-4 text-slate-700" />
-              </span>
-              <span>Testing policy &amp; safety</span>
-            </CardTitle>
-            <CardDescription className="mt-1 text-xs md:text-sm text-slate-600">
-              Define where tests run, how they are tagged, and the protections around production.
-            </CardDescription>
-          </div>
-          <div className="hidden md:block">
-            <div className="rounded-2xl border border-slate-200 bg-slate-50/60 px-4 py-3">
-              <p className="text-xs uppercase tracking-[0.24em] text-slate-400">Policy status</p>
-              <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
-                {riskUnprotectedProd && (
-                  <div className="inline-flex items-center gap-2 rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-[11px] font-semibold text-amber-800">
-                    Prod risk: maintenance off
-                  </div>
-                )}
-                <div className="flex items-center gap-2 rounded-full bg-slate-100 px-3 py-1 text-slate-700">
-                  <span className="font-semibold uppercase tracking-[0.18em] text-[10px]">Prod</span>
-                  <span className={prodAllowed ? "text-amber-700" : "text-emerald-700"}>
-                    {prodAllowed ? "Enabled" : "Disabled"}
-                  </span>
+        <CardContent className="pt-6">
+          <div className="mb-5 rounded-2xl border border-slate-200 bg-slate-50/60 px-4 py-3">
+            <p className="text-xs uppercase tracking-[0.24em] text-slate-400">Policy status</p>
+            <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
+              {riskUnprotectedProd && (
+                <div className="inline-flex items-center gap-2 rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-[11px] font-semibold text-amber-800">
+                  Prod risk: maintenance off
                 </div>
-                <div className="flex items-center gap-2 rounded-full bg-slate-100 px-3 py-1 text-slate-700">
-                  <span className="font-semibold uppercase tracking-[0.18em] text-[10px]">Notify</span>
-                  <span className={notificationsOn ? "text-emerald-700" : "text-slate-500"}>
-                    {notificationsOn ? "On" : "Off"}
-                  </span>
-                </div>
-                <div className="flex items-center gap-2 rounded-full bg-slate-100 px-3 py-1 text-slate-700">
-                  <span className="font-semibold uppercase tracking-[0.18em] text-[10px]">Hours</span>
-                  <span className={businessHoursBlocked ? "text-emerald-700" : "text-slate-500"}>
-                    {businessHoursBlocked ? "Blocked" : "Allowed"}
-                  </span>
-                </div>
-                <div className="flex items-center gap-2 rounded-full bg-slate-100 px-3 py-1 text-slate-700">
-                  <span className="font-semibold uppercase tracking-[0.18em] text-[10px]">Maint</span>
-                  <span className={maintenanceRequired ? "text-emerald-700" : "text-slate-500"}>
-                    {maintenanceRequired ? "Required" : "Optional"}
-                  </span>
-                </div>
+              )}
+              <div className="flex items-center gap-2 rounded-full bg-slate-100 px-3 py-1 text-slate-700">
+                <span className="font-semibold uppercase tracking-[0.18em] text-[10px]">Prod</span>
+                <span className={prodAllowed ? "text-amber-700" : "text-emerald-700"}>
+                  {prodAllowed ? "Enabled" : "Disabled"}
+                </span>
+              </div>
+              <div className="flex items-center gap-2 rounded-full bg-slate-100 px-3 py-1 text-slate-700">
+                <span className="font-semibold uppercase tracking-[0.18em] text-[10px]">Notify</span>
+                <span className={notificationsOn ? "text-emerald-700" : "text-slate-500"}>
+                  {notificationsOn ? "On" : "Off"}
+                </span>
+              </div>
+              <div className="flex items-center gap-2 rounded-full bg-slate-100 px-3 py-1 text-slate-700">
+                <span className="font-semibold uppercase tracking-[0.18em] text-[10px]">Hours</span>
+                <span className={businessHoursBlocked ? "text-emerald-700" : "text-slate-500"}>
+                  {businessHoursBlocked ? "Blocked" : "Allowed"}
+                </span>
+              </div>
+              <div className="flex items-center gap-2 rounded-full bg-slate-100 px-3 py-1 text-slate-700">
+                <span className="font-semibold uppercase tracking-[0.18em] text-[10px]">Maint</span>
+                <span className={maintenanceRequired ? "text-emerald-700" : "text-slate-500"}>
+                  {maintenanceRequired ? "Required" : "Optional"}
+                </span>
               </div>
             </div>
           </div>
-        </CardHeader>
-        <CardContent className="pt-3">
           <form onSubmit={handleSubmit} className="space-y-5">
             <div className="grid gap-4 lg:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)]">
               <div className="rounded-2xl border border-slate-200 bg-slate-50/60 p-5 space-y-4">
@@ -187,15 +225,25 @@ export default function TestingPolicySettingsPage() {
                   <p className="text-sm text-slate-600">Allow only the environments you want validated.</p>
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="allowed_environments">Allowed environments (JSON)</Label>
-                  <Textarea
-                    id="allowed_environments"
-                    value={settings.allowed_environments}
-                    onChange={handleChange}
-                    placeholder='["lab", "dev"]'
-                    className="bg-white text-slate-900 border-slate-200"
-                  />
-                  <p className="text-xs text-slate-500">Example: ["lab", "dev"]. Use caution with "prod".</p>
+                  <Label>Allowed environments</Label>
+                  <div className="space-y-2">
+                    {ENVIRONMENT_OPTIONS.map((environment) => (
+                      <label
+                        key={environment.id}
+                        className="flex items-start justify-between gap-3 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700"
+                      >
+                        <div>
+                          <p className="font-medium text-slate-900">{environment.label}</p>
+                          <p className="mt-1 text-xs text-slate-500">{environment.detail}</p>
+                        </div>
+                        <Checkbox
+                          checked={allowedEnvs.includes(environment.id)}
+                          onCheckedChange={(checked) => handleAllowedEnvironmentToggle(environment.id, checked === true)}
+                        />
+                      </label>
+                    ))}
+                  </div>
+                  <p className="text-xs text-slate-500">Enable only the environments your team is prepared to validate safely.</p>
                 </div>
                 <div className="grid gap-3 md:grid-cols-2">
                   <div className="space-y-2">
@@ -272,27 +320,40 @@ export default function TestingPolicySettingsPage() {
             <div className="rounded-2xl border border-slate-200 bg-slate-50/60 p-5 space-y-4">
               <div className="space-y-1">
                 <p className="text-xs uppercase tracking-[0.24em] text-slate-400">Retention</p>
-                <h3 className="text-lg font-display font-semibold text-slate-900">Test result retention</h3>
+                <h3 className="text-lg font-display font-semibold text-slate-900">Test data retention</h3>
                 <p className="text-sm text-slate-600">
-                  Keep PASS results shorter and FAIL/INCONCLUSIVE longer by environment.
+                  Controls how long validation run data is kept before automatic purging.
                 </p>
               </div>
+              <div className="rounded-xl border border-slate-200 bg-white p-4 space-y-2">
+                <Label htmlFor="test_data_retention_days">Global data retention (days)</Label>
+                <Input
+                  id="test_data_retention_days"
+                  type="number"
+                  min={1}
+                  value={settings.test_data_retention_days ?? 90}
+                  onChange={handleChange}
+                  className="bg-white text-slate-900 border-slate-200 max-w-xs"
+                />
+                <p className="text-xs text-slate-500">Runs older than this are automatically purged. Default: 90 days.</p>
+              </div>
+              <h4 className="text-sm font-semibold text-slate-700 pt-2">Per-environment overrides</h4>
               <div className="grid gap-4 lg:grid-cols-3">
                 {[
                   {
                     label: "Lab",
-                    passKey: "retention_pass_days_lab",
-                    failKey: "retention_fail_days_lab",
+                    passKey: "retention_pass_days_lab" as RetentionKey,
+                    failKey: "retention_fail_days_lab" as RetentionKey,
                   },
                   {
                     label: "Dev",
-                    passKey: "retention_pass_days_dev",
-                    failKey: "retention_fail_days_dev",
+                    passKey: "retention_pass_days_dev" as RetentionKey,
+                    failKey: "retention_fail_days_dev" as RetentionKey,
                   },
                   {
                     label: "Prod",
-                    passKey: "retention_pass_days_prod",
-                    failKey: "retention_fail_days_prod",
+                    passKey: "retention_pass_days_prod" as RetentionKey,
+                    failKey: "retention_fail_days_prod" as RetentionKey,
                   },
                 ].map((row) => (
                   <div key={row.label} className="rounded-xl border border-slate-200 bg-white p-4 space-y-3">
@@ -301,25 +362,25 @@ export default function TestingPolicySettingsPage() {
                     </div>
                     <div className="space-y-2">
                       <Label htmlFor={row.passKey}>PASS retention (days)</Label>
-                      <Input
-                        id={row.passKey}
-                        type="number"
-                        min={1}
-                        value={(settings as any)[row.passKey] ?? ""}
-                        onChange={handleChange}
-                        className="bg-white text-slate-900 border-slate-200"
-                      />
+                        <Input
+                          id={row.passKey}
+                          type="number"
+                          min={1}
+                          value={getRetentionValue(settings, row.passKey) ?? ""}
+                          onChange={handleChange}
+                          className="bg-white text-slate-900 border-slate-200"
+                        />
                     </div>
                     <div className="space-y-2">
                       <Label htmlFor={row.failKey}>FAIL/INCONCLUSIVE retention (days)</Label>
-                      <Input
-                        id={row.failKey}
-                        type="number"
-                        min={1}
-                        value={(settings as any)[row.failKey] ?? ""}
-                        onChange={handleChange}
-                        className="bg-white text-slate-900 border-slate-200"
-                      />
+                        <Input
+                          id={row.failKey}
+                          type="number"
+                          min={1}
+                          value={getRetentionValue(settings, row.failKey) ?? ""}
+                          onChange={handleChange}
+                          className="bg-white text-slate-900 border-slate-200"
+                        />
                     </div>
                   </div>
                 ))}

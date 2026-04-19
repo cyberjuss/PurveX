@@ -10,7 +10,7 @@ import { verify2FAToken } from "@/lib/api";
 
 interface TwoFactorVerifyProps {
   twoFactorToken: string;
-  onSuccess: (result: { verified: boolean; method: string; access_token?: string }) => void;
+  onSuccess: (result: { verified: boolean; method: string }) => void;
   onCancel?: () => void;
 }
 

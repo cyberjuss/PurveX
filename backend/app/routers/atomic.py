@@ -90,6 +90,10 @@ def _load_atomic_tests() -> List[AtomicTestDefinition]:
                 name = test.get("name") or f"{technique_id} atomic {idx}"
                 description = test.get("description") or ""
                 platforms = test.get("supported_platforms") or []
+                executor = test.get("executor") or {}
+                executor_name = executor.get("name")
+                command = executor.get("command")
+                cleanup_command = executor.get("cleanup_command")
 
                 # Map input_arguments into a simple arg spec list.
                 arg_specs: List[AtomicArgSpec] = []
@@ -124,6 +128,9 @@ def _load_atomic_tests() -> List[AtomicTestDefinition]:
                         # and let the operator decide which tests to run in their lab.
                         is_safe=True,
                         args=arg_specs,
+                        executor_name=executor_name,
+                        command=command,
+                        cleanup_command=cleanup_command,
                     )
                 )
 
@@ -147,8 +154,9 @@ def _refresh_atomic_tests() -> List[AtomicTestDefinition]:
         return []
 
 
-# Load atomic tests at module import time.
-ATOMIC_TESTS: List[AtomicTestDefinition] = _refresh_atomic_tests()
+# Keep catalog loading lazy so backend startup is never blocked by
+# local Atomic Red Team checkout size, filesystem latency, or parsing cost.
+ATOMIC_TESTS: List[AtomicTestDefinition] = []
 
 
 def _ensure_atomic_catalog_loaded() -> None:

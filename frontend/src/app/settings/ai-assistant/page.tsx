@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -26,6 +26,10 @@ interface AIAssistantSettings {
   audience_preference: string;
 }
 
+function getErrorMessage(error: unknown, fallback: string) {
+  return error instanceof Error ? error.message : fallback;
+}
+
 export default function AIAssistantSettingsPage() {
   const [settings, setSettings] = useState<AIAssistantSettings | null>(null);
   const [loading, setLoading] = useState(true);
@@ -39,14 +43,39 @@ export default function AIAssistantSettingsPage() {
         setLoading(true);
         const data = await apiFetch("/settings/ai-assistant-settings");
         setSettings(data);
-      } catch (err: any) {
-        setError(err.message || "Failed to load AI assistant settings.");
+      } catch (error: unknown) {
+        setError(getErrorMessage(error, "Failed to load AI assistant settings."));
       } finally {
         setLoading(false);
       }
     }
     fetchSettings();
   }, []);
+
+  // Normalize provider defaults on initial load so DeepSeek doesn't point at OpenAI.
+  useEffect(() => {
+    if (!settings) return;
+    const providerLower = (settings.provider || "").toLowerCase();
+    if (providerLower === "deepseek") {
+      const baseUrl = (settings.api_base_url || "").trim();
+      const model = (settings.model_name || "").trim();
+      const nextBaseUrl = !baseUrl || baseUrl === "https://api.openai.com/v1" ? "https://api.deepseek.com/v1" : baseUrl;
+      const nextModel = !model || model.startsWith("gpt-") ? "deepseek-chat" : model;
+      if (nextBaseUrl !== settings.api_base_url || nextModel !== settings.model_name) {
+        setSettings((prev) => (prev ? { ...prev, api_base_url: nextBaseUrl, model_name: nextModel } : prev));
+      }
+      return;
+    }
+    if (providerLower === "openai") {
+      const baseUrl = (settings.api_base_url || "").trim();
+      const model = (settings.model_name || "").trim();
+      const nextBaseUrl = !baseUrl || baseUrl === "https://api.deepseek.com/v1" ? "https://api.openai.com/v1" : baseUrl;
+      const nextModel = !model || model.startsWith("deepseek-") ? "gpt-4o-mini" : model;
+      if (nextBaseUrl !== settings.api_base_url || nextModel !== settings.model_name) {
+        setSettings((prev) => (prev ? { ...prev, api_base_url: nextBaseUrl, model_name: nextModel } : prev));
+      }
+    }
+  }, [settings]);
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
     const target = e.target as HTMLInputElement;
@@ -60,7 +89,40 @@ export default function AIAssistantSettingsPage() {
   };
 
   const handleSelectChange = (id: keyof AIAssistantSettings, value: string) => {
-    setSettings(prev => (prev ? { ...prev, [id]: value } : null));
+    setSettings((prev) => {
+      if (!prev) return null;
+      if (id !== "provider") {
+        return { ...prev, [id]: value };
+      }
+
+      const nextProvider = value;
+      const next: AIAssistantSettings = { ...prev, provider: nextProvider };
+
+      const providerLower = nextProvider.toLowerCase();
+      if (providerLower === "deepseek") {
+        const baseUrl = (next.api_base_url || "").trim();
+        const model = (next.model_name || "").trim();
+
+        if (!baseUrl || baseUrl === "https://api.openai.com/v1") {
+          next.api_base_url = "https://api.deepseek.com/v1";
+        }
+        if (!model || model.startsWith("gpt-")) {
+          next.model_name = "deepseek-chat";
+        }
+      } else if (providerLower === "openai") {
+        const baseUrl = (next.api_base_url || "").trim();
+        const model = (next.model_name || "").trim();
+
+        if (!baseUrl || baseUrl === "https://api.deepseek.com/v1") {
+          next.api_base_url = "https://api.openai.com/v1";
+        }
+        if (!model || model.startsWith("deepseek-")) {
+          next.model_name = "gpt-4o-mini";
+        }
+      }
+
+      return next;
+    });
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -75,8 +137,8 @@ export default function AIAssistantSettingsPage() {
         body: JSON.stringify(settings),
       });
       router.refresh();
-    } catch (err: any) {
-      setError(err.message || "Failed to save AI assistant settings.");
+    } catch (error: unknown) {
+      setError(getErrorMessage(error, "Failed to save AI assistant settings."));
     } finally {
       setIsSaving(false);
     }
@@ -84,52 +146,54 @@ export default function AIAssistantSettingsPage() {
 
   if (loading) {
     return (
-      <div className="text-sm text-muted-foreground">
-        Loading AI assistant settings…
-      </div>
+      <PageContainer maxWidth="lg" className="space-y-6">
+        <PageHeader
+          eyebrow="AI governance"
+          title="AI Assistant"
+          subtitle="Configure what the assistant can analyze, how it responds, and what data limits apply inside PurveX."
+          icon={<Sparkles className="h-5 w-5" />}
+        />
+        <Card><CardContent className="pt-6 text-sm text-muted-foreground">Loading AI assistant settings...</CardContent></Card>
+      </PageContainer>
     );
   }
   if (error) {
     return (
-      <div className="text-sm text-destructive">
-        Error loading AI assistant settings: {error}
-      </div>
+      <PageContainer maxWidth="lg" className="space-y-6">
+        <PageHeader
+          eyebrow="AI governance"
+          title="AI Assistant"
+          subtitle="Configure what the assistant can analyze, how it responds, and what data limits apply inside PurveX."
+          icon={<Sparkles className="h-5 w-5" />}
+        />
+        <Card><CardContent className="pt-6 text-sm text-destructive">Error loading AI assistant settings: {error}</CardContent></Card>
+      </PageContainer>
     );
   }
   if (!settings) {
     return (
-      <div className="text-sm text-muted-foreground">
-        No AI assistant settings found.
-      </div>
+      <PageContainer maxWidth="lg" className="space-y-6">
+        <PageHeader
+          eyebrow="AI governance"
+          title="AI Assistant"
+          subtitle="Configure what the assistant can analyze, how it responds, and what data limits apply inside PurveX."
+          icon={<Sparkles className="h-5 w-5" />}
+        />
+        <Card><CardContent className="pt-6 text-sm text-muted-foreground">No AI assistant settings found.</CardContent></Card>
+      </PageContainer>
     );
   }
 
   return (
     <PageContainer maxWidth="lg" className="space-y-6">
-      <PageHeader
+        <PageHeader
         eyebrow="AI governance"
         title="AI Assistant"
-        subtitle="Shape how PurveX AI explains failures, recommends tuning, and respects your data boundaries."
+        subtitle="Configure what the assistant can analyze, how it responds, and what data limits apply inside PurveX."
         icon={<Sparkles className="h-5 w-5" />}
       />
       <Card>
-        <CardHeader className="flex flex-row items-start justify-between gap-4 border-b border-slate-200 pb-4">
-          <div>
-            <CardTitle className="flex items-center gap-2 text-2xl font-display font-semibold">
-              <span className="inline-flex h-8 w-8 items-center justify-center rounded-xl bg-emerald-50 text-emerald-700 border border-emerald-200">
-                <Sparkles className="h-4 w-4" />
-              </span>
-              <span>AI assistant</span>
-            </CardTitle>
-            <CardDescription className="mt-1 text-xs md:text-sm text-slate-600">
-              Shape how PurveX AI explains failures, recommends tuning, and respects your data boundaries.
-            </CardDescription>
-          </div>
-          <p className="hidden text-[11px] text-slate-500 md:block">
-            Tune AI for analysts, leaders, or CISOs while keeping sensitive telemetry under control.
-          </p>
-        </CardHeader>
-        <CardContent className="pt-4 space-y-6">
+        <CardContent className="pt-6 space-y-6">
           <form onSubmit={handleSubmit} className="space-y-6">
           <div className="space-y-2">
             <p className="text-[11px] uppercase tracking-[0.2em] text-slate-400">
@@ -142,32 +206,14 @@ export default function AIAssistantSettingsPage() {
                   <SelectValue placeholder="Select AI provider" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="Local LLaMA">Local LLaMA (Ollama)</SelectItem>
-                  <SelectItem value="OpenAI" disabled>OpenAI (coming soon)</SelectItem>
-                  <SelectItem value="Other" disabled>Other (coming soon)</SelectItem>
+                  <SelectItem value="OpenAI">OpenAI</SelectItem>
+                  <SelectItem value="DeepSeek">DeepSeek</SelectItem>
                 </SelectContent>
               </Select>
             </div>
-            <div className="grid gap-3 md:grid-cols-2 md:max-w-xl">
-              <div className="space-y-2">
-                <Label htmlFor="api_base_url">Ollama base URL</Label>
-                <Input
-                  id="api_base_url"
-                  value={settings.api_base_url}
-                  onChange={handleChange}
-                  placeholder="http://localhost:11434"
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="model_name">Ollama model</Label>
-                <Input
-                  id="model_name"
-                  value={settings.model_name}
-                  onChange={handleChange}
-                  placeholder="gemma2:2b"
-                />
-              </div>
-            </div>
+            <p className="text-xs text-slate-500 md:max-w-xl">
+              The server reads provider keys from <code>OPENAI_API_KEY</code>. For DeepSeek, set base URL to <code>https://api.deepseek.com/v1</code> and model to <code>deepseek-chat</code> or <code>deepseek-reasoner</code>.
+            </p>
             <div className="space-y-2 md:max-w-xs">
               <Label htmlFor="analysis_mode">Analysis mode</Label>
               <Select
@@ -184,6 +230,29 @@ export default function AIAssistantSettingsPage() {
                 </SelectContent>
               </Select>
             </div>
+            <details className="rounded-2xl border border-slate-200 bg-slate-50/60 p-4 md:max-w-xl">
+              <summary className="cursor-pointer text-sm font-medium text-slate-700">Advanced provider settings</summary>
+              <div className="mt-4 grid gap-3 md:grid-cols-2">
+                <div className="space-y-2">
+                  <Label htmlFor="api_base_url">API base URL</Label>
+                  <Input
+                    id="api_base_url"
+                    value={settings.api_base_url}
+                    onChange={handleChange}
+                    placeholder="https://api.openai.com/v1"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="model_name">Model name</Label>
+                  <Input
+                    id="model_name"
+                    value={settings.model_name}
+                    onChange={handleChange}
+                    placeholder="deepseek-chat"
+                  />
+                </div>
+              </div>
+            </details>
           </div>
 
           <div className="space-y-2">
@@ -205,16 +274,7 @@ export default function AIAssistantSettingsPage() {
                   checked={settings.explain_test_failures}
                   onCheckedChange={(checked: boolean) => handleCheckboxChange("explain_test_failures", checked)}
                 />
-                <Label htmlFor="explain_test_failures">Explain test failures in plain language</Label>
-              </div>
-              <div className="flex items-center space-x-2">
-                <Checkbox
-                  id="automatically_modify_rules"
-                  checked={settings.automatically_modify_rules}
-                  onCheckedChange={(checked: boolean) => handleCheckboxChange("automatically_modify_rules", checked)}
-                  disabled // Coming soon
-                />
-                <Label htmlFor="automatically_modify_rules">Automatically modify rules (coming soon)</Label>
+                <Label htmlFor="explain_test_failures">Explain validation failures in plain language</Label>
               </div>
             </div>
           </div>

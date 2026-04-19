@@ -1,10 +1,10 @@
-from typing import Annotated
+from typing import Annotated, Union
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, status, Request, Response
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import or_, select
 
 from ..db import get_db, async_sessionmaker
 from .. import models, schemas
@@ -56,7 +56,12 @@ async def _ensure_admin_role(db: AsyncSession, user: models.User, org_id: int) -
         from ..services.rbac import Role as RoleEnum
     except Exception:
         return
-    role_result = await db.execute(select(models.Role).where(models.Role.name == RoleEnum.ADMINISTRATOR.value))
+    role_result = await db.execute(
+        select(models.Role).where(
+            models.Role.name == RoleEnum.ADMINISTRATOR.value,
+            or_(models.Role.organization_id == org_id, models.Role.organization_id.is_(None)),
+        )
+    )
     admin_role = role_result.scalar_one_or_none()
     if not admin_role:
         return
@@ -79,15 +84,101 @@ async def _ensure_admin_role(db: AsyncSession, user: models.User, org_id: int) -
     await db.commit()
 
 
+async def get_current_user(
+    request: Request,
+    db: DBSession,
+) -> models.User:
+    # Prefer httpOnly cookie for auth; fall back to Authorization header for
+    # tooling / Swagger compatibility.
+    token: str | None = request.cookies.get("access_token")
+
+    if not token:
+        auth_header = request.headers.get("Authorization")
+        if auth_header and auth_header.lower().startswith("bearer "):
+            token = auth_header.split(" ", 1)[1].strip() or None
+
+    if not token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated",
+        )
+
+    payload = decode_access_token(token)
+    if payload is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Could not validate credentials",
+        )
+
+    # Check if token has been revoked (logout)
+    from ..utils.token_blacklist import is_blacklisted
+    jti = payload.get("jti")
+    if jti and is_blacklisted(jti):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token has been revoked",
+        )
+
+    email: str | None = payload.get("sub")
+    if email is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid token payload",
+        )
+
+    user = await get_user_by_email(db, email=email)
+    if user is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="User not found",
+        )
+
+    if user.organization_id is None:
+        org_result = await db.execute(select(models.Organization))
+        org = org_result.scalars().first()
+        if not org:
+            org = models.Organization(
+                name=app_settings.ORGANIZATION_NAME,
+                primary_contact_email=app_settings.PRIMARY_CONTACT_EMAIL,
+                timezone=app_settings.DEFAULT_TIMEZONE,
+                locale=app_settings.DEFAULT_LOCALE,
+                default_environment_names=app_settings.DEFAULT_ENVIRONMENT_NAMES,
+                compliance_mode_flags=app_settings.COMPLIANCE_MODE_FLAGS,
+            )
+            db.add(org)
+            await db.flush()
+
+        user.organization_id = org.id
+        db.add(user)
+        await db.commit()
+        await db.refresh(user)
+
+    return user
+
+
+CurrentUser = Annotated[models.User, Depends(get_current_user)]
+
+
 @router.get("/bootstrap/status", response_model=schemas.BootstrapStatus)
-async def bootstrap_status(db: DBSession):
+async def bootstrap_status(request: Request, db: DBSession):
+    client_ip = request.client.host if request.client else "unknown"
+    allowed, _ = check_rate_limit(f"bootstrap_status:{client_ip}", max_requests=10, window_seconds=60)
+    if not allowed:
+        raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail="Too many requests")
     result = await db.execute(select(models.User).where(models.User.is_admin == True))
     admin = result.scalars().first()
     return {"needs_admin": admin is None}
 
 
 @router.post("/bootstrap", response_model=schemas.UserRead)
-async def bootstrap_admin(user_in: schemas.BootstrapAdminCreate, db: DBSession):
+async def bootstrap_admin(user_in: schemas.BootstrapAdminCreate, request: Request, db: DBSession):
+    client_ip = request.client.host if request.client else "unknown"
+    allowed, _ = check_rate_limit(f"bootstrap:{client_ip}", max_requests=3, window_seconds=3600)
+    if not allowed:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Too many bootstrap attempts. Please try again later.",
+        )
     result = await db.execute(select(models.User).where(models.User.is_admin == True))
     admin = result.scalars().first()
     if admin:
@@ -116,14 +207,22 @@ async def bootstrap_admin(user_in: schemas.BootstrapAdminCreate, db: DBSession):
     await _ensure_admin_role(db, user, org.id)
     return user
 
-# SECURITY: Disable public registration - only allow via admin interface
-# This endpoint should be removed or restricted to admin-only in production
 @router.post("/register", response_model=schemas.UserRead)
-async def register_admin(user_in: schemas.UserCreate, db: DBSession):
+async def register_admin(
+    user_in: schemas.UserCreate,
+    db: DBSession,
+    current_user: CurrentUser,
+):
     """
-    SECURITY WARNING: This endpoint allows creating admin users.
-    In production, this should be disabled or restricted to existing admins only.
+    Create a new user. Requires admin authentication.
+    For initial setup, use POST /auth/bootstrap instead.
     """
+    if not current_user.is_admin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only admins can create new users",
+        )
+
     # Rate limit registration attempts
     rate_key = f"register:{user_in.email}"
     allowed, remaining = check_rate_limit(rate_key, max_requests=3, window_seconds=3600)
@@ -140,7 +239,7 @@ async def register_admin(user_in: schemas.UserCreate, db: DBSession):
     
     existing = await get_user_by_email(db, user_in.email)
     if existing:
-        raise HTTPException(status_code=400, detail="User already exists")
+        raise HTTPException(status_code=400, detail="Unable to create user with the provided details")
 
     # Ensure an organization exists for this user.
     org_result = await db.execute(select(models.Organization))
@@ -191,7 +290,7 @@ async def register_admin(user_in: schemas.UserCreate, db: DBSession):
         pass
     return user
 
-@router.post("/login", response_model=schemas.Token)
+@router.post("/login", response_model=Union[schemas.LoginResponse, schemas.TwoFactorChallenge])
 async def login(
     form_data: Annotated[OAuth2PasswordRequestForm, Depends()],
     response: Response,
@@ -267,7 +366,7 @@ async def login(
         # configured number of failures.
         import logging
         logger = logging.getLogger("purvex.api")
-        logger.warning(f"Failed login attempt for user: {form_data.username} from IP: {client_ip}")
+        logger.warning("Failed login attempt from IP: %s", client_ip)
         
         # Handle case where columns might not exist yet (defensive coding)
         try:
@@ -281,7 +380,7 @@ async def login(
             if user.failed_login_attempts >= max_attempts:
                 from datetime import timedelta
                 user.locked_until = datetime.now(timezone.utc) + timedelta(minutes=lockout_minutes)
-                logger.warning(f"Account locked for user: {form_data.username} after {user.failed_login_attempts} failed attempts")
+                logger.warning("Account locked after %d failed attempts from IP: %s", user.failed_login_attempts, client_ip)
             
             await db.commit()
         except (AttributeError, Exception) as e:
@@ -328,8 +427,6 @@ async def login(
     must_use_2fa = two_factor_enabled or require_2fa_for_all or (require_2fa_for_admins and getattr(user, "is_admin", False))
 
     if must_use_2fa:
-        from fastapi.responses import JSONResponse
-
         two_factor_token = create_access_token(
             data={
                 "sub": user.email,
@@ -340,13 +437,10 @@ async def login(
             expires_minutes=10,
         )
 
-        return JSONResponse(
-            status_code=status.HTTP_200_OK,
-            content={
-                "requires_2fa": True,
-                "two_factor_token": two_factor_token,
-                "message": "Two-factor authentication required",
-            },
+        return schemas.TwoFactorChallenge(
+            requires_2fa=True,
+            two_factor_token=two_factor_token,
+            message="Two-factor authentication required",
         )
 
     access_token = create_access_token(
@@ -379,10 +473,8 @@ async def login(
     from ..config import settings  # local import to avoid cycles at module import time
     secure_cookie = settings.DEPLOYMENT_ENV.lower() == "prod"
 
-    # Set cookie with explicit settings for better compatibility
-    # Note: For cross-origin requests (localhost:3000 -> 127.0.0.1:8001), cookies may not be sent
-    # The frontend will also send the token in the Authorization header as a fallback
-    # SECURITY: Use Secure=True in production, SameSite=Strict for sensitive operations
+    # Set cookie with explicit settings for better compatibility.
+    # SECURITY: Use Secure=True in production, SameSite=Strict for sensitive operations.
     is_production = settings.DEPLOYMENT_ENV.lower() == "prod"
     response.set_cookie(
         key="access_token",
@@ -395,105 +487,27 @@ async def login(
         # domain=None means browser will use the current domain (localhost/127.0.0.1)
     )
     
-    # Log cookie setting for debugging
-    import logging
-    logger = logging.getLogger("purvex.api")
-    logger.info(f"Set access_token cookie for user {user.email}, max_age={settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60}s")
+    return schemas.LoginResponse()
 
-    return schemas.Token(access_token=access_token)
-
-
-async def get_current_user(
-    request: Request,
-    db: DBSession,
-) -> models.User:
-    # Prefer httpOnly cookie for auth; fall back to Authorization header for
-    # tooling / Swagger compatibility.
-    token: str | None = request.cookies.get("access_token")
-    
-    # Debug: Log available cookies (without sensitive data)
-    import logging
-    logger = logging.getLogger("purvex.api")
-    if not token:
-        logger.debug(f"Cookie 'access_token' not found. Available cookies: {list(request.cookies.keys())}")
-
-    if not token:
-        auth_header = request.headers.get("Authorization")
-        if auth_header and auth_header.lower().startswith("bearer "):
-            token = auth_header.split(" ", 1)[1].strip() or None
-
-    if not token:
-        logger.warning(f"Authentication failed: No token found. Cookies: {list(request.cookies.keys())}, Headers: {list(request.headers.keys())}")
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Not authenticated",
-        )
-
-    payload = decode_access_token(token)
-    if payload is None:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Could not validate credentials",
-        )
-
-    email: str | None = payload.get("sub")
-    if email is None:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid token payload",
-        )
-
-    user = await get_user_by_email(db, email=email)
-    if user is None:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="User not found",
-        )
-
-    if user.organization_id is None:
-        org_result = await db.execute(select(models.Organization))
-        org = org_result.scalars().first()
-        if not org:
-            org = models.Organization(
-                name=app_settings.ORGANIZATION_NAME,
-                primary_contact_email=app_settings.PRIMARY_CONTACT_EMAIL,
-                timezone=app_settings.DEFAULT_TIMEZONE,
-                locale=app_settings.DEFAULT_LOCALE,
-                default_environment_names=app_settings.DEFAULT_ENVIRONMENT_NAMES,
-                compliance_mode_flags=app_settings.COMPLIANCE_MODE_FLAGS,
-            )
-            db.add(org)
-            await db.flush()
-
-        user.organization_id = org.id
-        db.add(user)
-        await db.commit()
-        await db.refresh(user)
-
-    return user
 
 @router.get("/me", response_model=schemas.UserRead)
-async def read_me(current_user: Annotated[models.User, Depends(get_current_user)]):
+async def read_me(current_user: CurrentUser):
     return current_user
 
 @router.post("/logout", response_model=dict)
-async def logout(response: Response):
+async def logout(request: Request, response: Response):
+    token = request.cookies.get("access_token")
+    if token:
+        payload = decode_access_token(token)
+        if payload and payload.get("jti"):
+            from ..utils.token_blacklist import blacklist_token
+            exp = payload.get("exp", 0)
+            blacklist_token(payload["jti"], float(exp))
     response.delete_cookie(key="access_token", path="/")
     return {"message": "Logged out"}
 
-@router.get("/test-cookie")
-async def test_cookie(request: Request):
-    """Test endpoint to verify cookie is being sent."""
-    cookies = dict(request.cookies)
-    has_token = "access_token" in cookies
-    return {
-        "cookies_received": list(cookies.keys()),
-        "has_access_token": has_token,
-        "cookie_count": len(cookies),
-    }
-
 @router.get("/csrf-token", response_model=dict)
-async def get_csrf_token(current_user: Annotated[models.User, Depends(get_current_user)]):
+async def get_csrf_token(current_user: CurrentUser):
     """Get a CSRF token for the current user."""
     from ..utils.csrf import generate_csrf_token, store_csrf_token
     

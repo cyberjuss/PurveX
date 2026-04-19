@@ -2,7 +2,7 @@
 2FA (Two-Factor Authentication) endpoints.
 """
 from typing import Optional
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from typing_extensions import Annotated
@@ -13,6 +13,7 @@ import logging
 from .. import models, schemas
 from ..db import get_db
 from ..routers.auth import get_current_user
+from ..utils.encryption import encrypt_value, decrypt_value
 from ..utils.totp import (
     generate_totp_secret,
     generate_totp_uri,
@@ -24,6 +25,7 @@ from ..utils.totp import (
     normalize_totp_secret,
 )
 from ..utils.security import sanitize_string
+from ..utils.rate_limit import check_rate_limit
 
 router = APIRouter(
     prefix="/auth/2fa",
@@ -71,16 +73,16 @@ async def get_2fa_setup(
     # Generate new secret if not exists
     if not current_user.two_factor_secret:
         secret = generate_totp_secret()
-        current_user.two_factor_secret = secret
+        current_user.two_factor_secret = encrypt_value(secret)
         await db.commit()
         await db.refresh(current_user)
     else:
-        secret = current_user.two_factor_secret
-    
+        secret = decrypt_value(current_user.two_factor_secret)
+
     # Generate provisioning URI
     normalized_secret = normalize_totp_secret(secret)
     if normalized_secret != secret:
-        current_user.two_factor_secret = normalized_secret
+        current_user.two_factor_secret = encrypt_value(normalized_secret)
         await db.commit()
         await db.refresh(current_user)
         secret = normalized_secret
@@ -89,7 +91,7 @@ async def get_2fa_setup(
     except Exception as exc:
         logger.warning("Failed to build TOTP URI for user %s: %s. Generating a new secret.", current_user.email, exc)
         secret = generate_totp_secret()
-        current_user.two_factor_secret = secret
+        current_user.two_factor_secret = encrypt_value(secret)
         await db.commit()
         await db.refresh(current_user)
         uri = generate_totp_uri(secret, current_user.email)
@@ -140,12 +142,13 @@ async def complete_2fa_setup(
         )
     
     # Verify token
-    if not verify_totp_token(current_user.two_factor_secret, token):
+    decrypted_secret = decrypt_value(current_user.two_factor_secret)
+    if not verify_totp_token(decrypted_secret, token):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid verification code",
         )
-    
+
     # Enable 2FA
     current_user.two_factor_enabled = True
     await db.commit()
@@ -160,22 +163,25 @@ async def complete_2fa_setup(
 async def verify_2fa_token(
     request: Verify2FARequest,
     db: DBSession,
-    response,
+    response: Response,
 ):
     """
     Verify a 2FA token (used during login).
     This endpoint is called after password verification, using a short-lived
     "two_factor_token" JWT issued by /auth/login.
     """
-    from fastapi import Response
     from ..security import decode_access_token, create_access_token
     from ..config import settings
 
-    if not isinstance(response, Response):
-        # FastAPI will inject a Response instance; this is a safety check.
+    allowed, _remaining = check_rate_limit(
+        f"2fa:{request.two_factor_token}",
+        max_requests=5,
+        window_seconds=300,
+    )
+    if not allowed:
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Response object not available for 2FA verification",
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Too many verification attempts. Please request a new 2FA login session.",
         )
 
     # Decode and validate the short-lived two_factor_token.
@@ -216,7 +222,8 @@ async def verify_2fa_token(
 
     # Try TOTP token first
     if len(token) == 6 and token.isdigit():
-        if not (current_user.two_factor_secret and verify_totp_token(current_user.two_factor_secret, token)):
+        decrypted_secret = decrypt_value(current_user.two_factor_secret) if current_user.two_factor_secret else None
+        if not (decrypted_secret and verify_totp_token(decrypted_secret, token)):
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid verification code",
@@ -264,7 +271,6 @@ async def verify_2fa_token(
     return {
         "verified": True,
         "method": method,
-        "access_token": access_token,
     }
 
 

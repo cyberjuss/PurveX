@@ -23,6 +23,16 @@ class Token(BaseModel):
     access_token: str
     token_type: str = "bearer"
 
+
+class TwoFactorChallenge(BaseModel):
+    requires_2fa: bool = True
+    two_factor_token: str
+    message: str
+
+
+class LoginResponse(BaseModel):
+    is_first_login: Optional[bool] = None
+
 class TokenData(BaseModel):
     email: Optional[str] = None
 
@@ -144,6 +154,7 @@ class TestArtifact(TestArtifactBase):
 
 class TestWithDetectionTitle(Test):
     detection_title: str
+    atomic_command: Optional[str] = None
 
 class TestDetailResponse(Test):
     detection: Optional[Detection] = None
@@ -250,6 +261,9 @@ class AtomicTestDefinition(BaseModel):
     platforms: List[str] = []
     is_safe: Optional[bool] = True
     args: List[AtomicArgSpec] = []
+    executor_name: Optional[str] = None
+    command: Optional[str] = None
+    cleanup_command: Optional[str] = None
 
 
 class MitreTechnique(BaseModel):
@@ -502,9 +516,9 @@ class DetectionScoring(DetectionScoringBase):
 
 class AIAssistantSettingsBase(BaseModel):
     organization_id: Optional[int] = None
-    provider: str = "Local LLaMA"
-    model_name: str = "gemma2:2b"
-    api_base_url: str = "http://localhost:11434"
+    provider: str = "OpenAI"
+    model_name: str = "gpt-4o-mini"
+    api_base_url: str = "https://api.openai.com/v1"
     analysis_mode: Optional[str] = "fast"
     generate_tuning_suggestions: bool = True
     explain_test_failures: bool = True

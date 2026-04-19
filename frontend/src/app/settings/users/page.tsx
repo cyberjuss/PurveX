@@ -14,8 +14,7 @@ import { usePermissions } from "@/hooks/usePermissions";
 import { Permission } from "@/lib/permissions";
 import { 
   Search, UserPlus, Shield, Key, Users, Filter, CheckCircle2, XCircle, Clock, 
-  MoreVertical, Eye, Edit, Trash2, Download, RefreshCw, AlertCircle, TrendingUp,
-  Activity, Mail, Calendar, Lock, Unlock, UserCheck, X, Check, Loader2
+  Download, AlertCircle, Mail, Calendar, X, Loader2
 } from "lucide-react";
 import { format, formatRelative } from "date-fns";
 import { cn } from "@/lib/utils";
@@ -36,6 +35,13 @@ interface UserRole {
   role_name: string;
   assigned_at: string;
   expires_at: string | null;
+}
+
+function getErrorMessage(error: unknown, fallback: string): string {
+  if (error instanceof Error && error.message) {
+    return error.message;
+  }
+  return fallback;
 }
 
 function PasswordStrengthIndicator({ password }: { password: string }) {
@@ -106,8 +112,6 @@ export default function UserManagementPage() {
   const [newUserConfirmPassword, setNewUserConfirmPassword] = useState("");
   const [creatingUser, setCreatingUser] = useState(false);
   const [viewUserDetails, setViewUserDetails] = useState<number | null>(null);
-  const [refreshing, setRefreshing] = useState(false);
-
   const fetchUsers = async () => {
       try {
         setLoading(true);
@@ -132,8 +136,8 @@ export default function UserManagementPage() {
         })
       );
       setUserRoles(rolesMap);
-      } catch (err: any) {
-        setError(err.message || "Failed to load users.");
+      } catch (err: unknown) {
+        setError(getErrorMessage(err, "Failed to load users."));
       } finally {
         setLoading(false);
       }
@@ -175,8 +179,8 @@ export default function UserManagementPage() {
       await assignRole(userId, roleName);
       const roles = await getUserRoles(userId);
       setUserRoles(prev => ({ ...prev, [userId]: roles }));
-    } catch (err: any) {
-      const message = err?.message || "Failed to assign role.";
+    } catch (err: unknown) {
+      const message = getErrorMessage(err, "Failed to assign role.");
       if (message.toLowerCase().includes("already has this role")) {
         const roles = await getUserRoles(userId);
         setUserRoles(prev => ({ ...prev, [userId]: roles }));
@@ -193,8 +197,8 @@ export default function UserManagementPage() {
       await removeRole(userId, roleId);
       const roles = await getUserRoles(userId);
       setUserRoles(prev => ({ ...prev, [userId]: roles }));
-    } catch (err: any) {
-      setError(err.message || "Failed to remove role.");
+    } catch (err: unknown) {
+      setError(getErrorMessage(err, "Failed to remove role."));
     }
   }
 
@@ -224,8 +228,8 @@ export default function UserManagementPage() {
       setCurrentPassword("");
       setNewPassword("");
       setConfirmPassword("");
-    } catch (err: any) {
-      setError(err.message || "Failed to set password.");
+    } catch (err: unknown) {
+      setError(getErrorMessage(err, "Failed to set password."));
     } finally {
       setSettingPassword(false);
     }
@@ -265,8 +269,8 @@ export default function UserManagementPage() {
       setNewUserPassword("");
       setNewUserConfirmPassword("");
       await fetchUsers();
-    } catch (err: any) {
-      setError(err.message || "Failed to create user.");
+    } catch (err: unknown) {
+      setError(getErrorMessage(err, "Failed to create user."));
     } finally {
       setCreatingUser(false);
     }
@@ -276,9 +280,8 @@ export default function UserManagementPage() {
     const total = users.length;
     const active = users.filter(u => u.is_active).length;
     const admins = users.filter(u => u.is_admin).length;
-    const withRoles = users.filter(u => (userRoles[u.id] || []).length > 0 || u.is_admin).length;
-    return { total, active, admins, inactive: total - active, withRoles };
-  }, [users, userRoles]);
+    return { total, active, admins };
+  }, [users]);
 
   const toggleUserSelection = (userId: number) => {
     setSelectedUsers(prev => {
@@ -306,9 +309,9 @@ export default function UserManagementPage() {
   if (!hasPermission(Permission.SETTINGS_USERS_MANAGE)) {
     return (
       <PageContainer>
-        <Card className="elite-card ">
+        <Card className="border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-950">
           <CardContent className="pt-6">
-            <p className="text-slate-300">You don't have permission to manage users.</p>
+            <p className="text-slate-600 dark:text-slate-300">You don&apos;t have permission to manage members.</p>
           </CardContent>
         </Card>
       </PageContainer>
@@ -334,8 +337,8 @@ export default function UserManagementPage() {
         <PageHeader
           className="mb-4"
           eyebrow="Access control"
-          title="Users & Access Management"
-          subtitle="Manage user accounts, roles, and permissions across your organization"
+          title="Users"
+          subtitle="Manage workspace members, role assignments, and password access so the right people can operate PurveX."
           icon={<Users className="h-5 w-5" />}
           actions={
             <div className="flex flex-wrap items-center justify-end gap-2">
@@ -343,17 +346,17 @@ export default function UserManagementPage() {
                 <DialogTrigger asChild>
                   <Button className="whitespace-nowrap">
                     <UserPlus className="h-4 w-4 mr-2" />
-                    Create User
+                    Add member
                   </Button>
                 </DialogTrigger>
                 <DialogContent className="w-full max-w-xl px-8 py-6">
                 <DialogHeader>
                   <DialogTitle className="flex items-center gap-2">
                   <UserPlus className="h-5 w-5" />
-                  Create New User
+                  Add member
                 </DialogTitle>
                 <DialogDescription>
-                  Add a new user to your organization. They will need to set up their account.
+                  Create a workspace account and set the initial password for that member.
                 </DialogDescription>
               </DialogHeader>
               <div className="space-y-4 py-4">
@@ -410,7 +413,7 @@ export default function UserManagementPage() {
                   ) : (
                     <>
                       <UserPlus className="h-4 w-4 mr-2" />
-                      Create User
+                      Add member
                     </>
                   )}
                 </Button>
@@ -422,73 +425,50 @@ export default function UserManagementPage() {
         />
       </div>
 
-      {/* Statistics Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
-        <Card className="elite-card  hover:border-blue-500/30 transition-colors">
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+        <Card className="border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-950">
           <CardContent className="pt-6">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm font-medium text-muted-foreground">Total Users</p>
+                <p className="text-sm font-medium text-muted-foreground">Members</p>
                 <p className="text-2xl font-bold mt-1">{stats.total}</p>
               </div>
-              <Users className="h-8 w-8 text-blue-500/50" />
+              <Users className="h-8 w-8 text-slate-400" />
             </div>
           </CardContent>
         </Card>
-        <Card className="elite-card  hover:border-emerald-500/30 transition-colors">
+        <Card className="border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-950">
           <CardContent className="pt-6">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm font-medium text-muted-foreground">Active Users</p>
-                <p className="text-2xl font-bold mt-1 text-emerald-400">{stats.active}</p>
+                <p className="text-sm font-medium text-muted-foreground">Active members</p>
+                <p className="text-2xl font-bold mt-1">{stats.active}</p>
               </div>
-              <CheckCircle2 className="h-8 w-8 text-emerald-500/50" />
+              <CheckCircle2 className="h-8 w-8 text-slate-400" />
             </div>
           </CardContent>
         </Card>
-        <Card className="elite-card  hover:border-purple-500/30 transition-colors">
+        <Card className="border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-950">
           <CardContent className="pt-6">
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm font-medium text-muted-foreground">Administrators</p>
-                <p className="text-2xl font-bold mt-1 text-purple-400">{stats.admins}</p>
+                <p className="text-2xl font-bold mt-1">{stats.admins}</p>
               </div>
-              <Shield className="h-8 w-8 text-purple-500/50" />
-            </div>
-          </CardContent>
-        </Card>
-        <Card className="elite-card hover:border-slate-600/50 transition-colors">
-          <CardContent className="pt-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-muted-foreground">Inactive</p>
-                <p className="text-2xl font-bold mt-1 text-slate-400">{stats.inactive}</p>
-              </div>
-              <XCircle className="h-8 w-8 text-slate-500/50" />
-            </div>
-          </CardContent>
-        </Card>
-        <Card className="elite-card  hover:border-indigo-500/30 transition-colors">
-          <CardContent className="pt-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-muted-foreground">With Roles</p>
-                <p className="text-2xl font-bold mt-1 text-indigo-400">{stats.withRoles}</p>
-              </div>
-              <UserCheck className="h-8 w-8 text-indigo-500/50" />
+              <Shield className="h-8 w-8 text-slate-400" />
             </div>
           </CardContent>
         </Card>
       </div>
 
       {/* Main Users Table Card */}
-      <Card className="elite-card ">
-        <CardHeader className="border-b border-white/5">
+      <Card className="border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-950">
+        <CardHeader className="border-b border-slate-200 dark:border-slate-800">
           <div className="flex items-center justify-between">
           <div>
               <CardTitle className="text-2xl font-display font-semibold flex items-center gap-2">
                 <Users className="h-5 w-5" />
-                User Accounts
+                Members
               </CardTitle>
               <CardDescription className="mt-1">
                 {selectedUsers.size > 0 && (
@@ -528,7 +508,7 @@ export default function UserManagementPage() {
                 className="pl-10"
               />
             </div>
-            <Select value={statusFilter} onValueChange={(v: any) => setStatusFilter(v)}>
+            <Select value={statusFilter} onValueChange={(value: "all" | "active" | "inactive") => setStatusFilter(value)}>
               <SelectTrigger className="w-[140px]">
                 <Filter className="h-4 w-4 mr-2" />
                 <SelectValue placeholder="Status" />
@@ -905,22 +885,22 @@ export default function UserManagementPage() {
 
       {/* Available Roles Info */}
       {availableRoles.length > 0 && (
-        <Card className="elite-card ">
-          <CardHeader className="border-b border-white/5">
+        <Card className="border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-950">
+          <CardHeader className="border-b border-slate-200 dark:border-slate-800">
             <CardTitle className="text-2xl font-display font-semibold flex items-center gap-2">
               <Shield className="h-5 w-5" />
-              Available Roles & Permissions
+              Available roles
             </CardTitle>
-            <CardDescription>
-              Roles define what users can do in PurveX. Assign roles to grant specific permissions.
+              <CardDescription>
+              Review the role names available in this workspace before assigning access to a member.
             </CardDescription>
           </CardHeader>
           <CardContent className="pt-6">
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
               {availableRoles.map(role => (
-                <div key={role.id} className="p-4 border border-white/5 rounded-lg bg-white/5 hover:bg-white/10 transition-colors">
+                <div key={role.id} className="rounded-2xl border border-slate-200 bg-slate-50 p-4 transition-colors dark:border-slate-800 dark:bg-slate-900">
                   <div className="font-medium text-sm mb-1 flex items-center gap-2">
-                    <Shield className="h-4 w-4 text-blue-400" />
+                    <Shield className="h-4 w-4 text-slate-500" />
                     {role.name}
                   </div>
                   {role.description && (

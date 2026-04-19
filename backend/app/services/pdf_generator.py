@@ -192,8 +192,15 @@ def generate_pdf_report(
     if not REPORTLAB_AVAILABLE:
         raise ImportError("reportlab is required for PDF generation. Install with: pip install reportlab")
     
+    # SECURITY: Validate output path is within expected reports directory
+    from pathlib import PurePath
+    reports_dir = Path("data/reports").resolve()
+    resolved_output = Path(output_path).resolve()
+    if not resolved_output.is_relative_to(reports_dir):
+        raise ValueError(f"Output path must be within {reports_dir}")
+
     # Ensure output directory exists
-    Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+    resolved_output.parent.mkdir(parents=True, exist_ok=True)
     
     doc = SimpleDocTemplate(
         output_path,

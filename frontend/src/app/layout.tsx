@@ -1,20 +1,12 @@
 import { headers } from "next/headers";
 import "./globals.css";
-import { Geist, Space_Grotesk } from "next/font/google";
 import RootClientLayout from "./root-client";
 
-const inter = Geist({
-  subsets: ["latin"],
-  display: "swap",
-  variable: "--font-inter",
-});
-
-const spaceGrotesk = Space_Grotesk({
-  subsets: ["latin"],
-  display: "swap",
-  variable: "--font-space-grotesk",
-  weight: ["400", "500", "600", "700"],
-});
+// Use a system font stack so the build never requires network access to
+// Google Fonts. The CSS variables --font-inter and --font-space-grotesk are
+// defined in globals.css and consumed by Tailwind via font-sans/font-display.
+const inter = { variable: "", className: "" } as const;
+const spaceGrotesk = { variable: "" } as const;
 
 export default async function RootLayout({
   children,

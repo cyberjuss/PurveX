@@ -5,7 +5,14 @@ import { useRouter } from "next/navigation";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { getTests, getDetections, getEnvironmentRunners, TestWithDetectionTitle, Detection } from "@/lib/api";
+import {
+  getTests,
+  getDetections,
+  getEnvironmentRunners,
+  type TestWithDetectionTitle,
+  type Detection,
+  type EnvironmentRunnerConfig,
+} from "@/lib/api";
 import { 
   Clock, 
   Activity, 
@@ -17,12 +24,10 @@ import {
   ArrowRight,
   Filter,
   RefreshCw,
-  Zap,
   Bell,
   X
 } from "lucide-react";
-import Link from "next/link";
-import { formatRelative, format, isToday, isThisWeek, isThisMonth } from "date-fns";
+import { formatRelative, isToday, isThisWeek } from "date-fns";
 import { PageContainer } from "@/components/layout/page-container";
 import { LoadingState } from "@/components/ui/loading-state";
 import { ErrorState } from "@/components/ui/error-state";
@@ -48,11 +53,23 @@ interface UnifiedNotification {
   };
 }
 
+const CATEGORY_LABELS: Record<NotificationCategory, string> = {
+  all: "All updates",
+  tests: "Validation runs",
+  detections: "Trust changes",
+  platform: "Setup",
+};
+
 const PLATFORM_NOTIFICATIONS_KEY = "purvex_platform_notifications";
 const PLATFORM_RUNNER_SEEN_KEY = "purvex_platform_runner_ids";
 const DISMISSED_NOTIFICATIONS_KEY = "purvex_dismissed_notifications";
 
 type StoredNotification = Omit<UnifiedNotification, "timestamp"> & { timestamp: string };
+type RunnerSummary = EnvironmentRunnerConfig & {
+  id?: number;
+  hostname?: string;
+  environment_name?: string;
+};
 
 export default function NotificationsPage() {
   const [tests, setTests] = useState<TestWithDetectionTitle[]>([]);
@@ -80,16 +97,18 @@ export default function NotificationsPage() {
         const storedIds: number[] = JSON.parse(
           window.localStorage.getItem(PLATFORM_RUNNER_SEEN_KEY) || "[]"
         );
-        const newRunners = (runners || []).filter((runner: any) => runner?.id && !storedIds.includes(runner.id));
+        const newRunners = (runners || []).filter(
+          (runner: RunnerSummary) => typeof runner.id === "number" && !storedIds.includes(runner.id)
+        );
         const cutoff = Date.now() - 24 * 60 * 60 * 1000;
         const storedNotifications: StoredNotification[] = JSON.parse(
           window.localStorage.getItem(PLATFORM_NOTIFICATIONS_KEY) || "[]"
         ).filter((item: StoredNotification) => new Date(item.timestamp).getTime() >= cutoff);
-        const newNotifications: StoredNotification[] = newRunners.map((runner: any) => ({
+        const newNotifications: StoredNotification[] = newRunners.map((runner: RunnerSummary) => ({
           id: `platform-runner-${runner.id}-${Date.now()}`,
           type: "platform",
-          title: "New runner registered",
-          description: `${runner.hostname || "Runner"} · ${(runner.environment_name || "unknown").toUpperCase()}`,
+          title: "New validation agent connected",
+          description: `${runner.hostname || "Runner"} - ${(runner.environment_name || "unknown").toUpperCase()}`,
           timestamp: new Date().toISOString(),
           status: "success",
           actionUrl: "/settings/test-runner",
@@ -99,7 +118,7 @@ export default function NotificationsPage() {
         }));
 
         const mergedNotifications = [...newNotifications, ...storedNotifications].slice(0, 50);
-        const mergedIds = Array.from(new Set([...storedIds, ...newRunners.map((runner: any) => runner.id)]));
+        const mergedIds = Array.from(new Set([...storedIds, ...newRunners.map((runner: RunnerSummary) => runner.id)]));
 
         window.localStorage.setItem(PLATFORM_NOTIFICATIONS_KEY, JSON.stringify(mergedNotifications));
         window.localStorage.setItem(PLATFORM_RUNNER_SEEN_KEY, JSON.stringify(mergedIds));
@@ -111,8 +130,8 @@ export default function NotificationsPage() {
           }))
         );
       }
-      } catch (err: any) {
-        setError(err.message || "Unable to load notifications.");
+      } catch (err: unknown) {
+        setError(err instanceof Error ? err.message : "Unable to load notifications.");
       } finally {
         setLoading(false);
       setRefreshing(false);
@@ -158,8 +177,8 @@ export default function NotificationsPage() {
       items.push({
         id: `test-${test.id}`,
         type: "test",
-        title: test.detection_title || "Test completed",
-        description: `${test.technique_id || "Unknown technique"} · ${test.environment?.toUpperCase() || "Unknown"}`,
+        title: test.detection_title || "Validation run completed",
+        description: `${test.technique_id || "Unknown technique"} - ${test.environment?.toUpperCase() || "Unknown"}`,
         timestamp: new Date(test.started_at),
         status,
         actionUrl: `/tests/${test.id}`,
@@ -178,7 +197,7 @@ export default function NotificationsPage() {
         id: `detection-${detection.id}`,
         type: "detection",
         title: detection.title,
-        description: `${detection.technique_id || "Unknown"} · ${detection.siem_type?.toUpperCase() || "Unknown"}`,
+        description: `${detection.technique_id || "Unknown"} - ${detection.siem_type?.toUpperCase() || "Unknown"}`,
         timestamp: detection.last_tested_at ? new Date(detection.last_tested_at) : new Date(detection.created_at || Date.now()),
         status: detection.last_result === "PASS" ? "success" : detection.last_result === "FAIL" ? "error" : "info",
         actionUrl: `/detections/${detection.id}`,
@@ -297,6 +316,23 @@ export default function NotificationsPage() {
   return (
     <PageContainer maxWidth="full" className={cn("pt-4", refreshing && "page-refreshing")}>
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-2 pb-8 space-y-6">
+        <PageHeader
+          eyebrow="Validation updates"
+          title="Notifications"
+          subtitle="Track validation runs, trust changes, and setup issues that need attention."
+          icon={<Bell className="h-5 w-5" />}
+          actions={(
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => void loadData()}
+              disabled={refreshing}
+            >
+              <RefreshCw className={cn("mr-2 h-4 w-4", refreshing && "animate-spin")} />
+              Refresh
+            </Button>
+          )}
+        />
 
       {/* Category Tabs */}
       <div className="mb-6 flex items-center gap-3 flex-wrap">
@@ -316,7 +352,7 @@ export default function NotificationsPage() {
             aria-label={`Filter notifications by ${cat}`}
             aria-pressed={category === cat}
           >
-            {cat === "all" ? "All" : cat}
+            {CATEGORY_LABELS[cat]}
             {cat === "all" && unreadCount > 0 && (
               <Badge className="ml-2 h-4 px-1.5 text-[10px] bg-slate-100 text-slate-700 border-slate-200">
                 {unreadCount}
@@ -335,12 +371,12 @@ export default function NotificationsPage() {
               <Bell className="h-8 w-8 text-slate-500 relative z-10" />
             </div>
             <p className="text-lg font-display font-semibold text-slate-900 mb-2">
-              {category === "all" ? "No notifications yet" : `No ${category} notifications`}
+              {category === "all" ? "No validation updates yet" : `No ${CATEGORY_LABELS[category].toLowerCase()} yet`}
             </p>
             <p className="text-sm text-slate-500 max-w-md mx-auto">
               {category === "all"
-                ? "When you run tests, add detections, or receive platform updates, they'll appear here."
-                : `No ${category} notifications available. Try selecting a different category.`}
+                ? "Validation runs, trust changes, and setup issues will appear here as your workspace starts producing evidence."
+                : `No ${CATEGORY_LABELS[category].toLowerCase()} are available right now. Try selecting a different category.`}
             </p>
             {category !== "all" && (
               <Button
@@ -349,7 +385,7 @@ export default function NotificationsPage() {
                 onClick={() => setCategory("all")}
                 className="mt-4"
               >
-                View All Notifications
+                View all updates
               </Button>
             )}
           </CardContent>
@@ -405,7 +441,7 @@ export default function NotificationsPage() {
                               <div className="flex items-center gap-2 mb-1 flex-wrap">
                           <div className="flex items-center gap-1.5 text-xs text-slate-500">
                             {getTypeIcon(notification.type)}
-                            <span className="capitalize">{notification.type}</span>
+                            <span>{notification.type === "test" ? "Validation run" : notification.type === "detection" ? "Trust change" : "Setup"}</span>
                           </div>
                           {notification.metadata?.score !== undefined && (
                             <>

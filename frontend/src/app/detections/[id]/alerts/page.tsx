@@ -1,9 +1,10 @@
 import { redirect } from "next/navigation";
 
-export default function DetectionAlertsRedirectPage({
+export default async function DetectionAlertsRedirectPage({
   params,
 }: {
-  params: { id: string };
+  params: Promise<{ id: string }>;
 }) {
-  redirect(`/detections/${params.id}/events`);
+  const { id } = await params;
+  redirect(`/detections/${id}/events`);
 }

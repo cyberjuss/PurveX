@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { usePathname } from "next/navigation";
 import Link from "next/link";
 import { cn } from "@/lib/utils";
@@ -21,13 +21,14 @@ type BreadcrumbsProps = {
 export function Breadcrumbs({ items, variant = "light", className }: BreadcrumbsProps) {
   const pathname = usePathname();
   const [detectionLabels, setDetectionLabels] = useState<Record<string, string>>({});
+  const detectionLabelsRef = useRef<Record<string, string>>({});
 
   // Auto-generate breadcrumbs from pathname if items not provided
   const breadcrumbItems: BreadcrumbItem[] =
     items ||
     (() => {
       const segments = pathname.split("/").filter(Boolean);
-      const result: BreadcrumbItem[] = [{ label: "Home", href: "/dashboard" }];
+      const result: BreadcrumbItem[] = [{ label: "Dashboard", href: "/dashboard" }];
 
       let currentPath = "";
       segments.forEach((segment, index) => {
@@ -44,13 +45,21 @@ export function Breadcrumbs({ items, variant = "light", className }: Breadcrumbs
             ? detectionLabels[segment] || "Detection"
             : "Details"
           : isNumeric
-          ? "Event Details"
+          ? prevSegment === "tests"
+            ? "Validation Run"
+            : prevSegment === "events" || prevSegment === "alerts"
+              ? "Event Record"
+              : "Details"
           : segment
               .split("-")
               .map((word) => {
                 const upper = word.toUpperCase();
                 if (upper === "MITRE") return upper;
                 if (upper === "SIEM") return upper;
+                if (upper === "AGENT") return "Watchtower";
+                if (upper === "RUN") return "Run";
+                if (upper === "TESTS" && segment === "tests") return "Tests";
+                if (upper === "DASHBOARD") return "Dashboard";
                 if (upper === "ALERTS") return "Signals";
                 if (upper === "EVENTS") return "Signals";
                 return word.charAt(0).toUpperCase() + word.slice(1);
@@ -67,6 +76,10 @@ export function Breadcrumbs({ items, variant = "light", className }: Breadcrumbs
     })();
 
   useEffect(() => {
+    detectionLabelsRef.current = detectionLabels;
+  }, [detectionLabels]);
+
+  useEffect(() => {
     if (items) return;
     const segments = pathname.split("/").filter(Boolean);
     const detectionId = segments.find((segment, index) => {
@@ -77,12 +90,13 @@ export function Breadcrumbs({ items, variant = "light", className }: Breadcrumbs
       );
     });
 
-    if (!detectionId || detectionLabels[detectionId]) return;
+    if (!detectionId) return;
 
     let cancelled = false;
 
     const load = async () => {
       try {
+        if (detectionLabelsRef.current[detectionId]) return;
         const detection = await getDetection(detectionId);
         if (!cancelled && detection?.title) {
           setDetectionLabels((prev) => ({
@@ -100,7 +114,7 @@ export function Breadcrumbs({ items, variant = "light", className }: Breadcrumbs
     return () => {
       cancelled = true;
     };
-  }, [items, pathname, detectionLabels]);
+  }, [items, pathname]);
 
   if (breadcrumbItems.length <= 1) return null;
 

@@ -8,6 +8,7 @@ __pycache__/
 
 .env
 .env.*
+!.env.example
 
 purvex.db
 
@@ -21,4 +22,11 @@ Thumbs.db
 
 *.log
 
+# PyInstaller build artifacts
+build/
+scripts/purvex.exe
 
+# Working/temp files
+cookiejar.txt
+plan.md
+.claude/

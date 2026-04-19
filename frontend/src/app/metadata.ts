@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 
 export const metadata: Metadata = {
   title: "PurveX",
-  description: "AI-powered detection engineering dashboard",
+  description: "Help security teams move from uncertainty to confidence with validation that improves their work, growth, and long-term future.",
   icons: {
     icon: [
       { url: "/purvex-favicon.svg", type: "image/svg+xml", sizes: "any" },

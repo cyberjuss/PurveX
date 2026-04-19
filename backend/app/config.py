@@ -2,24 +2,35 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from dotenv import load_dotenv
 from pathlib import Path
 import os
+import secrets
+import logging
 from typing import Optional, List
 
 # Always load the repo-root .env regardless of current working directory.
-ROOT_ENV = Path(__file__).resolve().parents[2] / ".env"
+BACKEND_DIR = Path(__file__).resolve().parents[1]
+ROOT_ENV = BACKEND_DIR.parent / ".env"
 load_dotenv(dotenv_path=ROOT_ENV)
+
+DEFAULT_DEPLOYMENT_ENV = os.getenv("PURVEX_ENV", "dev")
+DEFAULT_DATABASE_URL = f"sqlite+aiosqlite:///{(BACKEND_DIR / 'purvex.db').as_posix()}"
+DEFAULT_CREATE_DEFAULT_ADMIN = DEFAULT_DEPLOYMENT_ENV.lower() != "prod"
+DEFAULT_ADMIN_PASSWORD_VALUE = (
+    os.getenv("DEFAULT_ADMIN_PASSWORD")
+    or ("admin" if DEFAULT_CREATE_DEFAULT_ADMIN else None)
+)
 
 class Settings(BaseSettings):
     project_name: str = "PurveX"
     api_v1_str: str = "/api/v1"
     # Database settings
-    database_url: str = "sqlite+aiosqlite:///./purvex.db" # Changed database name
+    database_url: str = os.getenv("DATABASE_URL", DEFAULT_DATABASE_URL)
 
     # JWT Settings
     # SECURITY: In production, this MUST be set via environment variable
     # Generate a strong secret: python -c "import secrets; print(secrets.token_urlsafe(32))"
-    JWT_SECRET_KEY: str = os.getenv("JWT_SECRET_KEY", "super-secret-change-me-in-production")
+    JWT_SECRET_KEY: str = os.getenv("JWT_SECRET_KEY", "") or secrets.token_urlsafe(32)
     JWT_ALGORITHM: str = "HS256"
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24  # 1 day
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 120  # 2 hours
 
     # Authentication & login security policy
     # These knobs control lockout and rate limiting behaviour for login attempts.
@@ -55,18 +66,18 @@ class Settings(BaseSettings):
     COMPLIANCE_MODE_FLAGS: str = "" # Comma-separated string
 
     # Default Administrator (for dev/demo)
-    DEFAULT_ADMIN_EMAIL: str = "admin"
-    DEFAULT_ADMIN_PASSWORD: str = "admin"
+    DEFAULT_ADMIN_EMAIL: str = os.getenv("DEFAULT_ADMIN_EMAIL", "admin")
+    DEFAULT_ADMIN_PASSWORD: Optional[str] = DEFAULT_ADMIN_PASSWORD_VALUE
     DEFAULT_ADMIN_NAME: str = "PurveX Admin"
     # Default admin creation is enabled by default for local/dev.
     # In production, this must be set to False (startup will fail if left true).
-    CREATE_DEFAULT_ADMIN: bool = True
+    CREATE_DEFAULT_ADMIN: bool = os.getenv(
+        "CREATE_DEFAULT_ADMIN",
+        "true" if DEFAULT_CREATE_DEFAULT_ADMIN else "false",
+    ).strip().lower() in {"1", "true", "yes", "y"}
 
     # SIEM Configuration (MVP)
     # SPLUNK_URL, SPLUNK_USERNAME, etc. moved to SIEMConnection model
-    SIEM_DEFAULT_WINDOWS_INDEX: Optional[str] = None
-    SIEM_DEFAULT_LINUX_INDEX: Optional[str] = None
-    SIEM_DEFAULT_CLOUD_INDEX: Optional[str] = None
     SIEM_LOG_MARKER_PATTERN: str = "purvex_*"
 
     # Test Runner & Environment Settings (MVP)
@@ -122,10 +133,10 @@ class Settings(BaseSettings):
     SPLUNK_TOKEN: Optional[str] = None
 
     # AI Assistant Settings (MVP)
-    OLLAMA_API_BASE_URL: str = "http://localhost:11434"
-    OLLAMA_MODEL_NAME: str = "gemma2:2b"  # Default local model
-    OPENAI_API_KEY: Optional[str] = None # Kept as an optional env var
-    AI_PROVIDER: str = "Local LLaMA"
+    OPENAI_API_KEY: Optional[str] = os.getenv("OPENAI_API_KEY")
+    OPENAI_MODEL: str = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+    OPENAI_API_BASE_URL: str = os.getenv("OPENAI_API_BASE_URL", "https://api.openai.com/v1")
+    AI_PROVIDER: str = os.getenv("AI_PROVIDER", "OpenAI")
     GENERATE_TUNING_SUGGESTIONS: bool = True
     EXPLAIN_TEST_FAILURES: bool = True
     AUTOMATICALLY_MODIFY_RULES: bool = False
@@ -134,7 +145,7 @@ class Settings(BaseSettings):
     AI_AUDIENCE_PREFERENCE: str = "Analyst"
 
     # Deployment environment hint ("dev", "staging", "prod") used for safety checks.
-    DEPLOYMENT_ENV: str = os.getenv("PURVEX_ENV", "dev")
+    DEPLOYMENT_ENV: str = DEFAULT_DEPLOYMENT_ENV
 
     # Atomic Red Team catalog storage
     ATOMIC_DATA_DIR: str = os.getenv(
@@ -154,3 +165,25 @@ class Settings(BaseSettings):
     )
 
 settings = Settings()
+
+# --- Production safety checks ---
+_config_logger = logging.getLogger("purvex.config")
+
+if settings.DEPLOYMENT_ENV.lower() in ("prod", "staging"):
+    _missing = []
+    if not os.getenv("JWT_SECRET_KEY"):
+        _missing.append("JWT_SECRET_KEY")
+    if not os.getenv("PURVEX_ENCRYPTION_KEY"):
+        _missing.append("PURVEX_ENCRYPTION_KEY")
+    if "sqlite" in settings.database_url.lower():
+        _missing.append("DATABASE_URL (SQLite is not supported in production — use PostgreSQL)")
+    if _missing:
+        raise RuntimeError(
+            f"Production deployment blocked — missing required config: {', '.join(_missing)}. "
+            "See .env.example for setup instructions."
+        )
+elif "sqlite" in settings.database_url.lower():
+    _config_logger.warning(
+        "Using SQLite database. This is fine for development but not suitable "
+        "for production. Set DATABASE_URL to a PostgreSQL connection string."
+    )

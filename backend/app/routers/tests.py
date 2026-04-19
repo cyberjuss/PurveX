@@ -9,7 +9,7 @@ import time
 
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
-from sqlalchemy import desc
+from sqlalchemy import delete, desc
 
 from .. import models, schemas
 from ..db import get_db, async_sessionmaker
@@ -248,8 +248,9 @@ async def get_all_tests(
     try:
         # If there are no tests, return empty list immediately
         stmt = (
-            select(models.Test, models.Detection.title)
+            select(models.Test, models.Detection.title, models.TestArtifact.atomic_command)
             .outerjoin(models.Detection, models.Test.detection_id == models.Detection.id)
+            .outerjoin(models.TestArtifact, models.Test.id == models.TestArtifact.test_id)
             .where(models.Test.organization_id == org_id)
             .order_by(desc(models.Test.started_at))
             .offset(skip)
@@ -265,13 +266,14 @@ async def get_all_tests(
             return []
         
         for row in rows:
-            test_obj, detection_title = row
+            test_obj, detection_title, atomic_command = row
             try:
                 test_data = schemas.Test.model_validate(test_obj)
                 tests_with_titles.append(
                     TestWithDetectionTitle(
                         **test_data.model_dump(),
                         detection_title=detection_title or "Unknown Detection",
+                        atomic_command=atomic_command,
                     )
                 )
             except Exception as exc:
@@ -748,7 +750,12 @@ async def delete_test_schedule(
     # Capture schedule details for audit log before deletion
     schedule_details = f"Schedule ID {schedule_id} (detection_id={schedule.detection_id}, technique_id={schedule.technique_id})"
     
-    await db.delete(schedule)
+    await db.execute(
+        delete(models.TestSchedule).where(
+            models.TestSchedule.id == schedule_id,
+            models.TestSchedule.organization_id == org_id,
+        )
+    )
     await db.commit()
     
     # SECURITY: Audit log for schedule deletion

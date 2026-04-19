@@ -1,17 +1,16 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { useRouter } from "next/navigation";
 import { Card, CardContent } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { PlusCircle, Edit, Trash, HeartPulse, ServerCog, Terminal, Monitor, Code, Download, CheckCircle2, Copy as CopyIcon, Info } from "lucide-react";
-import { apiFetch } from "@/lib/api";
+import { ServerCog, Terminal, Monitor, Code, Download, CheckCircle2, Copy as CopyIcon, Info, Lock } from "lucide-react";
+import { apiFetch, getApiBaseCandidates } from "@/lib/api";
+import { usePermissions } from "@/hooks/usePermissions";
+import { Permission } from "@/lib/permissions";
 import { useToast } from "@/components/ui/toast";
-import { Tooltip } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import { PageContainer } from "@/components/layout/page-container";
 import { PageHeader } from "@/components/layout/page-header";
@@ -33,12 +32,48 @@ interface EnvironmentRunnerConfig {
   owner_email?: string;
 }
 
-// Helper function to get API URL
-function getApiUrl(): string {
-  if (typeof window !== "undefined") {
-    return `${window.location.protocol}//${window.location.hostname}:${process.env.NEXT_PUBLIC_API_PORT || "8001"}`;
+interface AgentRegistrationResponse {
+  token?: string;
+  expires_in_minutes?: number;
+}
+
+interface PlatformNotification {
+  id: string;
+  type: string;
+  title: string;
+  description: string;
+  timestamp: string;
+  status: string;
+  actionUrl: string;
+  metadata: {
+    environment?: string;
+  };
+}
+
+interface NavigatorWithMsSave extends Navigator {
+  msSaveOrOpenBlob?: (blob: Blob, defaultName?: string) => boolean;
+}
+
+function getErrorMessage(error: unknown, fallback: string): string {
+  if (error instanceof Error && error.message) {
+    return error.message;
   }
-  return "http://127.0.0.1:8001";
+  return fallback;
+}
+
+// Prefer an explicit public API URL when one is configured, otherwise fall back to
+// the same candidate list the rest of the frontend uses.
+function getDefaultRunnerApiUrl(): string {
+  if (process.env.NEXT_PUBLIC_API_URL) {
+    return process.env.NEXT_PUBLIC_API_URL.replace(/\/$/, "");
+  }
+  if (typeof window !== "undefined") {
+    const backendPort = process.env.NEXT_PUBLIC_BACKEND_PORT || "8001";
+    return `${window.location.protocol}//${window.location.hostname}:${backendPort}`;
+  }
+  const candidates = getApiBaseCandidates();
+  const directBase = candidates.find((candidate) => /^https?:\/\//.test(candidate));
+  return directBase || "http://127.0.0.1:8001";
 }
 
 // Helper function to get agent script content
@@ -824,8 +859,9 @@ export default function TestRunnerSettingsPage() {
     owner_email: "",
   });
   const [isSaving, setIsSaving] = useState(false);
-  const router = useRouter();
   const { toast } = useToast();
+  const { hasPermission, loading: permissionsLoading } = usePermissions();
+  const canManageAgents = hasPermission(Permission.SETTINGS_RUNNERS_MANAGE);
   const [connectionType, setConnectionType] = useState<"agent" | "ssh">("agent");
   const [selectedScript, setSelectedScript] = useState<"bash" | "powershell" | "python">("bash");
   const [copied, setCopied] = useState(false);
@@ -835,46 +871,55 @@ export default function TestRunnerSettingsPage() {
   const [tokenLoading, setTokenLoading] = useState(false);
   const [showToken, setShowToken] = useState(false);
   const [currentStep, setCurrentStep] = useState<number>(1);
+  const [publicApiUrl, setPublicApiUrl] = useState<string>(getDefaultRunnerApiUrl());
 
   useEffect(() => {
-    fetchConfigs();
-    // Auto-generate registration token for seamless registration
-    let cancelled = false;
-    async function generateToken() {
-      try {
-        setTokenLoading(true);
-        const response = await apiFetch("/settings/agent-registration-token", {
-          method: "POST",
-        });
-        if (!cancelled && response?.token) {
-          setUserToken(response.token);
-          if (response?.expires_in_minutes) {
-            setTokenExpiresInMinutes(response.expires_in_minutes);
-          }
-        }
-      } catch (err: any) {
-        if (!cancelled) {
-          console.warn("Failed to generate registration token:", err);
-        }
-      } finally {
-        if (!cancelled) {
-          setTokenLoading(false);
-        }
-      }
+    if (permissionsLoading) return;
+    if (!canManageAgents) {
+      setLoading(false);
+      setError(null);
+      return;
     }
-    generateToken();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+    fetchConfigs();
+  }, [permissionsLoading, canManageAgents]);
+
+  const handleGenerateToken = async () => {
+    try {
+      setTokenLoading(true);
+      const response = await apiFetch("/settings/agent-registration-token", {
+        method: "POST",
+      }) as AgentRegistrationResponse;
+      if (response?.token) {
+        setUserToken(response.token);
+        setShowToken(false);
+        setTokenCopied(false);
+        setTokenExpiresInMinutes(response?.expires_in_minutes ?? null);
+        toast({
+          type: "success",
+          title: "Token generated",
+          description: "Use this token once during agent registration.",
+        });
+      } else {
+        throw new Error("Token was not returned by the API.");
+      }
+    } catch (err: unknown) {
+      toast({
+        type: "error",
+        title: "Token generation failed",
+        description: getErrorMessage(err, "Unable to generate a registration token."),
+      });
+    } finally {
+      setTokenLoading(false);
+    }
+  };
 
   const fetchConfigs = async () => {
     try {
       setLoading(true);
       const data = await apiFetch("/settings/environment-runners");
       setConfigs(data);
-    } catch (err: any) {
-      setError(err.message || "Failed to load environment runner configurations.");
+    } catch (err: unknown) {
+      setError(getErrorMessage(err, "Failed to load environment runner configurations."));
     } finally {
       setLoading(false);
     }
@@ -908,16 +953,16 @@ export default function TestRunnerSettingsPage() {
         const created = await apiFetch("/settings/environment-runners", {
           method: "POST",
           body: JSON.stringify(formData),
-        });
+        }) as EnvironmentRunnerConfig;
         if (typeof window !== "undefined" && created?.id) {
           const storedIds: number[] = JSON.parse(
             window.localStorage.getItem("purvex_platform_runner_ids") || "[]"
           );
           const cutoff = Date.now() - 24 * 60 * 60 * 1000;
-          const storedNotifications = JSON.parse(
+          const storedNotifications = (JSON.parse(
             window.localStorage.getItem("purvex_platform_notifications") || "[]"
-          ).filter((item: any) => new Date(item.timestamp).getTime() >= cutoff);
-          const notification = {
+          ) as PlatformNotification[]).filter((item) => new Date(item.timestamp).getTime() >= cutoff);
+          const notification: PlatformNotification = {
             id: `platform-runner-${created.id}-${Date.now()}`,
             type: "platform",
             title: "New runner registered",
@@ -951,28 +996,10 @@ export default function TestRunnerSettingsPage() {
       setShowAddForm(false);
       setEditingConfig(null);
       fetchConfigs(); // Re-fetch configs after save
-    } catch (err: any) {
-      setError(err.message || "Failed to save environment runner configuration.");
+    } catch (err: unknown) {
+      setError(getErrorMessage(err, "Failed to save environment runner configuration."));
     } finally {
       setIsSaving(false);
-    }
-  };
-
-  const handleEdit = (config: EnvironmentRunnerConfig) => {
-    setEditingConfig(config);
-    setFormData(config);
-    setShowAddForm(true);
-  };
-
-  const handleDelete = async (id: number) => {
-    if (!confirm("Are you sure you want to delete this environment runner configuration?")) return;
-    try {
-      await apiFetch(`/settings/environment-runners/${id}`, {
-        method: "DELETE",
-      });
-      fetchConfigs();
-    } catch (err: any) {
-      setError(err.message || "Failed to delete environment runner configuration.");
     }
   };
 
@@ -994,11 +1021,64 @@ export default function TestRunnerSettingsPage() {
   return (
     <PageContainer maxWidth="xl" className="space-y-8">
       <PageHeader
-        eyebrow="Runner setup"
-        title="Test Runner"
-        subtitle="Connect lab endpoints and keep agent health in sync with PurveX."
+        eyebrow="Validation execution"
+        title="Agents"
+        subtitle="Configure the agents that run validations in each environment so PurveX can execute validations and collect evidence."
         icon={<ServerCog className="h-5 w-5" />}
       />
+      {!permissionsLoading && !canManageAgents && (
+        <div className="flex items-center gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-300">
+          <Lock className="h-4 w-4 shrink-0" />
+          You have read-only access. Contact an administrator to configure agents.
+        </div>
+      )}
+      <Card className="border border-slate-200 bg-white shadow-sm rounded-2xl">
+        <CardContent className="p-6">
+          <div className="grid gap-4 lg:grid-cols-[1.3fr_0.7fr]">
+            <div className="space-y-4">
+              <div>
+                <h2 className="text-lg font-semibold text-slate-900">Agent onboarding checklist</h2>
+                <p className="text-sm text-slate-600">
+                  Set a reachable API endpoint, generate a registration token, install the agent, and confirm the environment can run validations.
+                </p>
+              </div>
+              <div className="grid gap-3 sm:grid-cols-2">
+                {[
+                  { label: "API endpoint", done: Boolean(publicApiUrl.trim()), detail: publicApiUrl || "Set the URL the remote agent can reach." },
+                  { label: "Registration token", done: Boolean(userToken), detail: userToken ? "Token generated and ready to use." : "Generate a token before downloading the installer." },
+                  { label: "Agent registered", done: configs.length > 0, detail: configs.length > 0 ? `${configs.length} agent configuration${configs.length === 1 ? "" : "s"} found.` : "No agent configuration has been registered yet." },
+                  { label: "Execution path", done: connectionType === "agent" || Boolean(formData.hostname), detail: connectionType === "agent" ? "The installer will register the environment automatically." : formData.hostname ? `SSH target ${formData.hostname}:${formData.port || 22}` : "Enter the SSH host that will execute validations." },
+                ].map((item) => (
+                  <div key={item.label} className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                    <div className="flex items-start gap-3">
+                      <div className={cn("mt-0.5 h-5 w-5 rounded-full border flex items-center justify-center", item.done ? "border-emerald-200 bg-emerald-50 text-emerald-600" : "border-amber-200 bg-amber-50 text-amber-600")}>
+                        {item.done ? <CheckCircle2 className="h-3.5 w-3.5" /> : <Info className="h-3.5 w-3.5" />}
+                      </div>
+                      <div>
+                        <p className="text-sm font-semibold text-slate-900">{item.label}</p>
+                        <p className="text-xs text-slate-600 mt-1">{item.detail}</p>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+              <Label htmlFor="public_api_url" className="text-sm font-semibold text-slate-900">Agent API endpoint</Label>
+              <p className="text-xs text-slate-600 mt-1 mb-3">
+                This is the address remote agents will call. Override it if you are using a tunnel, reverse proxy, VPN hostname, or public domain.
+              </p>
+              <Input
+                id="public_api_url"
+                value={publicApiUrl}
+                onChange={(e) => setPublicApiUrl(e.target.value)}
+                placeholder="https://purvex.company.com/api"
+                className="bg-white border-slate-200 text-slate-900"
+              />
+            </div>
+          </div>
+        </CardContent>
+      </Card>
       {/* Step Progress Indicator */}
       <div className="flex justify-center">
         {(() => {
@@ -1018,9 +1098,9 @@ export default function TestRunnerSettingsPage() {
           const progress = maxSteps > 1 ? Math.min(1, Math.max(0, (currentStep - 1) / (maxSteps - 1))) : 0;
           return (
             <div className="relative w-full max-w-5xl px-6">
-              <div className="absolute top-[32px] left-0 right-0 h-[4px] rounded-full bg-slate-200" />
+              <div className="absolute top-[32px] left-0 right-0 h-[4px] rounded-full bg-[var(--stroke-soft)]" />
               <div
-                className="absolute top-[32px] left-0 h-[4px] rounded-full bg-indigo-200 transition-[width] duration-300"
+                className="absolute top-[32px] left-0 h-[4px] rounded-full bg-slate-400 transition-[width] duration-300"
                 style={{ width: `${progress * 100}%` }}
               />
 
@@ -1039,9 +1119,9 @@ export default function TestRunnerSettingsPage() {
                         className={cn(
                           "flex items-center justify-center w-16 h-16 rounded-full border-2 transition-all bg-white shadow-sm",
                           isCompleted
-                            ? "border-indigo-400 text-indigo-500 bg-indigo-50"
+                            ? "border-emerald-400 text-emerald-500 bg-emerald-50"
                             : isActive
-                            ? "border-[#5b7bff] text-[#4d6dff] shadow-[0_0_0_4px_rgba(91,123,255,0.18)]"
+                            ? "border-slate-900 text-slate-900 shadow-[0_0_0_4px_rgba(15,23,42,0.1)]"
                             : "border-slate-200 text-slate-400"
                         )}
                       >
@@ -1054,7 +1134,7 @@ export default function TestRunnerSettingsPage() {
                       <span
                         className={cn(
                           "text-base font-medium",
-                          isActive ? "text-[#4d6dff]" : "text-slate-500"
+                          isActive ? "text-slate-900" : "text-slate-500"
                         )}
                       >
                         {item.label}
@@ -1076,13 +1156,13 @@ export default function TestRunnerSettingsPage() {
             <div className="flex items-start justify-between">
               <div className="space-y-1">
                 <h2 className="text-xl font-display font-semibold text-slate-900 flex items-center gap-2">
-                  <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-indigo-100 text-indigo-700 border border-indigo-200 text-sm font-bold">
+                  <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-slate-100 text-slate-700 border border-slate-200 text-sm font-bold">
                     1
                   </span>
-                  Choose Connection Type
+                  Choose connection method
                 </h2>
                 <p className="text-sm text-slate-600 ml-9">
-                  Select how you want to connect your test runner
+                  Decide how this environment will run validations.
                 </p>
               </div>
             </div>
@@ -1113,7 +1193,7 @@ export default function TestRunnerSettingsPage() {
                 </div>
                 <div className="text-left">
                   <span className="font-semibold text-sm block">Agent</span>
-                  <span className="text-[11px] text-slate-500 mt-0.5 block">Register with script</span>
+                  <span className="text-[11px] text-slate-500 mt-0.5 block">Use the guided registration flow</span>
                 </div>
                 {connectionType === "agent" && (
                   <div className="absolute top-2 right-2 h-2 w-2 rounded-full bg-slate-900"></div>
@@ -1155,7 +1235,7 @@ export default function TestRunnerSettingsPage() {
                 </div>
                 <div className="text-left">
                   <span className="font-semibold text-sm block">SSH</span>
-                  <span className="text-[11px] text-slate-500 mt-0.5 block">Manual configuration</span>
+                  <span className="text-[11px] text-slate-500 mt-0.5 block">Connect to an existing runner host</span>
                 </div>
                 {connectionType === "ssh" && (
                   <div className="absolute top-2 right-2 h-2 w-2 rounded-full bg-slate-900"></div>
@@ -1172,12 +1252,12 @@ export default function TestRunnerSettingsPage() {
                 <div className="flex items-start justify-between">
                   <div className="space-y-1">
                     <h2 className="text-xl font-display font-semibold text-slate-900 flex items-center gap-2">
-                      <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-indigo-100 text-indigo-700 border border-indigo-200 text-sm font-bold">
+                      <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-slate-100 text-slate-700 border border-slate-200 text-sm font-bold">
                         2
                       </span>
-                      Choose Your Platform
+                      Choose platform
                     </h2>
-                    <p className="text-sm text-slate-600 ml-9">Select your operating system or runtime</p>
+                    <p className="text-sm text-slate-600 ml-9">Select the operating system or runtime that will host the agent.</p>
                   </div>
                 </div>
                 
@@ -1199,15 +1279,15 @@ export default function TestRunnerSettingsPage() {
                         "group relative px-4 py-3 text-sm font-medium transition-all duration-200 rounded-xl flex items-center gap-3",
                         "border-2",
                         selectedScript === "bash"
-                          ? "bg-gradient-to-br from-indigo-50 to-purple-50 text-indigo-700 border-indigo-300 shadow-md ring-2 ring-indigo-100"
-                          : "bg-white text-slate-600 border-slate-200 hover:bg-slate-50 hover:border-indigo-200 hover:text-slate-700 hover:shadow-sm"
+                          ? "bg-slate-50 text-slate-900 border-slate-900 shadow-md ring-2 ring-slate-200"
+                          : "bg-white text-slate-600 border-slate-200 hover:bg-slate-50 hover:border-slate-300 hover:text-slate-700 hover:shadow-sm"
                       )}
                     >
                       <div className={cn(
                         "h-10 w-10 rounded-lg flex items-center justify-center transition-all duration-200 shadow-sm",
                         selectedScript === "bash" 
-                          ? "bg-gradient-to-br from-indigo-500 to-purple-600 text-white shadow-md" 
-                          : "bg-slate-100 text-slate-500 group-hover:bg-indigo-50 group-hover:text-indigo-600"
+                          ? "bg-slate-900 text-white shadow-md" 
+                          : "bg-slate-100 text-slate-500 group-hover:bg-slate-200 group-hover:text-slate-700"
                       )}>
                         <Terminal className="h-5 w-5" />
                       </div>
@@ -1226,15 +1306,15 @@ export default function TestRunnerSettingsPage() {
                         "group relative px-4 py-3 text-sm font-medium transition-all duration-200 rounded-xl flex items-center gap-3",
                         "border-2",
                         selectedScript === "powershell"
-                          ? "bg-gradient-to-br from-indigo-50 to-purple-50 text-indigo-700 border-indigo-300 shadow-md ring-2 ring-indigo-100"
-                          : "bg-white text-slate-600 border-slate-200 hover:bg-slate-50 hover:border-indigo-200 hover:text-slate-700 hover:shadow-sm"
+                          ? "bg-slate-50 text-slate-900 border-slate-900 shadow-md ring-2 ring-slate-200"
+                          : "bg-white text-slate-600 border-slate-200 hover:bg-slate-50 hover:border-slate-300 hover:text-slate-700 hover:shadow-sm"
                       )}
                     >
                       <div className={cn(
                         "h-10 w-10 rounded-lg flex items-center justify-center transition-all duration-200 shadow-sm",
                         selectedScript === "powershell" 
-                          ? "bg-gradient-to-br from-indigo-500 to-purple-600 text-white shadow-md" 
-                          : "bg-slate-100 text-slate-500 group-hover:bg-indigo-50 group-hover:text-indigo-600"
+                          ? "bg-slate-900 text-white shadow-md" 
+                          : "bg-slate-100 text-slate-500 group-hover:bg-slate-200 group-hover:text-slate-700"
                       )}>
                         <Monitor className="h-5 w-5" />
                       </div>
@@ -1264,19 +1344,19 @@ export default function TestRunnerSettingsPage() {
                     "group relative px-4 py-3 text-sm font-medium transition-all duration-300 rounded-xl flex items-center gap-3 justify-start border-2",
                     "border",
                     selectedScript === "python"
-                      ? "bg-gradient-to-br from-indigo-50 via-purple-50 to-indigo-50 text-indigo-700 border-indigo-300 shadow-lg ring-2 ring-indigo-100"
-                      : "bg-white text-slate-600 border-slate-200 hover:bg-slate-50 hover:border-indigo-200 hover:text-slate-700 hover:shadow-md"
+                      ? "bg-slate-50 text-slate-900 border-slate-900 shadow-lg ring-2 ring-slate-200"
+                      : "bg-white text-slate-600 border-slate-200 hover:bg-slate-50 hover:border-slate-300 hover:text-slate-700 hover:shadow-md"
                   )}
                 >
                   <div className={cn(
                     "h-10 w-10 rounded-lg flex items-center justify-center transition-all duration-200 shadow-sm",
                     selectedScript === "python" 
-                      ? "bg-gradient-to-br from-indigo-500 to-purple-600 text-white shadow-md" 
-                      : "bg-slate-100 text-slate-500 group-hover:bg-indigo-50 group-hover:text-indigo-600"
+                      ? "bg-slate-900 text-white shadow-md" 
+                      : "bg-slate-100 text-slate-500 group-hover:bg-slate-200 group-hover:text-slate-700"
                   )}>
                     <Code className={cn(
                       "h-5 w-5 transition-colors duration-300",
-                      selectedScript === "python" ? "text-white" : "text-slate-500 group-hover:text-indigo-600"
+                      selectedScript === "python" ? "text-white" : "text-slate-500 group-hover:text-slate-700"
                     )} />
                   </div>
                   <div className="flex-1 text-left">
@@ -1296,18 +1376,18 @@ export default function TestRunnerSettingsPage() {
                   <div className="flex items-start justify-between">
                     <div className="space-y-1">
                       <h2 className="text-xl font-display font-semibold text-slate-900 flex items-center gap-2">
-                        <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-indigo-100 text-indigo-700 border border-indigo-200 text-sm font-bold">
+                        <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-slate-100 text-slate-700 border border-slate-200 text-sm font-bold">
                           3
                         </span>
                         Download Script
                       </h2>
-                      <p className="text-sm text-slate-600 ml-9">Get your registration script with token pre-configured</p>
+                      <p className="text-sm text-slate-600 ml-9">Download a registration script template and supply token at runtime.</p>
                     </div>
                   </div>
                   <div className="ml-9">
-                    <div className="p-5 rounded-xl border-2 border-slate-200 bg-gradient-to-br from-slate-50 to-white hover:border-indigo-200 transition-all duration-200 shadow-sm">
+                    <div className="p-5 rounded-xl border-2 border-slate-200 bg-slate-50 hover:border-slate-300 transition-all duration-200 shadow-sm">
                       <div className="flex items-center gap-4">
-                        <div className="h-12 w-12 rounded-xl bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center shadow-md flex-shrink-0">
+                        <div className="h-12 w-12 rounded-xl bg-slate-900 flex items-center justify-center shadow-md flex-shrink-0">
                           <Download className="h-6 w-6 text-white" />
                         </div>
                         <div className="flex-1 min-w-0">
@@ -1325,7 +1405,7 @@ export default function TestRunnerSettingsPage() {
                           </div>
                           <p className="text-sm text-slate-600 flex items-center gap-2">
                             <CheckCircle2 className="h-4 w-4 text-emerald-500" />
-                            Token pre-configured • Ready to download
+                            Token not embedded • Safer by default
                           </p>
                           {selectedScript === "bash" && (
                             <p className="text-xs text-slate-500">
@@ -1337,39 +1417,14 @@ export default function TestRunnerSettingsPage() {
                         <button
                           type="button"
                           onClick={() => {
-                            if (tokenLoading) {
-                              toast({
-                                type: "warning",
-                                title: "Token still generating",
-                                description: "Please wait for the registration token to be generated.",
-                              });
-                              return;
-                            }
                             try {
-                              const apiUrl = getApiUrl();
-                              let script = getAgentScript(selectedScript, apiUrl);
-
-                              if (userToken) {
-                                script = script.replace(/__PURVEX_TOKEN_VALUE__/g, userToken);
-                                script = script.replace(/YOUR_TOKEN_HERE/g, userToken);
-                                script = script.replace(/API_TOKEN="YOUR_TOKEN_HERE"/g, `API_TOKEN="${userToken}"`);
-                                script = script.replace(/\$Token = "__PURVEX_TOKEN_VALUE__"/g, `$Token = "${userToken}"`);
-                                script = script.replace(/--token YOUR_TOKEN_HERE/g, `--token ${userToken}`);
-                                if (selectedScript === "bash") {
-                                  script = script.replace(/read -r -s -p "Registration token \\(paste and press Enter\\): " API_TOKEN\\n\\s*echo ""\\n\\s*if \\[ -z "\\$API_TOKEN" \\]; then\\n\\s*read -r -s -p "Registration token \\(required\\): " API_TOKEN\\n\\s*echo ""\\n\\s*fi\\n?/g, "");
-                                }
-                              } else {
-                                toast({
-                                  type: "warning",
-                                  title: "Token not available",
-                                  description: "Downloaded script without a token. Add your token before running.",
-                                });
-                              }
+                              const apiUrl = publicApiUrl.trim() || getDefaultRunnerApiUrl();
+                              const script = getAgentScript(selectedScript, apiUrl);
 
                               const blob = new Blob([script], { type: "text/plain" });
                               const filename = selectedScript === "bash" ? "register_agent.sh" : selectedScript === "powershell" ? "register_agent.ps1" : "register_agent.py";
-                              if (typeof window !== "undefined" && (window.navigator as any)?.msSaveOrOpenBlob) {
-                                (window.navigator as any).msSaveOrOpenBlob(blob, filename);
+                              if (typeof window !== "undefined" && (window.navigator as NavigatorWithMsSave).msSaveOrOpenBlob) {
+                                (window.navigator as NavigatorWithMsSave).msSaveOrOpenBlob?.(blob, filename);
                               } else if (typeof window !== "undefined") {
                                 const url = URL.createObjectURL(blob);
                                 const a = document.createElement("a");
@@ -1391,24 +1446,28 @@ export default function TestRunnerSettingsPage() {
                                 title: "Script downloaded",
                                 description:
                                   selectedScript === "bash"
-                                    ? `${filename} downloaded with your registration token. Run: chmod +x ${filename}`
-                                    : `${filename} has been downloaded with your registration token pre-configured.`,
+                                    ? `${filename} downloaded. Run: chmod +x ${filename}`
+                                    : `${filename} downloaded. Provide token when running it.`,
                               });
                               setCurrentStep(4);
-                            } catch (err: any) {
+                            } catch (err: unknown) {
                               toast({
                                 type: "error",
                                 title: "Download failed",
-                                description: err?.message || "Unable to download script. Please try again.",
+                                description: getErrorMessage(err, "Unable to download script. Please try again."),
                               });
                             }
                           }}
                           className="h-10 w-10 rounded-lg bg-slate-100 border border-slate-200 text-slate-600 hover:bg-sky-50 hover:border-sky-200 hover:text-sky-600 cursor-pointer transition-all duration-300 shadow-sm hover:scale-105 flex items-center justify-center flex-shrink-0 focus:outline-none focus:ring-2 focus:ring-sky-500/50"
-                          title={`Download ${selectedScript === "bash" ? "register_agent.sh" : selectedScript === "powershell" ? "register_agent.ps1" : "register_agent.py"}`}
+                          title={
+                            !canManageAgents
+                              ? "Administrator access required"
+                              : `Download ${selectedScript === "bash" ? "register_agent.sh" : selectedScript === "powershell" ? "register_agent.ps1" : "register_agent.py"}`
+                          }
                           aria-label={`Download ${selectedScript === "bash" ? "Bash" : selectedScript === "powershell" ? "PowerShell" : "Python"} registration script`}
-                          disabled={tokenLoading}
+                          disabled={!canManageAgents}
                         >
-                          <Download className={cn("h-4 w-4", tokenLoading && "opacity-50")} />
+                          <Download className={cn("h-4 w-4", !canManageAgents && "opacity-50")} />
                         </button>
                       </div>
                     </div>
@@ -1419,7 +1478,7 @@ export default function TestRunnerSettingsPage() {
                           <div className="flex items-center gap-2">
                             <code className="text-sm font-mono text-slate-900 break-all">
                               {tokenLoading && !userToken && "Generating token..."}
-                              {!tokenLoading && !userToken && "Token unavailable. Refresh to retry."}
+                              {!tokenLoading && !userToken && "No active token. Generate one when ready to register."}
                               {userToken &&
                                 (showToken
                                   ? userToken
@@ -1433,6 +1492,16 @@ export default function TestRunnerSettingsPage() {
                           )}
                         </div>
                         <div className="flex items-center gap-2 flex-shrink-0">
+                          <button
+                            type="button"
+                            aria-label={userToken ? "Regenerate registration token" : "Generate registration token"}
+                            title={userToken ? "Regenerate token" : "Generate token"}
+                            className="inline-flex h-9 px-3 items-center justify-center rounded-lg bg-slate-900 text-white hover:bg-slate-700 cursor-pointer transition-all duration-200 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                            onClick={handleGenerateToken}
+                            disabled={tokenLoading || !canManageAgents}
+                          >
+                            {tokenLoading ? "Generating..." : userToken ? "Regenerate" : "Generate"}
+                          </button>
                           <button
                             type="button"
                             aria-label={showToken ? "Hide registration token" : "Reveal registration token"}
@@ -1450,7 +1519,7 @@ export default function TestRunnerSettingsPage() {
                             type="button"
                             aria-label="Copy registration token"
                             title="Copy registration token"
-                            className="inline-flex h-9 w-9 items-center justify-center rounded-lg bg-slate-100 border border-slate-200 text-slate-600 hover:bg-indigo-600 hover:border-indigo-500 hover:text-white cursor-pointer transition-all duration-200 shadow-sm hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed"
+                            className="inline-flex h-9 w-9 items-center justify-center rounded-lg bg-slate-100 border border-slate-200 text-slate-600 hover:bg-slate-900 hover:border-slate-800 hover:text-white cursor-pointer transition-all duration-200 shadow-sm hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed"
                             onClick={() => {
                               if (!userToken || typeof navigator === "undefined" || !navigator.clipboard) {
                                 return;
@@ -1481,19 +1550,19 @@ export default function TestRunnerSettingsPage() {
                 <div className="flex items-start justify-between">
                   <div className="space-y-1">
                     <h2 className="text-xl font-display font-semibold text-slate-900 flex items-center gap-2">
-                      <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-indigo-100 text-indigo-700 border border-indigo-200 text-sm font-bold">
+                      <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-slate-100 text-slate-700 border border-slate-200 text-sm font-bold">
                         4
                       </span>
-                      Run Command
+                      Run installer
                     </h2>
-                    <p className="text-sm text-slate-600 ml-9">Execute the command on your test runner</p>
+                    <p className="text-sm text-slate-600 ml-9">Run the command on the target environment to register the agent.</p>
                   </div>
                 </div>
                   <div className="ml-9">
                     <div className="flex items-center justify-between gap-4 bg-white border-2 border-slate-200 rounded-xl p-4 shadow-sm">
                       <div className="space-y-1">
-                        <p className="text-sm font-medium text-slate-900">Command ready</p>
-                        <p className="text-xs text-slate-600">Copy and run it on your test runner.</p>
+                        <p className="text-sm font-medium text-slate-900">Installer command ready</p>
+                        <p className="text-xs text-slate-600">Copy and run it on the target environment.</p>
                       </div>
                       <Button
                         type="button"
@@ -1501,24 +1570,14 @@ export default function TestRunnerSettingsPage() {
                         size="sm"
                         className="shrink-0 rounded-full bg-white px-4 text-slate-900 border border-slate-200 shadow-[0_12px_24px_rgba(15,23,42,0.12)] hover:bg-slate-50"
                         onClick={() => {
-                          const apiUrl = getApiUrl();
+                          const apiUrl = publicApiUrl.trim() || getDefaultRunnerApiUrl();
                           let command = "";
-                          if (userToken) {
-                            if (selectedScript === "bash") {
-                              command = `chmod +x register_agent.sh\nPURVEX_API_TOKEN=${userToken} ./register_agent.sh --api-url ${apiUrl} --env lab`;
-                            } else if (selectedScript === "powershell") {
-                              command = `$env:PURVEX_API_TOKEN=\"${userToken}\"; .\\register_agent.ps1 -ApiUrl \"${apiUrl}\" -Env \"lab\"`;
-                            } else {
-                              command = `python3 register_agent.py --api-url ${apiUrl} --token ${userToken} --env lab`;
-                            }
+                          if (selectedScript === "bash") {
+                            command = `chmod +x register_agent.sh\nPURVEX_API_TOKEN=YOUR_TOKEN_HERE ./register_agent.sh --api-url ${apiUrl} --env lab`;
+                          } else if (selectedScript === "powershell") {
+                            command = `$env:PURVEX_API_TOKEN=\"YOUR_TOKEN_HERE\"; .\\register_agent.ps1 -ApiUrl \"${apiUrl}\" -Env \"lab\"`;
                           } else {
-                            if (selectedScript === "bash") {
-                              command = `PURVEX_API_TOKEN=YOUR_TOKEN_HERE ./register_agent.sh --api-url ${apiUrl} --env lab`;
-                            } else if (selectedScript === "powershell") {
-                              command = `$env:PURVEX_API_TOKEN=\"YOUR_TOKEN_HERE\"; .\\register_agent.ps1 -ApiUrl \"${apiUrl}\" -Env \"lab\"`;
-                            } else {
-                              command = `python3 register_agent.py --api-url ${apiUrl} --token YOUR_TOKEN_HERE --env lab`;
-                            }
+                            command = `python3 register_agent.py --api-url ${apiUrl} --token YOUR_TOKEN_HERE --env lab`;
                           }
                           if (typeof navigator !== "undefined" && navigator.clipboard) {
                             navigator.clipboard.writeText(command).then(() => {
@@ -1556,7 +1615,7 @@ export default function TestRunnerSettingsPage() {
                       <div className="flex items-center gap-2 mb-3">
                         <span className="text-xs font-semibold text-slate-700 uppercase tracking-wider">API Endpoint</span>
                       </div>
-                      <code className="text-sm font-mono text-indigo-700 break-all bg-white px-4 py-2.5 rounded-lg border border-slate-200 block shadow-sm">{getApiUrl()}</code>
+                      <code className="text-sm font-mono text-slate-900 break-all bg-white px-4 py-2.5 rounded-lg border border-slate-200 block shadow-sm">{publicApiUrl.trim() || getDefaultRunnerApiUrl()}</code>
                     </div>
                   </details>
                 </div>
@@ -1567,8 +1626,8 @@ export default function TestRunnerSettingsPage() {
           {connectionType === "ssh" && currentStep === 2 && (
             <div className="space-y-4 pt-4 border-t border-slate-200 animate-fade-in-scale">
               <div className="p-4 rounded-lg bg-slate-50 border border-slate-200">
-                <h4 className="text-sm font-semibold text-slate-900 mb-2">SSH Runner Configuration</h4>
-                <p className="text-xs text-slate-600 mb-4">Configure SSH connection details for your test runner.</p>
+                <h4 className="text-sm font-semibold text-slate-900 mb-2">SSH environment configuration</h4>
+                <p className="text-xs text-slate-600 mb-4">Configure the host PurveX should use for remote validation execution.</p>
           {showAddForm && (
                 <form onSubmit={handleFormSubmit} className="space-y-6">
                   <div className="space-y-2">
@@ -1581,8 +1640,9 @@ export default function TestRunnerSettingsPage() {
                         <Input id="environment_name" value={formData.environment_name || ""} onChange={handleFormChange} required />
                       </div>
                       <div className="space-y-2">
-                        <Label htmlFor="allowed_test_types">Allowed test types (JSON array)</Label>
+                        <Label htmlFor="allowed_test_types">Allowed validation types</Label>
                         <Input id="allowed_test_types" value={formData.allowed_test_types} onChange={handleFormChange} />
+                        <p className="text-[11px] text-muted-foreground">Use a comma-separated list such as Atomic only, Replay, or Smoke.</p>
                       </div>
                     </div>
                   </div>
@@ -1619,8 +1679,6 @@ export default function TestRunnerSettingsPage() {
                           </SelectTrigger>
                           <SelectContent>
                             <SelectItem value="SSH">SSH</SelectItem>
-                            <SelectItem value="Agent">Agent (coming soon)</SelectItem>
-                            <SelectItem value="API">API (coming soon)</SelectItem>
                           </SelectContent>
                         </Select>
                       </div>
@@ -1687,8 +1745,8 @@ export default function TestRunnerSettingsPage() {
                   </div>
 
                   <div className="flex flex-wrap gap-2 pt-1">
-                    <Button type="submit" disabled={isSaving}>
-                      {isSaving ? "Saving…" : "Save configuration"}
+                    <Button type="submit" disabled={isSaving || !canManageAgents} title={!canManageAgents ? "Administrator access required" : ""}>
+                      {isSaving ? "Saving..." : "Save configuration"}
                     </Button>
                     {editingConfig && (
                       <Button
@@ -1704,11 +1762,8 @@ export default function TestRunnerSettingsPage() {
                         Cancel
                       </Button>
                     )}
-                    <Button type="button" variant="secondary" disabled className="inline-flex items-center">
-                      <HeartPulse className="mr-2 h-4 w-4" /> Runner health (coming soon)
-                    </Button>
-                  </div>
-                </form>
+                    </div>
+                  </form>
                 )}
               </div>
             </div>

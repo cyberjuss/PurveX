@@ -4,11 +4,10 @@ import { useState, useEffect } from "react";
 import { usePermissions } from "@/hooks/usePermissions";
 import { Permission } from "@/lib/permissions";
 import { useRouter } from "next/navigation";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { Textarea } from "@/components/ui/textarea";
 import { apiFetch } from "@/lib/api";
 import { Building2 } from "lucide-react";
 import { PageContainer } from "@/components/layout/page-container";
@@ -21,6 +20,30 @@ interface OrganizationSettings {
   locale: string;
   default_environment_names: string; // JSON string for now
   compliance_mode_flags: string; // JSON string for now
+}
+
+function getErrorMessage(error: unknown, fallback: string) {
+  return error instanceof Error ? error.message : fallback;
+}
+
+function parseListSetting(value: string) {
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed.map(String) : [];
+  } catch {
+    return value
+      .split(",")
+      .map((item) => item.trim())
+      .filter(Boolean);
+  }
+}
+
+function serializeListSetting(value: string) {
+  const items = value
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+  return JSON.stringify(items);
 }
 
 export default function OrganizationSettingsPage() {
@@ -37,8 +60,8 @@ export default function OrganizationSettingsPage() {
         setLoading(true);
         const data = await apiFetch("/settings/organization");
         setSettings(data);
-      } catch (err: any) {
-        setError(err.message || "Failed to load organization settings.");
+      } catch (error: unknown) {
+        setError(getErrorMessage(error, "Failed to load organization settings."));
       } finally {
         setLoading(false);
       }
@@ -48,7 +71,13 @@ export default function OrganizationSettingsPage() {
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
     const { id, value } = e.target;
-    setSettings(prev => (prev ? { ...prev, [id]: value } : null));
+    setSettings(prev => {
+      if (!prev) return null;
+      if (id === "default_environment_names" || id === "compliance_mode_flags") {
+        return { ...prev, [id]: serializeListSetting(value) };
+      }
+      return { ...prev, [id]: value };
+    });
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -64,46 +93,72 @@ export default function OrganizationSettingsPage() {
       });
       // Optionally, show a success message
       router.refresh(); // Re-fetch data or update UI
-    } catch (err: any) {
-      setError(err.message || "Failed to save organization settings.");
+    } catch (error: unknown) {
+      setError(getErrorMessage(error, "Failed to save organization settings."));
     } finally {
       setIsSaving(false);
     }
   };
 
-  if (loading) return <p className="text-muted-foreground">Loading organization settings...</p>;
-  if (error) return <p className="text-destructive">Error: {error}</p>;
-  if (!settings) return <p className="text-muted-foreground">No organization settings found.</p>;
+  if (loading) {
+    return (
+      <PageContainer maxWidth="lg" className="space-y-6">
+        <PageHeader
+          eyebrow="Organization"
+          title="Organization"
+          subtitle="Configure the organization identity and workspace defaults that shape reports, schedules, and environments."
+          icon={<Building2 className="h-5 w-5" />}
+        />
+        <Card>
+          <CardContent className="pt-6 text-sm text-muted-foreground">Loading organization settings...</CardContent>
+        </Card>
+      </PageContainer>
+    );
+  }
+  if (error) {
+    return (
+      <PageContainer maxWidth="lg" className="space-y-6">
+        <PageHeader
+          eyebrow="Organization"
+          title="Organization"
+          subtitle="Configure the organization identity and workspace defaults that shape reports, schedules, and environments."
+          icon={<Building2 className="h-5 w-5" />}
+        />
+        <Card>
+          <CardContent className="pt-6 text-sm text-destructive">Error loading organization settings: {error}</CardContent>
+        </Card>
+      </PageContainer>
+    );
+  }
+  if (!settings) {
+    return (
+      <PageContainer maxWidth="lg" className="space-y-6">
+        <PageHeader
+          eyebrow="Organization"
+          title="Organization"
+          subtitle="Configure the organization identity and workspace defaults that shape reports, schedules, and environments."
+          icon={<Building2 className="h-5 w-5" />}
+        />
+        <Card>
+          <CardContent className="pt-6 text-sm text-muted-foreground">No organization settings found.</CardContent>
+        </Card>
+      </PageContainer>
+    );
+  }
 
   return (
     <PageContainer maxWidth="lg" className="space-y-6">
       <PageHeader
         eyebrow="Organization"
-        title="Organization Settings"
-        subtitle="Set the defaults, locale, and compliance posture for this workspace."
+        title="Organization"
+        subtitle="Configure the organization identity and workspace defaults that shape reports, schedules, and environments."
         icon={<Building2 className="h-5 w-5" />}
       />
       <Card>
-        <CardHeader className="flex flex-row items-start justify-between gap-4 border-b border-slate-200 pb-4">
-          <div>
-            <CardTitle className="flex items-center gap-2 text-2xl font-display font-semibold">
-              <span className="inline-flex h-8 w-8 items-center justify-center rounded-xl bg-sky-100 text-sky-600 border border-sky-200">
-                <Building2 className="h-4 w-4" />
-              </span>
-              <span>Organization settings</span>
-            </CardTitle>
-            <CardDescription className="mt-1 text-xs md:text-sm text-slate-600">
-              Manage your organization&apos;s identity, time zone, and global defaults for every workspace.
-            </CardDescription>
-          </div>
-          <p className="hidden text-[11px] text-slate-500 md:block max-w-sm text-right">
-            These settings define how PurveX presents your org across reports, exports, and events.
-          </p>
-        </CardHeader>
-        <CardContent className="pt-4 space-y-6">
+        <CardContent className="pt-6 space-y-6">
           {!hasPermission(Permission.SETTINGS_ORG_MANAGE) ? (
             <div className="rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-              You don't have permission to modify organization settings. Only administrators can update these settings.
+              You don&apos;t have permission to modify organization settings. Only administrators can update these settings.
             </div>
           ) : (
           <form onSubmit={handleSubmit} className="space-y-6">
@@ -148,24 +203,26 @@ export default function OrganizationSettingsPage() {
               <p className="text-[11px] uppercase tracking-[0.2em] text-slate-400">
                 Advanced defaults
               </p>
-              <div className="space-y-4">
-                <div className="space-y-2">
-                  <Label htmlFor="default_environment_names">Default environment names (JSON array)</Label>
-                  <Textarea
+                <div className="space-y-4">
+                  <div className="space-y-2">
+                  <Label htmlFor="default_environment_names">Default environments</Label>
+                  <Input
                     id="default_environment_names"
-                    value={settings.default_environment_names}
+                    value={parseListSetting(settings.default_environment_names).join(", ")}
                     onChange={handleChange}
-                    placeholder='["lab", "dev", "prod"]'>
-                  </Textarea>
+                    placeholder="lab, dev, prod"
+                  />
+                  <p className="text-xs text-slate-500">Use a comma-separated list. PurveX stores this as a workspace default.</p>
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="compliance_mode_flags">Compliance mode flags (JSON array)</Label>
-                  <Textarea
+                  <Label htmlFor="compliance_mode_flags">Compliance modes</Label>
+                  <Input
                     id="compliance_mode_flags"
-                    value={settings.compliance_mode_flags}
+                    value={parseListSetting(settings.compliance_mode_flags).join(", ")}
                     onChange={handleChange}
-                    placeholder="[]">
-                  </Textarea>
+                    placeholder="pci, hipaa"
+                  />
+                  <p className="text-xs text-slate-500">Use a comma-separated list for the compliance labels your team reports against.</p>
                 </div>
               </div>
             </div>

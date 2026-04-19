@@ -6,16 +6,14 @@ import { Button } from "@/components/ui/button";
 import {
   apiFetch,
   getDetections,
-  getTests,
   getDetectionAlerts,
   type Detection,
-  type TestWithDetectionTitle,
   type DetectionAlert,
 } from "@/lib/api";
 import { formatRelative } from "date-fns";
 import { 
-  Cpu, MessageCircle, Loader2, X, Sparkles, Shield, RefreshCw,
-  Search, Activity, BookOpen, Brain, FileText, TrendingUp, Zap, AlertTriangle
+  Cpu, MessageCircle, Loader2, X, Sparkles, RefreshCw,
+  Search, Activity, BookOpen, FileText, TrendingUp, Zap, AlertTriangle, SendHorizonal, Plus
 } from "lucide-react";
 import { PageContainer } from "@/components/layout/page-container";
 import { cn } from "@/lib/utils";
@@ -34,29 +32,41 @@ type QuickAction = {
   description: string;
   icon: React.ComponentType<{ className?: string }>;
   color: "sky" | "emerald" | "amber" | "purple";
-  action: string;
+  action?: string;
+  prompt?: string;
+  contextScope?: "portfolio" | "detection";
   autoSend?: boolean;
 };
 
+type AnalystGoal =
+  | "find_weaknesses"
+  | "reduce_false_positives"
+  | "improve_detection_coverage"
+  | "stabilize_failing_tests";
+
+function getErrorMessage(error: unknown, fallback: string) {
+  return error instanceof Error ? error.message : fallback;
+}
+
 function WatchtowerPageContent() {
   const searchParams = useSearchParams();
-  const [detections, setDetections] = useState<Detection[]>([]);
-  const [tests, setTests] = useState<TestWithDetectionTitle[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [sending, setSending] = useState(false);
   const [selectedDetection, setSelectedDetection] = useState<Detection | null>(null);
   const [selectedAlert, setSelectedAlert] = useState<DetectionAlert | null>(null);
-  const [demoMode, setDemoMode] = useState(true);
   const [mounted, setMounted] = useState(false);
-  const [refreshing, setRefreshing] = useState(false);
+  const [customPrompt, setCustomPrompt] = useState("");
+  const [showConversationRail] = useState(false);
+  const [selectedModel, setSelectedModel] = useState("deepseek-chat");
+  const [analystGoal, setAnalystGoal] = useState<AnalystGoal>("find_weaknesses");
   const chatContainerRef = useRef<HTMLDivElement>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
   const requestIdRef = useRef(0);
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const AI_REQUEST_TIMEOUT_MS = 20000;
-  const AI_DISABLED = true;
+  const AI_DISABLED = false;
 
 
   const detectionId = searchParams.get("detectionId");
@@ -66,42 +76,17 @@ function WatchtowerPageContent() {
     messages.length === 0 || (messages.length === 1 && messages[0]?.role === "assistant"),
     [messages]
   );
-
-  const metrics = useMemo(() => {
-    const totalDetections = detections.length;
-    const testedDetections = detections.filter((d) => d.last_tested_at).length;
-    const totalTests = tests.length;
-    const passedTests = tests.filter(t => (t.result || t.status) === "PASS").length;
-    const passRate = totalTests > 0 ? Math.round((passedTests / totalTests) * 100) : 0;
-    
-    return { totalDetections, testedDetections, totalTests, passRate };
-  }, [detections, tests]);
-
-  const portfolioContext = useMemo(() => {
-    if (!detections.length && !tests.length) return "";
-
-    const recentTests = [...tests]
-      .filter(t => t.started_at)
-      .sort((a, b) => new Date(b.started_at || 0).getTime() - new Date(a.started_at || 0).getTime())
-      .slice(0, 5);
-
-    const failingTests = tests
-      .filter(t => (t.result || t.status) && (t.result || t.status) !== "PASS")
-      .slice(0, 5);
-
-    const recentTechniques = Array.from(new Set(
-      recentTests.map(t => t.technique_id).filter(Boolean)
-    )).slice(0, 5);
-
-    return `[Portfolio Context]
-Total detections: ${metrics.totalDetections}
-Detections tested: ${metrics.testedDetections}
-Total tests: ${metrics.totalTests}
-Pass rate: ${metrics.passRate}%
-Recent techniques: ${recentTechniques.length ? recentTechniques.join(", ") : "Not available"}
-Recent tests: ${recentTests.map(t => `${t.id}:${t.result || t.status || "UNKNOWN"}`).join(", ") || "None"}
-Recent failing tests: ${failingTests.map(t => `${t.id}:${t.result || t.status || "UNKNOWN"}`).join(", ") || "None"}`;
-  }, [detections, tests, metrics]);
+  const conversationItems = useMemo(() => {
+    const firstUserMessage = messages.find((msg) => msg.role === "user");
+    const title = firstUserMessage?.content?.slice(0, 60) || (selectedDetection ? selectedDetection.title : "New analysis");
+    return [
+      {
+        id: "active",
+        title,
+        subtitle: selectedDetection ? "Detection context" : "Portfolio context",
+      },
+    ];
+  }, [messages, selectedDetection]);
 
   useEffect(() => {
     setMounted(true);
@@ -122,37 +107,24 @@ Recent failing tests: ${failingTests.map(t => `${t.id}:${t.result || t.status ||
     return () => clearTimeout(timer);
   }, [messages, mounted]);
 
-  const loadData = useCallback(async (isRefresh = false) => {
+  const loadData = useCallback(async () => {
     try {
-      if (isRefresh) {
-        setRefreshing(true);
-      } else {
-        setLoading(true);
-      }
+      setLoading(true);
       setError(null);
 
       const timeout = new Promise<never>((_, reject) =>
         setTimeout(() => reject(new Error("Watchtower took too long to load.")), 8000)
       );
 
-      const [allDetections, recentTests] = await Promise.race([
-        Promise.all([getDetections(), getTests()]),
+      const allDetections = await Promise.race([
+        getDetections(),
         timeout,
       ]);
-      
-        setDetections(allDetections);
-        setTests(recentTests);
 
         if (detectionId) {
           const det = allDetections.find(d => String(d.id) === detectionId);
           if (det) {
             setSelectedDetection(det);
-          
-          const relatedTests = recentTests
-            .filter(t => t.detection_id === det.id)
-            .sort((a, b) => 
-              new Date(b.started_at ?? 0).getTime() - new Date(a.started_at ?? 0).getTime()
-            );
             
             if (alertId) {
               try {
@@ -166,7 +138,7 @@ Recent failing tests: ${failingTests.map(t => `${t.id}:${t.result || t.status ||
               }
             }
             
-          const contextMessage = `I'm ready to help with **${det.title}** (${det.technique_id}).\n\nWhat would you like to know? I can:\n• Summarize this detection and its events\n• Analyze test results\n• Suggest improvements to the SPL query or Sigma rule${selectedAlert ? "\n• Explain the selected event" : ""}`;
+          const contextMessage = `I'm ready to help with **${det.title}** (${det.technique_id}).\n\nWhat would you like to know? I can:\n- Summarize this detection and its validation evidence\n- Analyze the latest validation results\n- Suggest improvements to the SPL query or Sigma rule${alertId ? "\n- Explain the selected evidence record" : ""}`;
           
           setMessages([{
                 id: 1,
@@ -178,11 +150,10 @@ Recent failing tests: ${failingTests.map(t => `${t.id}:${t.result || t.status ||
         } else {
             setMessages([]);
         }
-    } catch (err: any) {
-      setError(err?.message || "Failed to load Watchtower data.");
+    } catch (error: unknown) {
+      setError(getErrorMessage(error, "Failed to load Watchtower data."));
     } finally {
       setLoading(false);
-      setRefreshing(false);
     }
   }, [detectionId, alertId]);
 
@@ -192,30 +163,33 @@ Recent failing tests: ${failingTests.map(t => `${t.id}:${t.result || t.status ||
 
   const generalQuickActions: QuickAction[] = useMemo(() => [
     {
-      id: "find-issues",
-      title: "Find Coverage Gaps",
-      description: "Identify failing tests, coverage gaps, and detections that need attention",
+      id: "coverage-gaps",
+      title: "Coverage Gaps",
+      description: "Find missing telemetry and weak validation across the workspace",
       icon: Search,
       color: "sky",
-      action: "coverage_gaps",
+      prompt: "Identify the highest-priority coverage gaps across the current PurveX workspace. Separate telemetry gaps from rule logic gaps and tell me what to fix first.",
+      contextScope: "portfolio",
       autoSend: true,
     },
     {
-      id: "health-summary",
-      title: "Health Summary",
-      description: "Get a concise overview of detection health and recommended actions",
+      id: "workspace-health",
+      title: "Validation Health",
+      description: "Summarize trust instability and what analysts should fix next",
       icon: Activity,
       color: "emerald",
-      action: "portfolio_health",
+      prompt: "Summarize the current validation health of this PurveX workspace. Focus on trust, repeated failures, stale validations, and the next 3 actions for the team.",
+      contextScope: "portfolio",
       autoSend: true,
     },
     {
-      id: "best-practices",
-      title: "Improve Coverage",
-      description: "Suggest the top 3 improvements to increase coverage based on existing detections",
+      id: "team-priorities",
+      title: "Team Priorities",
+      description: "Turn current results into the top query/rule tuning priorities",
       icon: BookOpen,
       color: "amber",
-      action: "coverage_improve",
+      prompt: "Based on the current PurveX workspace, give me the top 3 improvements that would most increase detection trust and validation reliability.",
+      contextScope: "portfolio",
       autoSend: true,
     },
   ], []);
@@ -225,68 +199,91 @@ Recent failing tests: ${failingTests.map(t => `${t.id}:${t.result || t.status ||
     
     return [
       {
-        id: "summarize",
+        id: "summarize-detection",
         title: "Summarize Detection",
-        description: `Summarize "${selectedDetection.title}" with clear next steps`,
+        description: `Explain what "${selectedDetection.title}" covers and what matters next`,
         icon: FileText,
         color: "sky",
-        action: "detection_summary",
+        prompt: "Summarize this detection as a PurveX trust record. Explain what it covers, what evidence exists, whether it is trustworthy, and the next action.",
+        contextScope: "detection",
         autoSend: true,
       },
       {
-        id: "analyze-tests",
-        title: "Explain Test Result",
-        description: "Explain the latest test result and why it passed/failed",
+        id: "explain-latest-run",
+        title: "Explain Latest Run",
+        description: "Break down the latest validation result and the likely blocker",
         icon: TrendingUp,
         color: "emerald",
-        action: "test_explain",
+        prompt: "Explain the latest validation result for this detection. Tell me whether the issue looks like rule logic, field mismatch, telemetry gap, thresholding, or something else.",
+        contextScope: "detection",
         autoSend: true,
       },
       {
-        id: "improve",
+        id: "improve-detection",
         title: "Fix Recommendations",
-        description: "Provide concrete fixes and how to validate them",
+        description: "Get concrete query tuning + a retest plan",
         icon: Zap,
         color: "amber",
-        action: "fix_recommendations",
+        prompt: "Give me concrete recommendations to improve this detection in PurveX. Include what to change, why, and how to validate the fix safely.",
+        contextScope: "detection",
         autoSend: true,
       },
       ...(selectedAlert ? [{
         id: "explain-alert",
-        title: "Explain Event",
-        description: "Explain the selected event and recommended action",
+        title: "Explain Evidence",
+        description: "Explain the selected evidence record and recommended action",
         icon: AlertTriangle,
         color: "purple",
-        action: "alert_explain",
+        prompt: "Explain this evidence record in the context of the selected detection. Tell me what behavior it shows, why it matters, and what action a detection engineer should take next.",
+        contextScope: "detection",
         autoSend: true,
       }] : []),
     ] as QuickAction[];
   }, [selectedDetection, selectedAlert]);
 
-  const handleQuickAction = useCallback(async (action: QuickAction) => {
+  const goalInstruction = useMemo(() => {
+    switch (analystGoal) {
+      case "reduce_false_positives":
+        return "Goal: reduce false positives while preserving coverage. Prioritize precision improvements and safe thresholds.";
+      case "improve_detection_coverage":
+        return "Goal: improve detection coverage. Prioritize telemetry gaps, missing field mappings, and untested techniques.";
+      case "stabilize_failing_tests":
+        return "Goal: stabilize failing validations. Prioritize root-cause isolation, minimal query changes, and fast retest loops.";
+      default:
+        return "Goal: find detection weaknesses in query logic and tuning. Prioritize concrete fixes analysts can apply now.";
+    }
+  }, [analystGoal]);
+
+  async function handleQuickAction(action: QuickAction) {
     if (AI_DISABLED) {
       const now = new Date().toISOString();
       const nextId = messages.length ? messages[messages.length - 1].id + 1 : 1;
       const assistantMsg: ChatMessage = {
         id: nextId,
         role: "assistant",
-        content: "AI analysis is coming soon. For now, run tests to generate real data.",
+        content: "Watchtower is not available yet. For now, run validations so PurveX can build trust evidence and next actions.",
         timestamp: now,
       };
       setMessages(prev => [...prev, assistantMsg]);
       return;
     }
-    if (action.autoSend && action.action) {
+    if (action.autoSend) {
       setTimeout(() => {
         handleSend(action);
       }, 100);
     } else {
       // No free-form input in MVP mode.
     }
-  }, []);
+  }
 
   const handleSend = useCallback(async (selectedAction?: QuickAction) => {
-    if (!selectedAction || sending) return;
+    const prompt = selectedAction?.prompt?.trim() ?? customPrompt.trim();
+    const promptTitle = selectedAction?.title ?? prompt;
+    const contextScope =
+      selectedAction?.contextScope ??
+      (selectedDetection || selectedAlert ? "detection" : "portfolio");
+
+    if (!prompt || sending) return;
     if (AI_DISABLED) {
       return;
     }
@@ -297,7 +294,7 @@ Recent failing tests: ${failingTests.map(t => `${t.id}:${t.result || t.status ||
     const userMsg: ChatMessage = {
       id: nextId,
       role: "user",
-      content: selectedAction.title,
+      content: promptTitle,
       timestamp: now,
     };
     
@@ -341,10 +338,11 @@ Recent failing tests: ${failingTests.map(t => `${t.id}:${t.result || t.status ||
         const res = (await apiFetch("/assistant/chat", {
           method: "POST",
           body: JSON.stringify({
-            action: selectedAction.action,
+            prompt: `${goalInstruction}\n\n${prompt}`,
+            context_scope: contextScope,
             detection_id: selectedDetection?.id || null,
             alert_id: selectedAlert?.id || null,
-            force_demo: demoMode,
+            model_name: selectedModel,
           }),
           signal: abortControllerRef.current.signal,
         })) as { answer?: string };
@@ -359,6 +357,7 @@ Recent failing tests: ${failingTests.map(t => `${t.id}:${t.result || t.status ||
         };
         
         setMessages(prev => [...prev, assistantMsg]);
+        setCustomPrompt("");
         
         setTimeout(() => {
           if (chatContainerRef.current) {
@@ -368,34 +367,39 @@ Recent failing tests: ${failingTests.map(t => `${t.id}:${t.result || t.status ||
             });
           }
         }, 100);
-      } catch (fetchErr: any) {
+      } catch (fetchErr: unknown) {
         if (timeoutRef.current) clearTimeout(timeoutRef.current);
         if (requestIdRef.current !== requestId) return;
-        if (fetchErr.name === "AbortError" || fetchErr.message?.includes("timeout")) {
+        const fetchErrorMessage = getErrorMessage(fetchErr, "");
+        if ((fetchErr instanceof Error && fetchErr.name === "AbortError") || fetchErrorMessage.includes("timeout")) {
           throw new Error(
-            "Request timed out. The AI response is taking too long. Try a shorter question or use a smaller Ollama model."
+            "Request timed out. The AI response is taking too long. Try a shorter question or a faster model."
           );
         }
         throw fetchErr;
       }
-    } catch (err: any) {
-      console.error("[Watchtower] Error sending message:", err);
+    } catch (error: unknown) {
+      console.error("[Watchtower] Error sending message:", error);
       
       let errorMessage = "Watchtower could not process your request. ";
-      const errorText = err.message || "";
+      const errorText = getErrorMessage(error, "");
+      const activeProvider = selectedModel.startsWith("deepseek") ? "DeepSeek" : "OpenAI";
+      const keyHint = activeProvider === "DeepSeek"
+        ? "DEEPSEEK_API_KEY (or OPENAI_API_KEY compatibility variable)"
+        : "OPENAI_API_KEY";
       
       if (errorText.includes("timeout") || errorText.includes("timed out") || errorText.includes("504")) {
-        errorMessage = "⏱️ The AI response timed out.\n\nTry:\n• A shorter, simpler question\n• Use a smaller Ollama model (e.g. gemma3:4b) for faster responses\n• Check backend logs for Ollama response time";
-      } else if (errorText.includes("503") || errorText.includes("Cannot connect to Ollama")) {
-        errorMessage = "🔌 Cannot connect to Ollama.\n\nPlease ensure:\n• Ollama is running on http://127.0.0.1:11434\n• You can test with: `curl http://127.0.0.1:11434/api/tags`\n• The model is available";
-      } else if (errorText.includes("502") || errorText.includes("Error calling LLM")) {
-        errorMessage = "⚠️ Ollama returned an error.\n\nThis could mean:\n• The model isn't loaded or available\n• Ollama is out of memory\n• Check Ollama logs for details\n\nError: " + errorText;
+        errorMessage = "The AI response timed out.\n\nTry:\n- A shorter, simpler question\n- A faster model\n- Checking backend logs for upstream latency";
+      } else if (errorText.includes("503") || errorText.includes("OPENAI_API_KEY")) {
+        errorMessage = `${activeProvider} is not configured.\n\nPlease ensure:\n- ${keyHint} is set on the backend\n- The AI provider is set to ${activeProvider}\n- The selected model and API base URL are valid`;
+      } else if (errorText.includes("502") || errorText.includes("Error calling LLM") || errorText.includes("Error communicating with OpenAI") || errorText.includes("Error communicating with DeepSeek")) {
+        errorMessage = `${activeProvider} returned an error.\n\nThis could mean:\n- The model name is invalid\n- The API key is missing or rejected\n- The request hit a provider-side issue\n\nError: ` + errorText;
       } else if (errorText.includes("500")) {
         errorMessage = "❌ Internal server error.\n\nCheck the backend logs for details.\n\nError: " + errorText;
       } else if (errorText) {
         errorMessage += "\n\n" + errorText;
       } else {
-        errorMessage += "Check the API / LLM service and try again.";
+        errorMessage += `Check the API and ${activeProvider} configuration and try again.`;
       }
       
       const assistantMsg: ChatMessage = {
@@ -423,7 +427,7 @@ Recent failing tests: ${failingTests.map(t => `${t.id}:${t.result || t.status ||
         clearTimeout(timeoutRef.current);
       }
     }
-  }, [sending, messages, selectedDetection, selectedAlert, portfolioContext]);
+  }, [sending, messages, selectedDetection, selectedAlert, customPrompt, AI_DISABLED, goalInstruction, selectedModel]);
 
   if (loading) {
     return (
@@ -437,8 +441,8 @@ Recent failing tests: ${failingTests.map(t => `${t.id}:${t.result || t.status ||
               <Sparkles className="absolute -top-1 -right-1 h-5 w-5 text-amber-400 animate-ping" />
             </div>
             <div>
-              <p className="text-lg font-display font-semibold text-slate-900">Booting Watchtower</p>
-              <p className="text-sm text-slate-600">Initializing AI assistant…</p>
+              <p className="text-lg font-display font-semibold text-slate-900">Loading Watchtower</p>
+              <p className="text-sm text-slate-600">Preparing workspace context for trust and validation analysis...</p>
             </div>
           </div>
         </div>
@@ -456,7 +460,7 @@ Recent failing tests: ${failingTests.map(t => `${t.id}:${t.result || t.status ||
               <p className="text-lg font-display font-semibold text-red-400 mb-2">Failed to load Watchtower</p>
                 <p className="text-sm text-slate-600 mb-4">{error}</p>
               <Button
-                onClick={() => loadData(true)}
+                onClick={() => loadData()}
                 variant="outline"
                 className="mt-4"
               >
@@ -473,9 +477,88 @@ Recent failing tests: ${failingTests.map(t => `${t.id}:${t.result || t.status ||
   const currentQuickActions = selectedDetection ? detectionQuickActions : generalQuickActions;
 
   return (
-    <div className="w-full min-h-screen flex flex-col bg-white text-slate-900 overflow-y-auto">
+    <div className="w-full min-h-screen flex bg-[var(--surface-page)] text-[var(--foreground)] overflow-y-auto">
+      {showConversationRail && (
+        <aside className="hidden lg:flex w-72 shrink-0 border-r border-[var(--stroke-soft)] bg-[var(--surface-shell)]">
+          <div className="flex h-full w-full flex-col">
+            <div className="border-b border-[var(--stroke-soft)] p-3">
+              <Button
+                variant="outline"
+                className="w-full justify-start"
+                onClick={() => {
+                  setMessages([]);
+                  setCustomPrompt("");
+                }}
+              >
+                <Plus className="mr-2 h-4 w-4" />
+                New chat
+              </Button>
+            </div>
+            <div className="flex-1 space-y-2 overflow-y-auto p-3">
+              {conversationItems.map((item) => (
+                <button
+                  key={item.id}
+                  type="button"
+                  className="w-full rounded-xl border border-[var(--accent-line)] bg-[var(--accent-soft)] px-3 py-2 text-left"
+                >
+                  <p className="truncate text-sm font-medium text-[var(--foreground)]">{item.title}</p>
+                  <p className="mt-1 text-xs text-[var(--surface-subtle-foreground)]">{item.subtitle}</p>
+                </button>
+              ))}
+            </div>
+            <div className="border-t border-[var(--stroke-soft)] p-3">
+              <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-[var(--surface-subtle-foreground)]">
+                Model
+              </label>
+              <select
+                value={selectedModel}
+                onChange={(event) => setSelectedModel(event.target.value)}
+                className="w-full rounded-lg border border-[var(--stroke-soft)] bg-[var(--surface-elevated)] px-3 py-2 text-sm outline-none focus:border-[var(--accent-line)]"
+              >
+                <option value="deepseek-chat">DeepSeek Chat</option>
+                <option value="deepseek-reasoner">DeepSeek Reasoner</option>
+                <option value="gpt-4o-mini">GPT-4o mini (fast)</option>
+                <option value="gpt-4o">GPT-4o (balanced)</option>
+              </select>
+              <p className="mt-1 text-[11px] text-[var(--surface-subtle-foreground)]">Active model for this chat.</p>
+            </div>
+          </div>
+        </aside>
+      )}
       {/* Main Chat Area - Full Width and Height */}
       <div className="flex-1 flex flex-col min-h-0">
+        <div className="sticky top-0 z-20 border-b border-[var(--stroke-soft)] bg-[var(--surface-shell)] px-4 py-2 sm:px-6 lg:px-8">
+          <div className="mx-auto flex w-full max-w-5xl items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Cpu className="h-4 w-4 text-[var(--accent-strong)]" />
+              <p className="text-sm font-medium text-[var(--foreground)]">Watchtower</p>
+            </div>
+            <div className="hidden sm:flex items-center gap-2">
+              <span className="text-xs text-[var(--surface-subtle-foreground)]">Goal</span>
+              <select
+                value={analystGoal}
+                onChange={(event) => setAnalystGoal(event.target.value as AnalystGoal)}
+                className="rounded-lg border border-[var(--stroke-soft)] bg-[var(--surface-elevated)] px-2 py-1 text-xs outline-none focus:border-[var(--accent-line)]"
+              >
+                <option value="find_weaknesses">Find weaknesses</option>
+                <option value="reduce_false_positives">Reduce false positives</option>
+                <option value="improve_detection_coverage">Improve coverage</option>
+                <option value="stabilize_failing_tests">Stabilize failing tests</option>
+              </select>
+              <span className="text-xs text-[var(--surface-subtle-foreground)]">Model</span>
+              <select
+                value={selectedModel}
+                onChange={(event) => setSelectedModel(event.target.value)}
+                className="rounded-lg border border-[var(--stroke-soft)] bg-[var(--surface-elevated)] px-2 py-1 text-xs outline-none focus:border-[var(--accent-line)]"
+              >
+                <option value="deepseek-chat">DeepSeek Chat</option>
+                <option value="deepseek-reasoner">DeepSeek Reasoner</option>
+                <option value="gpt-4o-mini">GPT-4o mini</option>
+                <option value="gpt-4o">GPT-4o</option>
+              </select>
+            </div>
+          </div>
+        </div>
             <div 
               ref={chatContainerRef}
           className={cn(
@@ -484,7 +567,7 @@ Recent failing tests: ${failingTests.map(t => `${t.id}:${t.result || t.status ||
           )}
         >
           <div className={cn(
-            "w-full px-4 sm:px-6 lg:px-8 flex-1 flex flex-col",
+            "w-full px-4 sm:px-6 lg:px-8 flex-1 flex flex-col max-w-5xl mx-auto",
             showQuickActions ? "py-6" : "py-8",
             messages.length > 0 && "pb-24"
           )}>
@@ -492,11 +575,11 @@ Recent failing tests: ${failingTests.map(t => `${t.id}:${t.result || t.status ||
             {showQuickActions && (
               <div className="flex flex-col items-center justify-center flex-1 space-y-6 animate-fade-in-scale">
                 <div className="text-center space-y-2 mb-4">
-                  <div className="inline-flex items-center justify-center h-14 w-14 rounded-2xl bg-indigo-50 border border-indigo-100 mb-3">
-                    <Cpu className="h-7 w-7 text-indigo-500" />
+                  <div className="inline-flex items-center justify-center h-14 w-14 rounded-2xl bg-[var(--surface-elevated)] border border-[var(--stroke-soft)] mb-3">
+                    <Cpu className="h-7 w-7 text-[var(--accent-strong)]" />
                   </div>
-                  <h2 className="text-2xl font-display font-bold text-slate-900">How can I help you today?</h2>
-                  <p className="text-slate-600 text-sm">Ask about detections, events, or test results</p>
+                  <h2 className="text-2xl font-display font-bold text-[var(--foreground)]">What should Watchtower analyze?</h2>
+                  <p className="text-[var(--surface-subtle-foreground)] text-sm">Ask about trust, evidence, validation blockers, or what to fix next.</p>
                 </div>
                 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3 w-full max-w-4xl">
@@ -510,12 +593,8 @@ Recent failing tests: ${failingTests.map(t => `${t.id}:${t.result || t.status ||
                         className={cn(
                           "group relative text-left px-5 py-4 rounded-xl border transition-all duration-200",
                           !AI_DISABLED && "hover:scale-[1.01] hover:shadow-md",
-                          "bg-white border-slate-200",
-                          !AI_DISABLED && "hover:border-indigo-200 hover:bg-indigo-50",
-                          !AI_DISABLED && action.color === "sky" && "hover:bg-sky-50",
-                          !AI_DISABLED && action.color === "emerald" && "hover:bg-emerald-50",
-                          !AI_DISABLED && action.color === "amber" && "hover:bg-amber-50",
-                          !AI_DISABLED && action.color === "purple" && "hover:bg-purple-50",
+                          "bg-[var(--surface-elevated)] border-[var(--stroke-soft)]",
+                          !AI_DISABLED && "hover:border-[var(--accent-line)] hover:bg-[var(--surface-subtle)]",
                           AI_DISABLED && "opacity-60 cursor-not-allowed",
                           "animate-fade-in-scale"
                         )}
@@ -532,10 +611,10 @@ Recent failing tests: ${failingTests.map(t => `${t.id}:${t.result || t.status ||
                             <Icon className="h-4 w-4" />
                           </div>
                           <div className="flex-1 min-w-0">
-                            <h3 className="font-display font-semibold text-sm text-slate-900 mb-1">
+                            <h3 className="font-display font-semibold text-sm text-[var(--foreground)] mb-1">
                               {action.title}
                             </h3>
-                            <p className="text-xs text-slate-600 leading-relaxed">
+                            <p className="text-xs text-[var(--surface-subtle-foreground)] leading-relaxed">
                               {action.description}
                             </p>
                             </div>
@@ -544,22 +623,47 @@ Recent failing tests: ${failingTests.map(t => `${t.id}:${t.result || t.status ||
                     );
                   })}
                 </div>
-              </div>
-            )}
 
-            {AI_DISABLED && (
-              <div className="fixed inset-0 z-20 flex items-center justify-center">
-                <div className="absolute inset-0 bg-white/95 backdrop-blur-[2px]" />
-                <div className="relative mx-6 w-full max-w-[72rem] overflow-hidden rounded-[40px] border border-transparent bg-white p-16 text-center shadow-[0_18px_42px_-30px_rgba(15,23,42,0.1)] animate-fade-in-scale">
-                  <div className="relative">
-                    <div className="mx-auto mb-10 flex h-28 w-28 items-center justify-center rounded-[30px] bg-white border border-slate-200 shadow-[0_14px_30px_-18px_rgba(15,23,42,0.15)] animate-pulse">
-                      <Cpu className="h-11 w-11 text-slate-900" />
-                    </div>
-                    <p className="text-xs font-semibold uppercase tracking-[0.45em] text-slate-500">Coming soon</p>
-                    <h3 className="mt-4 text-5xl font-display font-semibold text-slate-900">Watchtower AI</h3>
-                    <p className="mt-6 text-xl text-slate-600">
-                      Premium AI analysis is in progress. For now, run tests to generate real data.
+                <div className="w-full max-w-4xl rounded-2xl border border-[var(--stroke-soft)] bg-[var(--surface-elevated)] p-4 shadow-sm">
+                  <div className="mb-3">
+                    <h3 className="text-sm font-display font-semibold text-[var(--foreground)]">Ask a custom PurveX question</h3>
+                    <p className="text-xs text-[var(--surface-subtle-foreground)]">
+                      Ask about trust, evidence, telemetry gaps, rule tuning, retest plans, or how to improve coverage.
                     </p>
+                  </div>
+                  <div className="flex flex-col gap-3">
+                    <textarea
+                      value={customPrompt}
+                      onChange={(event) => setCustomPrompt(event.target.value)}
+                      placeholder={
+                        selectedDetection
+                          ? "Example: What is the most likely reason this detection is failing, and what exact rule changes should I try first?"
+                          : "Example: Which detections are hurting trust the most right now, and what should the team fix first?"
+                      }
+                      className="min-h-28 w-full resize-y rounded-xl border border-[var(--stroke-soft)] bg-[var(--surface-shell)] px-4 py-3 text-sm text-[var(--foreground)] outline-none transition-colors placeholder:text-[var(--surface-subtle-foreground)] focus:border-[var(--accent-line)]"
+                    />
+                    <div className="flex items-center justify-between gap-3">
+                      <p className="text-xs text-[var(--surface-subtle-foreground)]">
+                        Context: {selectedDetection ? "Selected detection" : "Portfolio workspace"}
+                      </p>
+                      <Button
+                        onClick={() => void handleSend()}
+                        disabled={sending || !customPrompt.trim() || AI_DISABLED}
+                        className="bg-[var(--accent-strong)] text-white hover:opacity-90"
+                      >
+                        {sending ? (
+                          <>
+                            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                            Asking...
+                          </>
+                        ) : (
+                          <>
+                            <SendHorizonal className="mr-2 h-4 w-4" />
+                            Ask Watchtower
+                          </>
+                        )}
+                      </Button>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -567,7 +671,7 @@ Recent failing tests: ${failingTests.map(t => `${t.id}:${t.result || t.status ||
 
             {/* Messages - Full Width Layout */}
             {messages.length > 0 && (
-              <div className="space-y-6 py-8 max-w-4xl mx-auto">
+              <div className="space-y-6 py-8 max-w-4xl mx-auto w-full">
                 {messages.map((msg, idx) => (
                   <div
                     key={msg.id}
@@ -578,34 +682,34 @@ Recent failing tests: ${failingTests.map(t => `${t.id}:${t.result || t.status ||
                     style={{ animationDelay: `${idx * 30}ms` }}
                   >
                     {msg.role === "assistant" && (
-                      <div className="flex-shrink-0 h-8 w-8 rounded-lg bg-gradient-to-br from-emerald-500/20 to-emerald-600/20 border border-emerald-500/30 flex items-center justify-center mt-1">
-                        <MessageCircle className="h-4 w-4 text-emerald-300" />
+                      <div className="flex-shrink-0 h-8 w-8 rounded-lg bg-[var(--surface-elevated)] border border-[var(--stroke-soft)] flex items-center justify-center mt-1">
+                        <MessageCircle className="h-4 w-4 text-[var(--accent-strong)]" />
                           </div>
                     )}
                     
                     <div className={cn(
-                      "max-w-[85%] rounded-2xl px-5 py-4 shadow-lg",
+                      "max-w-[85%] rounded-2xl px-5 py-4",
                       msg.role === "user"
-                        ? "bg-gradient-to-br from-sky-500/30 to-sky-600/20 text-slate-900 border border-sky-400/40"
+                        ? "bg-[var(--accent-soft)] text-[var(--foreground)] border border-[var(--accent-line)]"
                         : cn(
-                            "bg-white text-slate-900 border border-slate-200",
-                            msg.error && "border-red-500/40 bg-red-50"
+                            "bg-[var(--surface-elevated)] text-[var(--foreground)] border border-[var(--stroke-soft)]",
+                            msg.error && "border-red-500/40 bg-red-50 dark:bg-red-500/10"
                           )
                     )}>
-                      <div className="whitespace-pre-wrap break-words text-sm leading-relaxed text-slate-900">
+                      <div className="whitespace-pre-wrap break-words text-sm leading-relaxed text-[var(--foreground)]">
                         {msg.content}
                       </div>
                       <div className={cn(
                         "mt-2 text-xs",
-                        msg.role === "user" ? "text-slate-700" : "text-slate-600"
+                        "text-[var(--surface-subtle-foreground)]"
                       )}>
                         {mounted ? formatRelative(new Date(msg.timestamp), new Date()) : "Just now"}
                       </div>
                     </div>
 
                     {msg.role === "user" && (
-                      <div className="flex-shrink-0 h-8 w-8 rounded-lg bg-gradient-to-br from-sky-500/20 to-sky-600/20 border border-sky-500/30 flex items-center justify-center mt-1">
-                        <Cpu className="h-4 w-4 text-sky-300" />
+                      <div className="flex-shrink-0 h-8 w-8 rounded-lg bg-[var(--surface-elevated)] border border-[var(--stroke-soft)] flex items-center justify-center mt-1">
+                        <Cpu className="h-4 w-4 text-[var(--foreground)]" />
                 </div>
               )}
             </div>
@@ -613,11 +717,11 @@ Recent failing tests: ${failingTests.map(t => `${t.id}:${t.result || t.status ||
                 
                 {sending && (
                   <div className="flex gap-4 justify-start animate-fade-in-scale">
-                    <div className="flex-shrink-0 h-8 w-8 rounded-lg bg-gradient-to-br from-emerald-500/20 to-emerald-600/20 border border-emerald-500/30 flex items-center justify-center mt-1">
-                      <MessageCircle className="h-4 w-4 text-emerald-600" />
+                    <div className="flex-shrink-0 h-8 w-8 rounded-lg bg-[var(--surface-elevated)] border border-[var(--stroke-soft)] flex items-center justify-center mt-1">
+                      <MessageCircle className="h-4 w-4 text-[var(--accent-strong)]" />
                     </div>
-                    <div className="bg-white text-slate-900 border border-slate-200 rounded-2xl px-5 py-4 shadow-lg">
-                      <Loader2 className="h-5 w-5 animate-spin text-slate-900" />
+                    <div className="bg-[var(--surface-elevated)] text-[var(--foreground)] border border-[var(--stroke-soft)] rounded-2xl px-5 py-4">
+                      <Loader2 className="h-5 w-5 animate-spin text-[var(--foreground)]" />
                     </div>
                   </div>
                 )}
@@ -627,47 +731,64 @@ Recent failing tests: ${failingTests.map(t => `${t.id}:${t.result || t.status ||
         </div>
 
         {/* Focused Actions Footer */}
-        <div className="flex-shrink-0 border-t border-slate-200 bg-white z-10">
+        <div className="flex-shrink-0 border-t border-[var(--stroke-soft)] bg-[var(--surface-shell)] z-10 sticky bottom-0 backdrop-blur">
           <div className="w-full px-4 py-3 sm:px-6 lg:px-12">
             <div className="max-w-4xl mx-auto flex items-center justify-between gap-4">
-              <div className="flex items-center gap-3 text-sm text-slate-600">
+              <div className="flex items-center gap-3 text-sm text-[var(--surface-subtle-foreground)]">
                 {AI_DISABLED ? (
-                  <span className="text-xs text-slate-500">
-                    AI analysis is coming soon.
+                  <span className="text-xs text-[var(--surface-subtle-foreground)]">
+                    Watchtower is temporarily unavailable for this workspace.
                   </span>
                 ) : (
-                  <>
-                    <label className="flex items-center gap-2">
-                      <input
-                        type="checkbox"
-                        className="h-4 w-4 rounded border-slate-300"
-                        checked={demoMode}
-                        onChange={(e) => setDemoMode(e.target.checked)}
-                      />
-                      Demo mode
-                    </label>
-                    <span className="text-xs text-slate-500">
-                      Use sample context instead of live data
-                    </span>
-                  </>
+                  <span className="text-xs text-[var(--surface-subtle-foreground)]">
+                    Watchtower uses your live PurveX workspace context to answer questions about trust, evidence, and validation blockers.
+                  </span>
                 )}
               </div>
-              {messages.length > 0 && (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => {
-                    setMessages([]);
-                    if (abortControllerRef.current) {
-                      abortControllerRef.current.abort();
-                    }
-                  }}
-                >
-                  <X className="h-4 w-4 mr-2" />
-                  New analysis
-                </Button>
-              )}
+              <div className="flex items-center gap-2">
+                {messages.length > 0 && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      setMessages([]);
+                      setCustomPrompt("");
+                      if (abortControllerRef.current) {
+                        abortControllerRef.current.abort();
+                      }
+                    }}
+                  >
+                    <X className="h-4 w-4 mr-2" />
+                    New analysis
+                  </Button>
+                )}
+                {!showQuickActions && (
+                  <Button
+                    size="sm"
+                    onClick={() => void handleSend()}
+                    disabled={sending || !customPrompt.trim() || AI_DISABLED}
+                    className="bg-[var(--accent-strong)] text-white hover:opacity-90"
+                  >
+                    <SendHorizonal className="h-4 w-4 mr-2" />
+                    Ask
+                  </Button>
+                )}
+              </div>
             </div>
+            {!showQuickActions && (
+              <div className="max-w-4xl mx-auto mt-3">
+                <textarea
+                  value={customPrompt}
+                  onChange={(event) => setCustomPrompt(event.target.value)}
+                  placeholder={
+                    selectedDetection
+                      ? "Ask a PurveX-specific question about this detection, its evidence, or how to improve it."
+                      : "Ask a PurveX-specific question about validation health, failures, or what the team should do next."
+                  }
+                  className="min-h-24 w-full resize-y rounded-2xl border border-[var(--stroke-soft)] bg-[var(--surface-elevated)] px-4 py-3 text-sm text-[var(--foreground)] outline-none transition-colors placeholder:text-[var(--surface-subtle-foreground)] focus:border-[var(--accent-line)]"
+                />
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -677,8 +798,9 @@ Recent failing tests: ${failingTests.map(t => `${t.id}:${t.result || t.status ||
 
 export default function WatchtowerPage() {
   return (
-    <Suspense fallback={<div className="min-h-screen bg-slate-950" />}>
+    <Suspense fallback={<div className="min-h-screen bg-white" />}>
       <WatchtowerPageContent />
     </Suspense>
   );
 }
+

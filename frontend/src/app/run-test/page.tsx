@@ -1,13 +1,12 @@
 "use client";
 
 import Link from "next/link";
-import { useState, useEffect, useCallback, useRef, type ReactNode, Suspense } from "react";
+import { useState, useEffect, useCallback, useMemo, type ReactNode, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
@@ -22,11 +21,9 @@ import {
   getMitreTechniques,
   type MitreTechnique,
   getAtomicTests,
-  type AtomicTestDefinition,
   getEnvironmentRunners,
 } from "@/lib/api";
 import { usePermissions } from "@/hooks/usePermissions";
-import { Permission } from "@/lib/permissions";
 import {
   Clock3,
   Loader2,
@@ -35,41 +32,26 @@ import {
   CheckCircle2,
   XCircle,
   Slash,
-  Circle,
-  CircleDot,
-  ShieldCheck,
-  Info,
   Target,
   Search,
   Waves,
   ChevronRight,
   ChevronLeft,
-  ArrowRight,
   Server,
   Settings,
-  Plus,
-  X,
 } from "lucide-react";
 import { PageContainer } from "@/components/layout/page-container";
 import { cn } from "@/lib/utils";
-import { PageHeader } from "@/components/layout/page-header";
-import { Tooltip } from "@/components/ui/tooltip";
 
 type UiTestType = "detection_validation" | "find_detection_coverage" | "telemetry_check";
-type RoleTier = "T1" | "T2" | "T3";
-type GoalTemplate = {
-  id: string;
-  title: string;
-  description: string;
-  defaultTestType: UiTestType;
-  scopeHint: string;
-  objective: string;
-  roles: RoleTier[];
-  techniques: string[];
-  requiredTelemetry: string[];
-  recommendedTests: Array<{ technique: string; name: string }>;
+
+type RunnerTargetRecord = {
+  hostname?: string | null;
 };
 
+const RUN_TEST_MAX_POLL_ATTEMPTS = 300;
+const RUN_TEST_POLL_INTERVAL_MS = 2_000;
+const DEFAULT_SCHEDULE_INTERVAL_MINUTES = "60";
 type HighLevelResultType = "PASS" | "FAIL_RULE_VISIBILITY" | "NO_LOGS" | "SYSTEM_ERROR";
 
 interface RunTestResult {
@@ -84,9 +66,10 @@ interface RunTestResult {
     alerts_found: number;
   };
   run_id: number;
+  final_status?: string;
 }
 
-type ExecutionStatus = "running" | "completed" | "failed" | "partial";
+type ExecutionStatus = "queued" | "running" | "ingesting" | "validated" | "failed" | "partial";
 
 type ExecutionLogStatus = "running" | "success" | "warning" | "error";
 
@@ -139,24 +122,24 @@ function buildHighLevelResult(test: TestDetailResponse): RunTestResult {
 
   let result_type: HighLevelResultType = "SYSTEM_ERROR";
   let message =
-    "PurveX could not evaluate this test run due to a system or SIEM error. Check connections and try again.";
+    "PurveX could not evaluate this validation run due to a system or SIEM error. Check connections and try again.";
 
   if (test.status === "error") {
     result_type = "SYSTEM_ERROR";
   } else if (!hasLogs) {
     result_type = "NO_LOGS";
     message =
-      "We could not find any of the expected events from this test. This points to a telemetry or ingestion issue.";
+      "We could not find the expected evidence from this validation. This points to a telemetry or ingestion issue.";
   } else if (hasDetection && (test.result || "").toUpperCase() === "PASS") {
     result_type = "PASS";
-    message = "Logs were ingested and the linked detection rule fired as expected.";
+    message = "Evidence was ingested and the linked detection fired as expected.";
   } else if (hasDetection && (test.result || "").toUpperCase() === "FAIL") {
     result_type = "FAIL_RULE_VISIBILITY";
-    message = "Logs were ingested, but the detection rule did not fire. Check deployment, scope, and status.";
+    message = "Evidence was ingested, but the detection did not fire. Check deployment, scope, and status.";
   } else if (!hasDetection && hasLogs) {
     // Telemetry‑only run – we saw logs, but no specific rule was evaluated.
     result_type = "PASS";
-    message = "Logs were ingested for this scenario. No specific detection rule was evaluated for this run.";
+    message = "Evidence was ingested for this scenario. No specific detection was evaluated for this run.";
   }
 
   return {
@@ -173,6 +156,7 @@ function buildHighLevelResult(test: TestDetailResponse): RunTestResult {
         }
       : undefined,
     run_id: test.id,
+    final_status: test.status,
   };
 }
 
@@ -180,29 +164,42 @@ const EXEC_STATUS_META: Record<
   ExecutionStatus,
   { label: string; tone: string; text: string; icon: ReactNode; pulse?: boolean }
 > = {
+  queued: {
+    label: "Queued",
+    tone: "bg-slate-100 text-slate-800 ring-1 ring-slate-200",
+    text: "Waiting for the runner to pick up the job",
+    icon: <Clock3 className="h-4 w-4 text-slate-600" />,
+  },
   running: {
     label: "Running",
     tone: "bg-sky-50 text-sky-800 ring-1 ring-sky-100",
-    text: "Execution in progress",
+    text: "Executing the test on the target runner",
     icon: <Loader2 className="h-4 w-4 animate-spin text-sky-600" />,
     pulse: true,
   },
-  completed: {
-    label: "Completed",
+  ingesting: {
+    label: "Ingesting",
+    tone: "bg-indigo-50 text-indigo-800 ring-1 ring-indigo-100",
+    text: "Waiting for telemetry and validation results",
+    icon: <Waves className="h-4 w-4 text-indigo-600" />,
+    pulse: true,
+  },
+  validated: {
+    label: "Validated",
     tone: "bg-emerald-50 text-emerald-800 ring-1 ring-emerald-100",
-    text: "Execution finished successfully",
+    text: "Validation completed successfully",
     icon: <CheckCircle2 className="h-4 w-4 text-emerald-600" />,
   },
   failed: {
     label: "Failed",
     tone: "bg-rose-50 text-rose-800 ring-1 ring-rose-100",
-    text: "Execution failed",
+    text: "Validation run failed",
     icon: <XCircle className="h-4 w-4 text-rose-600" />,
   },
   partial: {
     label: "Partial Telemetry",
     tone: "bg-amber-50 text-amber-800 ring-1 ring-amber-100",
-    text: "Execution finished with incomplete telemetry",
+    text: "Validation finished with incomplete telemetry",
     icon: <AlertTriangle className="h-4 w-4 text-amber-600" />,
   },
 };
@@ -244,17 +241,19 @@ function useRunTest() {
         });
 
         callbacks?.onStart?.(created);
+        callbacks?.onStatus?.("queued");
         callbacks?.onLog?.({
           id: crypto.randomUUID ? crypto.randomUUID() : String(Date.now()),
           timestamp: new Date().toISOString(),
-          step: "Execution started",
+          step: "Job accepted and queued",
           status: "running",
         });
 
         let attempts = 0;
         let final: TestDetailResponse | null = null;
-        const maxAttempts = 30;
-        const pollInterval = 2000; // 2 seconds
+        let runningPolls = 0;
+        const maxAttempts = RUN_TEST_MAX_POLL_ATTEMPTS;
+        const pollInterval = RUN_TEST_POLL_INTERVAL_MS;
         
         while (attempts < maxAttempts) {
           try {
@@ -267,14 +266,26 @@ function useRunTest() {
               final = current;
               break;
             }
-            callbacks?.onLog?.({
-              id: crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${attempts}`,
-              timestamp: new Date().toISOString(),
-              step: "Waiting for telemetry and rule results",
-              status: "running",
-            });
-          } catch (pollError: any) {
-            console.warn(`Poll attempt ${attempts + 1} failed:`, pollError);
+            if (current.status === "pending") {
+              callbacks?.onStatus?.("queued");
+              callbacks?.onLog?.({
+                id: crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${attempts}`,
+                timestamp: new Date().toISOString(),
+                step: "Waiting for runner pickup",
+                status: "running",
+              });
+            } else {
+              runningPolls += 1;
+              const nextStatus: ExecutionStatus = runningPolls > 1 ? "ingesting" : "running";
+              callbacks?.onStatus?.(nextStatus);
+              callbacks?.onLog?.({
+                id: crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${attempts}`,
+                timestamp: new Date().toISOString(),
+                step: nextStatus === "running" ? "Atomic test executing on runner" : "Waiting for telemetry and rule results",
+                status: "running",
+              });
+            }
+          } catch {
             callbacks?.onLog?.({
               id: crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-err-${attempts}`,
               timestamp: new Date().toISOString(),
@@ -287,9 +298,7 @@ function useRunTest() {
           }
           
           attempts += 1;
-          /* eslint-disable no-await-in-loop */
           await new Promise((resolve) => setTimeout(resolve, pollInterval));
-          /* eslint-enable no-await-in-loop */
         }
 
         if (final) {
@@ -302,17 +311,17 @@ function useRunTest() {
               ? "Telemetry logs not found"
               : undefined;
           const resolvedStatus: ExecutionStatus =
-            missingSignal ? "partial" : final.status === "failed" ? "failed" : "completed";
+            missingSignal ? "partial" : final.status === "error" ? "failed" : "validated";
           callbacks?.onStatus?.(resolvedStatus, final.finished_at || new Date().toISOString(), missingSignal);
           callbacks?.onLog?.({
             id: crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-done`,
             timestamp: new Date().toISOString(),
             step:
-              resolvedStatus === "completed"
-                ? "Execution finished"
+              resolvedStatus === "validated"
+                ? "Validation completed"
                 : resolvedStatus === "partial"
-                ? "Execution finished with partial telemetry"
-                : "Execution failed",
+                ? "Validation finished with partial telemetry"
+                : "Validation run failed",
             status: resolvedStatus === "failed" ? "error" : resolvedStatus === "partial" ? "warning" : "success",
           });
 
@@ -324,11 +333,11 @@ function useRunTest() {
             window.dispatchEvent(new Event("purvex:test-notification"));
           }
         } else {
-          setError("The test is still running in the background. Check the Tests page for full details.");
-          callbacks?.onStatus?.("partial", new Date().toISOString(), "Final status not returned yet");
+          setError("This validation is still processing. You can keep this page open or review the live validation record from the Tests page.");
+          callbacks?.onStatus?.("ingesting");
         }
-      } catch (err: any) {
-        setError(err.message || "Failed to run test.");
+      } catch (err: unknown) {
+        setError(err instanceof Error ? err.message : "Failed to start validation.");
         callbacks?.onStatus?.("failed", new Date().toISOString());
       } finally {
         setIsRunning(false);
@@ -352,6 +361,16 @@ function LiveExecutionPanel({
   isRunning: boolean;
 }) {
   const meta = EXEC_STATUS_META[execution.status];
+  const stages: Array<{ id: ExecutionStatus | "done"; label: string }> = [
+    { id: "queued", label: "Queued" },
+    { id: "running", label: "Running" },
+    { id: "ingesting", label: "Ingesting" },
+    { id: "validated", label: "Validated" },
+  ];
+  const currentStageIndex = (() => {
+    if (execution.status === "failed" || execution.status === "partial") return 3;
+    return stages.findIndex((stage) => stage.id === execution.status);
+  })();
 
   return (
     <div className="rounded-2xl border border-slate-200 bg-white shadow-sm p-4 sm:p-5 space-y-4">
@@ -380,9 +399,29 @@ function LiveExecutionPanel({
         </div>
       </div>
 
+      <div className="grid gap-2 md:grid-cols-4">
+        {stages.map((stage, index) => {
+          const isDone = index < currentStageIndex;
+          const isCurrent = index === currentStageIndex;
+          return (
+            <div
+              key={stage.label}
+              className={cn(
+                "rounded-lg border px-3 py-2 text-xs font-semibold",
+                isDone && "border-emerald-200 bg-emerald-50 text-emerald-700",
+                isCurrent && "border-sky-200 bg-sky-50 text-sky-700",
+                !isDone && !isCurrent && "border-slate-200 bg-slate-50 text-slate-500"
+              )}
+            >
+              {stage.label}
+            </div>
+          );
+        })}
+      </div>
+
       <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
         <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
-          <div className="text-[11px] uppercase tracking-[0.18em] text-slate-500">Execution ID</div>
+          <div className="text-[11px] uppercase tracking-[0.18em] text-slate-500">Validation ID</div>
           <div className="text-sm font-mono text-slate-900 break-all">{execution.id}</div>
         </div>
         <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
@@ -394,7 +433,7 @@ function LiveExecutionPanel({
           <div className="text-sm font-semibold text-slate-900">{execution.environment}</div>
         </div>
         <div className="md:col-span-2 lg:col-span-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
-          <div className="text-[11px] uppercase tracking-[0.18em] text-slate-500">Atomic command</div>
+          <div className="text-[11px] uppercase tracking-[0.18em] text-slate-500">Runner command</div>
           <div className="text-sm font-mono text-slate-900 whitespace-pre-wrap break-words">
             {execution.atomic_command}
           </div>
@@ -403,7 +442,7 @@ function LiveExecutionPanel({
 
       <div className="border-t border-slate-200 pt-3">
         <div className="flex items-center justify-between">
-          <div className="text-sm font-semibold text-slate-900">Execution log</div>
+          <div className="text-sm font-semibold text-slate-900">Run log</div>
           <Button
             type="button"
             size="sm"
@@ -411,13 +450,13 @@ function LiveExecutionPanel({
             className="text-xs"
             onClick={onToggleLogs}
           >
-            {logsExpanded ? "Hide execution details" : "View execution details"}
+            {logsExpanded ? "Hide run details" : "View run details"}
           </Button>
         </div>
         {logsExpanded && (
           <div className="mt-3 max-h-64 overflow-y-auto rounded-lg border border-slate-200 bg-slate-50">
             {execution.logs.length === 0 && (
-              <div className="px-3 py-2 text-xs text-slate-500">Waiting for execution events...</div>
+              <div className="px-3 py-2 text-xs text-slate-500">Waiting for run updates...</div>
             )}
             {execution.logs.map((log) => (
               <div
@@ -441,6 +480,38 @@ function LiveExecutionPanel({
   );
 }
 
+type TestModeMeta = {
+  id: UiTestType;
+  title: string;
+  question: string;
+  icon: React.ComponentType<{ className?: string }>;
+  step2Label: string;
+};
+
+const TEST_MODES: TestModeMeta[] = [
+  {
+    id: "detection_validation",
+    title: "Validate a Detection",
+    question: "I already have a rule — does it work?",
+    icon: Target,
+    step2Label: "Pick Detection",
+  },
+  {
+    id: "find_detection_coverage",
+    title: "Explore Coverage",
+    question: "What should detect this ATT&CK technique?",
+    icon: Search,
+    step2Label: "Pick Technique",
+  },
+  {
+    id: "telemetry_check",
+    title: "Verify Telemetry Readiness",
+    question: "Are logs even arriving?",
+    icon: Waves,
+    step2Label: "Pick Scenario",
+  },
+];
+
 function RunTestPageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -449,11 +520,12 @@ function RunTestPageContent() {
   const techniqueFromExplore = searchParams.get("technique_id");
   const atomicNameFromExplore = searchParams.get("atomic_name");
   const desiredStepRaw = searchParams.get("step");
+  const preselectedEnvironment = searchParams.get("environment");
+  const preselectedTargetHost = searchParams.get("targetHost");
 
   const [detections, setDetections] = useState<Detection[]>([]);
   const [selectedDetection, setSelectedDetection] = useState<string>("");
   const [selectedScenario, setSelectedScenario] = useState<string>("");
-  const [selectedGoalId, setSelectedGoalId] = useState<string | null>(null);
   const [environment, setEnvironment] = useState<"lab" | "dev" | "prod">("lab");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -466,287 +538,23 @@ function RunTestPageContent() {
   const [runMode, setRunMode] = useState<"now" | "schedule">("now");
   const [scheduleType, setScheduleType] = useState<TestScheduleType>("once");
   const [scheduleTime, setScheduleTime] = useState<string>("");
-  const [scheduleIntervalMinutes, setScheduleIntervalMinutes] = useState<string>("60");
+  const [scheduleIntervalMinutes, setScheduleIntervalMinutes] = useState<string>(DEFAULT_SCHEDULE_INTERVAL_MINUTES);
   const [isScheduling, setIsScheduling] = useState(false);
   const [mitreTechniques, setMitreTechniques] = useState<MitreTechnique[]>([]);
   const [coverageScenarioConfirmed, setCoverageScenarioConfirmed] = useState<boolean>(false);
-  const [loadingMitre, setLoadingMitre] = useState(false);
+  const [mitreLoadWarning, setMitreLoadWarning] = useState<string | null>(null);
+  const [runnerLoadWarning, setRunnerLoadWarning] = useState<string | null>(null);
   const [selectedSubtechniqueId, setSelectedSubtechniqueId] = useState<string>("");
   const [currentStep, setCurrentStep] = useState<number>(1); // Step navigation state
   const [execution, setExecution] = useState<ExecutionState | null>(null);
   const [logsExpanded, setLogsExpanded] = useState<boolean>(false);
   const [atomicScenarioHint, setAtomicScenarioHint] = useState<{ name: string; description?: string } | null>(null);
-  const goalCarouselRef = useRef<HTMLDivElement | null>(null);
-  const [showGoalForm, setShowGoalForm] = useState(false);
-  const [showGoalLibrary, setShowGoalLibrary] = useState(false);
-  const [appliedGoalId, setAppliedGoalId] = useState<string | null>(null);
-  const [customGoals, setCustomGoals] = useState<GoalTemplate[]>([]);
-  const [goalForm, setGoalForm] = useState({
-    title: "",
-    description: "",
-    objective: "",
-    scopeHint: "",
-    defaultTestType: "find_detection_coverage" as UiTestType,
-    roles: ["T1", "T2", "T3"] as RoleTier[],
-  });
-  const [goalTtps, setGoalTtps] = useState<string[]>([]);
-  const [goalTelemetry, setGoalTelemetry] = useState<string[]>([]);
-  const [goalTelemetryInput, setGoalTelemetryInput] = useState("");
-  const [recommendedTechnique, setRecommendedTechnique] = useState<string>("");
-  const [availableAtomicTests, setAvailableAtomicTests] = useState<AtomicTestDefinition[]>([]);
-  const [goalRecommendedTests, setGoalRecommendedTests] = useState<Array<{ technique: string; name: string }>>([]);
-
-  const roleTiers: RoleTier[] = ["T1", "T2", "T3"];
-  const roleLabels: Record<RoleTier, string> = {
-    T1: "Tier 1",
-    T2: "Tier 2",
-    T3: "Tier 3",
-  };
-  const roleTooltips: Record<RoleTier, string> = {
-    T1: "Tier 1: Triage/monitoring. Validate alerts, quick checks, escalate.",
-    T2: "Tier 2: Investigation/analysis. Correlate signals, tune detections, root cause.",
-    T3: "Tier 3: Engineering/advanced. Build detections, automate, cover complex TTPs.",
-  };
-  const [activeGoalRoles, setActiveGoalRoles] = useState<RoleTier[]>(roleTiers);
-
-  const goalTemplates: GoalTemplate[] = [
-    {
-      id: "goal-lateral-movement",
-      title: "Validate lateral movement defenses",
-      description: "Prove detection coverage for common lateral movement techniques.",
-      defaultTestType: "find_detection_coverage",
-      scopeHint: "Focus on T1021 (SMB/WinRM/RDP), T1077, T1047, T1550.",
-      objective: "Detect remote execution and credential reuse across hosts.",
-      roles: ["T2", "T3"],
-      techniques: ["T1021", "T1021.001", "T1021.002", "T1021.003", "T1047", "T1077", "T1550"],
-      requiredTelemetry: ["Process creation", "Authentication logs", "Remote service activity", "Network connections"],
-      recommendedTests: [
-        { technique: "T1021.002", name: "SMB/Windows Admin Shares" },
-        { technique: "T1021.006", name: "WinRM Remote Execution" },
-        { technique: "T1047", name: "WMI Remote Process" },
-      ],
-    },
-    {
-      id: "goal-ransomware-telemetry",
-      title: "Test ransomware telemetry coverage",
-      description: "Confirm logs and detections for ransomware-like behaviors.",
-      defaultTestType: "find_detection_coverage",
-      scopeHint: "Focus on T1486, T1489, T1490, T1078, T1003.",
-      objective: "Verify encryption, service impact, and recovery sabotage visibility.",
-      roles: ["T2", "T3"],
-      techniques: ["T1486", "T1489", "T1490", "T1078", "T1003"],
-      requiredTelemetry: ["Process creation", "File activity", "Service control", "Backup/restore events"],
-      recommendedTests: [
-        { technique: "T1486", name: "Data Encrypted for Impact" },
-        { technique: "T1489", name: "Service Stop" },
-        { technique: "T1490", name: "Inhibit System Recovery" },
-      ],
-    },
-    {
-      id: "goal-priv-esc",
-      title: "Validate privilege escalation visibility",
-      description: "Ensure you can detect common privilege escalation paths.",
-      defaultTestType: "find_detection_coverage",
-      scopeHint: "Focus on T1068, T1543, T1548, T1055.",
-      objective: "Catch attempts to gain admin or SYSTEM privileges.",
-      roles: ["T2", "T3"],
-      techniques: ["T1068", "T1543", "T1548", "T1055"],
-      requiredTelemetry: ["Process creation", "Privilege changes", "Service installs", "Token activity"],
-      recommendedTests: [
-        { technique: "T1543", name: "Create/Modify System Service" },
-        { technique: "T1548", name: "Abuse Elevation Control Mechanism" },
-        { technique: "T1055", name: "Process Injection" },
-      ],
-    },
-    {
-      id: "goal-cloud-identity",
-      title: "Test cloud identity abuse",
-      description: "Validate identity abuse and access token misuse scenarios.",
-      defaultTestType: "find_detection_coverage",
-      scopeHint: "Focus on T1550, T1078, T1539, T1606.",
-      objective: "Detect stolen token use and suspicious cloud access.",
-      roles: ["T2", "T3"],
-      techniques: ["T1550", "T1078", "T1539", "T1606"],
-      requiredTelemetry: ["Cloud audit logs", "Authentication events", "Token usage", "API activity"],
-      recommendedTests: [
-        { technique: "T1078", name: "Valid Accounts" },
-        { technique: "T1550", name: "Use of Stolen Access Token" },
-        { technique: "T1606", name: "Forge Web Session Cookie" },
-      ],
-    },
-    {
-      id: "goal-credential-access",
-      title: "Validate credential access defenses",
-      description: "Ensure visibility into common credential dumping and theft.",
-      defaultTestType: "find_detection_coverage",
-      scopeHint: "Focus on T1003 family, T1555, T1552.",
-      objective: "Detect local credential theft and secret discovery.",
-      roles: ["T2", "T3"],
-      techniques: ["T1003", "T1003.001", "T1003.003", "T1003.006", "T1555", "T1552"],
-      requiredTelemetry: ["Process creation", "LSASS access", "Credential store access"],
-      recommendedTests: [
-        { technique: "T1003.001", name: "Dump LSASS" },
-        { technique: "T1555", name: "Credentials from Password Stores" },
-        { technique: "T1552", name: "Unsecured Credentials" },
-      ],
-    },
-    {
-      id: "goal-defense-evasion",
-      title: "Test defense evasion attempts",
-      description: "Validate that tampering, obfuscation, and bypasses are detected.",
-      defaultTestType: "find_detection_coverage",
-      scopeHint: "Focus on T1562, T1027, T1218, T1036.",
-      objective: "Spot attempts to disable, hide, or masquerade.",
-      roles: ["T2", "T3"],
-      techniques: ["T1562", "T1027", "T1218", "T1036"],
-      requiredTelemetry: ["Security control events", "Process creation", "Command-line logging"],
-      recommendedTests: [
-        { technique: "T1562", name: "Impair Defenses" },
-        { technique: "T1027", name: "Obfuscated Files or Information" },
-        { technique: "T1218", name: "Signed Binary Proxy Execution" },
-      ],
-    },
-    {
-      id: "goal-persistence",
-      title: "Validate persistence mechanisms",
-      description: "Ensure you can detect common long-term footholds.",
-      defaultTestType: "find_detection_coverage",
-      scopeHint: "Focus on T1547, T1053, T1543, T1136.",
-      objective: "Detect scheduled tasks, services, and autostart entries.",
-      roles: ["T2", "T3"],
-      techniques: ["T1547", "T1053", "T1543", "T1136"],
-      requiredTelemetry: ["Task scheduler logs", "Service creation", "Registry changes"],
-      recommendedTests: [
-        { technique: "T1053", name: "Scheduled Task/Job" },
-        { technique: "T1547", name: "Boot or Logon Autostart" },
-        { technique: "T1136", name: "Create Account" },
-      ],
-    },
-    {
-      id: "goal-discovery",
-      title: "Test discovery and reconnaissance",
-      description: "Confirm visibility into host and network discovery.",
-      defaultTestType: "find_detection_coverage",
-      scopeHint: "Focus on T1082, T1049, T1018, T1087, T1033.",
-      objective: "Detect enumeration of hosts, users, and environment.",
-      roles: ["T1", "T2"],
-      techniques: ["T1082", "T1049", "T1018", "T1087", "T1033"],
-      requiredTelemetry: ["Process creation", "Network discovery", "User/group queries"],
-      recommendedTests: [
-        { technique: "T1082", name: "System Information Discovery" },
-        { technique: "T1049", name: "System Network Connections Discovery" },
-        { technique: "T1018", name: "Remote System Discovery" },
-      ],
-    },
-    {
-      id: "goal-command-control",
-      title: "Validate command and control signals",
-      description: "Ensure suspicious beaconing and tool transfer is visible.",
-      defaultTestType: "find_detection_coverage",
-      scopeHint: "Focus on T1071, T1095, T1105.",
-      objective: "Detect outbound C2 and payload staging.",
-      roles: ["T2", "T3"],
-      techniques: ["T1071", "T1095", "T1105"],
-      requiredTelemetry: ["Network connections", "DNS/HTTP logs", "Proxy logs"],
-      recommendedTests: [
-        { technique: "T1071", name: "Application Layer Protocol" },
-        { technique: "T1095", name: "Non-Application Layer Protocol" },
-        { technique: "T1105", name: "Ingress Tool Transfer" },
-      ],
-    },
-    {
-      id: "goal-exfiltration",
-      title: "Test data exfiltration visibility",
-      description: "Validate detection of data staging and exfil channels.",
-      defaultTestType: "find_detection_coverage",
-      scopeHint: "Focus on T1074, T1041, T1020.",
-      objective: "Detect staging and transfer of sensitive data.",
-      roles: ["T2", "T3"],
-      techniques: ["T1074", "T1041", "T1020"],
-      requiredTelemetry: ["File activity", "Network flows", "Cloud storage logs"],
-      recommendedTests: [
-        { technique: "T1074", name: "Data Staged" },
-        { technique: "T1041", name: "Exfiltration Over C2 Channel" },
-        { technique: "T1020", name: "Automated Exfiltration" },
-      ],
-    },
-    {
-      id: "goal-impact",
-      title: "Validate impact activity detection",
-      description: "Ensure visibility into disruptive actions.",
-      defaultTestType: "find_detection_coverage",
-      scopeHint: "Focus on T1486, T1490, T1499, T1529.",
-      objective: "Detect disruption, shutdown, and encryption behaviors.",
-      roles: ["T1", "T2", "T3"],
-      techniques: ["T1486", "T1490", "T1499", "T1529"],
-      requiredTelemetry: ["Process creation", "System shutdown events", "Service disruptions"],
-      recommendedTests: [
-        { technique: "T1499", name: "Endpoint Denial of Service" },
-        { technique: "T1529", name: "System Shutdown/Reboot" },
-        { technique: "T1486", name: "Data Encrypted for Impact" },
-      ],
-    },
-    {
-      id: "goal-webapp-abuse",
-      title: "Test web app abuse patterns",
-      description: "Validate visibility into common web exploitation paths.",
-      defaultTestType: "find_detection_coverage",
-      scopeHint: "Focus on T1190, T1505, T1059.",
-      objective: "Detect initial access via public-facing apps.",
-      roles: ["T2", "T3"],
-      techniques: ["T1190", "T1505", "T1059"],
-      requiredTelemetry: ["Web server logs", "WAF alerts", "Process creation"],
-      recommendedTests: [
-        { technique: "T1190", name: "Exploit Public-Facing Application" },
-        { technique: "T1505", name: "Server Software Component" },
-        { technique: "T1059", name: "Command and Scripting Interpreter" },
-      ],
-    },
-  ];
-  const allGoalTemplates = [...goalTemplates, ...customGoals];
-  const filteredGoalTemplates = allGoalTemplates.filter((goal) =>
-    goal.roles.some((role) => activeGoalRoles.includes(role))
-  );
-  const selectedGoal = allGoalTemplates.find((goal) => goal.id === selectedGoalId) || null;
-
-  useEffect(() => {
-    try {
-      const raw = window.localStorage.getItem("purvex.goalTemplates");
-      if (!raw) return;
-      const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed)) {
-        const normalized = parsed.map((goal) => ({
-          ...goal,
-          roles: Array.isArray(goal.roles) && goal.roles.length > 0 ? goal.roles : roleTiers,
-        }));
-        setCustomGoals(normalized);
-      }
-    } catch {
-      // Ignore invalid stored data.
-    }
-  }, []);
-
-  const persistCustomGoals = (next: GoalTemplate[]) => {
-    setCustomGoals(next);
-    try {
-      window.localStorage.setItem("purvex.goalTemplates", JSON.stringify(next));
-    } catch {
-      // Ignore storage errors.
-    }
-  };
-
-  const toggleGoalRole = (role: RoleTier) => {
-    setActiveGoalRoles((prev) => {
-      if (prev.includes(role)) {
-        const next = prev.filter((item) => item !== role);
-        return next.length === 0 ? prev : next;
-      }
-      return [...prev, role];
-    });
-  };
+  const [techniquePickerSearch, setTechniquePickerSearch] = useState<string>("");
+  const [techniquePickerTactic, setTechniquePickerTactic] = useState<string>("all");
+  const [techniquePickerPage, setTechniquePickerPage] = useState<number>(0);
 
   const { run: runTest, isRunning, result, error: runError, setResult } = useRunTest();
-  const { hasPermission, canRunTest, canScheduleTest, loading: permissionsLoading } = usePermissions();
+  const { canRunTest, canScheduleTest, loading: permissionsLoading } = usePermissions();
   const addExecutionLog = useCallback((entry: ExecutionLogEntry) => {
     setExecution((prev) => {
       if (!prev) return prev;
@@ -796,40 +604,16 @@ function RunTestPageContent() {
   }, [focus, preselectedDetectionId, techniqueFromExplore]);
 
   useEffect(() => {
-    if (!showGoalForm) return;
-    if (mitreTechniques.length > 0) return;
-    (async () => {
-      try {
-        const data = await getMitreTechniques();
-        setMitreTechniques(data);
-      } catch {
-        // Ignore load errors in modal.
-      }
-    })();
-  }, [showGoalForm, mitreTechniques.length]);
+    if (preselectedEnvironment === "lab" || preselectedEnvironment === "dev" || preselectedEnvironment === "prod") {
+      setEnvironment(preselectedEnvironment);
+    }
+  }, [preselectedEnvironment]);
 
   useEffect(() => {
-    if (!showGoalForm || !recommendedTechnique) {
-      setAvailableAtomicTests([]);
-      return;
+    if (preselectedTargetHost) {
+      setTargetHost(preselectedTargetHost);
     }
-    let cancelled = false;
-    (async () => {
-      try {
-        const response = await getAtomicTests({ technique_id: recommendedTechnique, limit: 200 });
-        if (!cancelled) {
-          setAvailableAtomicTests(response.items || []);
-        }
-      } catch {
-        if (!cancelled) {
-          setAvailableAtomicTests([]);
-        }
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [showGoalForm, recommendedTechnique]);
+  }, [preselectedTargetHost]);
 
   useEffect(() => {
     async function loadDetections() {
@@ -845,8 +629,8 @@ function RunTestPageContent() {
             setCurrentStep(2); // Show step 2 when coming from detection page
           }
         }
-      } catch (err: any) {
-        setError(err.message || "Failed to load detections.");
+      } catch (err: unknown) {
+        setError(err instanceof Error ? err.message : "Failed to load detections.");
       } finally {
         setLoading(false);
       }
@@ -899,48 +683,37 @@ function RunTestPageContent() {
     }
   }, [testType, techniqueFromExplore]);
 
-  // Reset coverage confirmation when mode/selection changes
+  // Coverage scenario is confirmed as soon as the user has a technique in focus.
   useEffect(() => {
     if (testType !== "find_detection_coverage") {
       setCoverageScenarioConfirmed(false);
-    } else if (!techniqueFromExplore && !selectedDetection) {
-      setCoverageScenarioConfirmed(false);
+      return;
     }
-  }, [testType, techniqueFromExplore, selectedDetection]);
-
-  // Auto-confirm if a detection is explicitly selected in coverage mode
-  useEffect(() => {
-    if (testType === "find_detection_coverage" && selectedDetection) {
-      setCoverageScenarioConfirmed(true);
-    }
-  }, [testType, selectedDetection]);
-
-  // Auto-confirm coverage when coming from Atomic Explore with a chosen test.
-  useEffect(() => {
-    if (testType === "find_detection_coverage" && techniqueFromExplore && atomicNameFromExplore) {
-      setCoverageScenarioConfirmed(true);
-    }
-  }, [testType, techniqueFromExplore, atomicNameFromExplore]);
+    setCoverageScenarioConfirmed(!!techniqueFromExplore);
+  }, [testType, techniqueFromExplore]);
 
   // Load MITRE techniques lazily when needed for validation mode or explore coverage
   useEffect(() => {
     async function loadMitre() {
       if (mitreTechniques.length > 0) return;
       try {
-        setLoadingMitre(true);
         const data = await getMitreTechniques();
         setMitreTechniques(data);
-      } catch (err) {
-        console.error("Failed to load MITRE techniques for subtechnique picker:", err);
-      } finally {
-        setLoadingMitre(false);
+        setMitreLoadWarning(null);
+      } catch {
+        setMitreLoadWarning("MITRE techniques could not be loaded. Technique labels and subtechnique selection may be incomplete.");
       }
     }
 
-    if ((testType === "detection_validation" && selectedDetection) || techniqueFromExplore) {
-      loadMitre();
+    if (
+      (testType === "detection_validation" && selectedDetection) ||
+      testType === "find_detection_coverage" ||
+      testType === "telemetry_check" ||
+      techniqueFromExplore
+    ) {
+      void loadMitre();
     }
-  }, [testType, selectedDetection, mitreTechniques.length]);
+  }, [testType, selectedDetection, techniqueFromExplore, mitreTechniques.length]);
 
   useEffect(() => {
     let cancelled = false;
@@ -950,15 +723,18 @@ function RunTestPageContent() {
         if (cancelled) return;
         if (Array.isArray(runners)) {
           const hosts = runners
-            .map((runner: any) => runner.hostname)
-            .filter((hostname: any) => typeof hostname === "string" && hostname.trim().length > 0);
+            .map((runner: RunnerTargetRecord) => runner.hostname)
+            .filter((hostname): hostname is string => typeof hostname === "string" && hostname.trim().length > 0);
           setRunnerTargets(Array.from(new Set(hosts)));
         }
+        setRunnerLoadWarning(null);
       } catch {
-        // Ignore runner load errors for now.
+        if (!cancelled) {
+          setRunnerLoadWarning("Runner targets could not be loaded. Enter the host manually or retry later.");
+        }
       }
     }
-    loadRunners();
+    void loadRunners();
     return () => {
       cancelled = true;
     };
@@ -1018,6 +794,10 @@ function RunTestPageContent() {
 
     // If the user chooses "schedule", create a schedule instead of running immediately.
     if (runMode === "schedule") {
+      if (!canScheduleTest(environment)) {
+        setError("You do not have permission to schedule tests in this environment.");
+        return;
+      }
       try {
         setIsScheduling(true);
         setError(null);
@@ -1050,15 +830,15 @@ function RunTestPageContent() {
         });
 
         setResult(null);
-      } catch (err: any) {
-        setError(err.message || "Failed to create schedule.");
+      } catch (err: unknown) {
+        setError(err instanceof Error ? err.message : "Failed to create schedule.");
       } finally {
         setIsScheduling(false);
       }
       return;
     }
 
-    // Special Lab flow: start run and redirect to Lab screen.
+    // Start the run and move straight into the validation record.
     if (environment === "lab") {
       try {
         const created = await runTestApi({
@@ -1069,9 +849,9 @@ function RunTestPageContent() {
           labOs,
           endpoint: targetHost.trim() || null,
         });
-        router.push(`/lab?testId=${created.id}`);
-      } catch (err: any) {
-        setError(err.message || "Failed to start lab run.");
+        router.push(`/tests/${created.id}`);
+      } catch (err: unknown) {
+        setError(err instanceof Error ? err.message : "Failed to start lab run.");
       }
       return;
     }
@@ -1083,7 +863,7 @@ function RunTestPageContent() {
 
     setExecution({
       id: executionId,
-      status: "running",
+      status: "queued",
       started_at: startTs,
       atomic_command: atomicCommand,
       technique_id: techniqueIdDisplay,
@@ -1092,7 +872,7 @@ function RunTestPageContent() {
         {
           id: `${executionId}-start`,
           timestamp: startTs,
-          step: "Test dispatched to runner",
+          step: "Job queued for execution",
           status: "running",
         },
       ],
@@ -1146,56 +926,6 @@ function RunTestPageContent() {
     );
   }
 
-  const handleSaveGoal = () => {
-    if (!goalForm.title.trim() || !goalForm.description.trim() || !goalForm.objective.trim()) {
-      setError("Please provide a title, description, and objective for the goal template.");
-      return;
-    }
-    if (goalTtps.length === 0) {
-      setError("Please add at least one TTP for the goal template.");
-      return;
-    }
-
-    const techniques = goalTtps;
-    const requiredTelemetry = goalTelemetry;
-    const recommendedTests = goalRecommendedTests;
-
-    const newGoal: GoalTemplate = {
-      id: `custom-${Date.now()}`,
-      title: goalForm.title.trim(),
-      description: goalForm.description.trim(),
-      objective: goalForm.objective.trim(),
-      scopeHint: goalForm.scopeHint.trim() || "Custom scope",
-      defaultTestType: goalForm.defaultTestType,
-      roles: goalForm.roles.length > 0 ? goalForm.roles : roleTiers,
-      techniques,
-      requiredTelemetry,
-      recommendedTests,
-    };
-
-    const next = [...customGoals, newGoal];
-    persistCustomGoals(next);
-    setSelectedGoalId(newGoal.id);
-    setTestType(newGoal.defaultTestType);
-    setShowGoalForm(false);
-    setGoalForm({
-      title: "",
-      description: "",
-      objective: "",
-      scopeHint: "",
-      defaultTestType: "find_detection_coverage",
-      roles: ["T1", "T2", "T3"],
-    });
-    setGoalTtps([]);
-    setGoalTelemetry([]);
-    setGoalTelemetryInput("");
-    setRecommendedTechnique("");
-    setAvailableAtomicTests([]);
-    setGoalRecommendedTests([]);
-    setError(null);
-    setCurrentStep(2);
-  };
-
   const detectionsForUi = detections.filter((det) => {
     if (techniqueFromExplore && testType === "detection_validation") {
       return det.technique_id === techniqueFromExplore;
@@ -1203,12 +933,78 @@ function RunTestPageContent() {
     return true;
   });
 
-  const hasScenarioForCoverage = !!techniqueFromExplore;
+  const techniquePickerAllTactics = useMemo(
+    () => Array.from(new Set(mitreTechniques.flatMap((t) => t.tactics || []))).sort(),
+    [mitreTechniques]
+  );
+
+  const techniquePickerEnriched = useMemo(() => {
+    const byTechnique = new Map<string, Detection[]>();
+    for (const det of detections) {
+      if (!det.technique_id) continue;
+      const list = byTechnique.get(det.technique_id) || [];
+      list.push(det);
+      byTechnique.set(det.technique_id, list);
+    }
+    return mitreTechniques.map((t) => {
+      const mapped = byTechnique.get(t.id) || [];
+      const tested = mapped.filter((d) => Boolean(d.last_result));
+      const validated = mapped.filter((d) => (d.last_result || "").toUpperCase() === "PASS");
+      const highestScore = mapped.reduce<number | undefined>((best, d) => {
+        if (typeof d.last_score !== "number") return best;
+        if (typeof best !== "number") return d.last_score;
+        return Math.max(best, d.last_score);
+      }, undefined);
+      let status: "validated" | "at_risk" | "mapped" | "unmapped";
+      if (validated.length > 0) status = "validated";
+      else if (tested.length > 0) status = "at_risk";
+      else if (mapped.length > 0) status = "mapped";
+      else status = "unmapped";
+      return {
+        id: t.id,
+        name: t.name || t.id,
+        tactics: t.tactics || [],
+        mappedCount: mapped.length,
+        validatedCount: validated.length,
+        highestScore,
+        status,
+      };
+    });
+  }, [detections, mitreTechniques]);
+
+  const techniquePickerFiltered = useMemo(() => {
+    const q = techniquePickerSearch.toLowerCase().trim();
+    const list = techniquePickerEnriched.filter((item) => {
+      if (techniquePickerTactic !== "all" && !item.tactics.includes(techniquePickerTactic)) return false;
+      if (q && !item.id.toLowerCase().includes(q) && !item.name.toLowerCase().includes(q)) return false;
+      return true;
+    });
+    const priority = { unmapped: 0, mapped: 1, at_risk: 2, validated: 3 } as const;
+    list.sort((a, b) => priority[a.status] - priority[b.status]);
+    return list;
+  }, [techniquePickerEnriched, techniquePickerSearch, techniquePickerTactic]);
+
+  const TECHNIQUE_PICKER_PAGE_SIZE = 12;
+  const techniquePickerTotalPages = Math.max(
+    1,
+    Math.ceil(techniquePickerFiltered.length / TECHNIQUE_PICKER_PAGE_SIZE)
+  );
+  const techniquePickerPageSlice = techniquePickerFiltered.slice(
+    techniquePickerPage * TECHNIQUE_PICKER_PAGE_SIZE,
+    (techniquePickerPage + 1) * TECHNIQUE_PICKER_PAGE_SIZE
+  );
+
+  const TECHNIQUE_STATUS_META = {
+    validated: { label: "Validated", badge: "bg-emerald-50 text-emerald-700 border-emerald-200", dot: "bg-emerald-500" },
+    at_risk: { label: "At risk", badge: "bg-amber-50 text-amber-700 border-amber-200", dot: "bg-amber-500" },
+    mapped: { label: "Mapped only", badge: "bg-sky-50 text-sky-700 border-sky-200", dot: "bg-sky-500" },
+    unmapped: { label: "Unmapped", badge: "bg-slate-100 text-slate-600 border-slate-200", dot: "bg-slate-400" },
+  } as const;
 
   const canSelectTargetHost =
     !!testType &&
     ((testType === "telemetry_check" && !!selectedScenario) ||
-      (testType === "find_detection_coverage" && (coverageScenarioConfirmed || !!selectedDetection)) ||
+      (testType === "find_detection_coverage" && coverageScenarioConfirmed) ||
       (testType === "detection_validation" && !!selectedDetection));
 
   const canRun =
@@ -1217,8 +1013,7 @@ function RunTestPageContent() {
     !!targetHost.trim() &&
     ((testType === "telemetry_check" && !!selectedScenario) ||
       (testType === "detection_validation" && !!selectedDetection) ||
-      (testType === "find_detection_coverage" &&
-        (coverageScenarioConfirmed || !!selectedDetection))) &&
+      (testType === "find_detection_coverage" && coverageScenarioConfirmed)) &&
     !isRunning &&
     !isScheduling &&
     !permissionsLoading &&
@@ -1251,7 +1046,7 @@ function RunTestPageContent() {
     step1Done &&
     ((testType === "telemetry_check" && !!selectedScenario) ||
       (testType === "detection_validation" && !!selectedDetection) ||
-      (testType === "find_detection_coverage" && (coverageScenarioConfirmed || !!selectedDetection)));
+      (testType === "find_detection_coverage" && coverageScenarioConfirmed));
   const step3Done = step2Done && !!environment && !!targetHost.trim();
 
   // Prevent the stepper from advancing beyond what’s actually completed
@@ -1275,20 +1070,6 @@ function RunTestPageContent() {
       setCurrentStep(3);
     }
   }, [desiredStepRaw, step1Done, step2Done]);
-
-  const canGoToStep2 = step1Done;
-  const canGoToStep3 = step2Done;
-  const canGoToStep4 = step3Done;
-
-  const handleNext = () => {
-    if (currentStep === 1 && canGoToStep2) {
-      setCurrentStep(2);
-    } else if (currentStep === 2 && canGoToStep3) {
-      setCurrentStep(3);
-    } else if (currentStep === 3 && canGoToStep4) {
-      // Step 4 is the execution step, already visible
-    }
-  };
 
   const handlePrevious = () => {
     if (currentStep > 1) {
@@ -1347,9 +1128,9 @@ function RunTestPageContent() {
                     )}
                   >
                     {step === 1
-                      ? "Test Mode"
+                      ? "Validation"
                       : step === 2
-                      ? "Detection / Scenario"
+                      ? TEST_MODES.find((m) => m.id === testType)?.step2Label || "Pick Target"
                       : "Environment"}
                   </span>
                 </div>
@@ -1363,7 +1144,7 @@ function RunTestPageContent() {
       <Card className="border border-slate-200 shadow-lg shadow-slate-200/50 rounded-2xl">
         <CardContent className="pt-6">
           <div className="space-y-8">
-            {/* Step 1: Test Mode Selection */}
+            {/* Step 1: Validation Mode Selection */}
             <div className={cn("space-y-4", currentStep < 1 && "opacity-50")}>
               <div className="flex items-start justify-between">
                 <div className="space-y-1">
@@ -1371,7 +1152,7 @@ function RunTestPageContent() {
                     <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-indigo-100 text-indigo-700 border border-indigo-200 text-[18px] font-bold">
                       1
                     </span>
-                    Select Test Mode
+                    Select Validation Mode
                   </h2>
                   <p className="text-sm text-slate-600 ml-9">
                     Choose the kind of validation you need
@@ -1380,151 +1161,57 @@ function RunTestPageContent() {
                   </div>
 
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4 ml-9 pt-3 border-t border-slate-200">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setSelectedGoalId(null);
-                      setTestType("detection_validation");
-                      setSelectedDetection("");
-                      setSelectedScenario("");
-                      setTargetHost("");
-                      setResult(null);
-                      setError(null);
-                    setCurrentStep(2);
-                  }}
-                  className={cn(
-                    "relative overflow-hidden p-4 rounded-xl border-2 transition-all text-left group bg-white",
-                    testType === "detection_validation"
-                      ? "border-[#5b7bff] shadow-[0_12px_32px_rgba(77,109,255,0.18)] ring-1 ring-[#4d6dff]/30"
-                      : "border-slate-200 hover:border-[#5b7bff] hover:shadow-[0_10px_24px_rgba(91,123,255,0.12)]"
-                  )}
-                >
-                  <div
-                    className={cn(
-                      "absolute inset-x-0 top-0 h-1 transition-all",
-                      testType === "detection_validation" ? "bg-[#4d6dff]" : "bg-transparent"
-                    )}
-                  />
-                  <div className="flex items-start gap-3">
-                    <div
+                {TEST_MODES.map((mode) => {
+                  const Icon = mode.icon;
+                  const isActive = testType === mode.id;
+                  return (
+                    <button
+                      key={mode.id}
+                      type="button"
+                      onClick={() => {
+                        setTestType(mode.id);
+                        setSelectedDetection("");
+                        setSelectedScenario("");
+                        setTargetHost("");
+                        setResult(null);
+                        setError(null);
+                        setCurrentStep(2);
+                      }}
                       className={cn(
-                        "h-10 w-10 rounded-lg flex items-center justify-center transition-colors",
-                        testType === "detection_validation"
-                          ? "bg-indigo-50 text-indigo-700"
-                          : "bg-slate-100 text-slate-500"
+                        "relative overflow-hidden p-4 rounded-xl border-2 transition-all text-left group bg-white",
+                        isActive
+                          ? "border-[#5b7bff] shadow-[0_12px_32px_rgba(77,109,255,0.18)] ring-1 ring-[#4d6dff]/30"
+                          : "border-slate-200 hover:border-[#5b7bff] hover:shadow-[0_10px_24px_rgba(91,123,255,0.12)]"
                       )}
                     >
-                      <Target className="h-5 w-5" />
-                    </div>
-                    <div className="flex-1 space-y-1">
-                      <h3 className="font-display font-semibold text-slate-900">Validate a Detection</h3>
-                      <p className="text-xs text-slate-600 leading-relaxed">
-                        I already have a rule — does it work?
-                      </p>
-                    </div>
-                    {testType === "detection_validation" && (
-                      <CheckCircle2 className="h-5 w-5 text-indigo-500 flex-shrink-0" />
-                    )}
-                  </div>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setSelectedGoalId(null);
-                      setTestType("find_detection_coverage");
-                      setSelectedDetection("");
-                      setSelectedScenario("");
-                      setTargetHost("");
-                      setResult(null);
-                      setError(null);
-                    setCurrentStep(2);
-                  }}
-                  className={cn(
-                    "relative overflow-hidden p-4 rounded-xl border-2 transition-all text-left group bg-white",
-                    testType === "find_detection_coverage"
-                      ? "border-[#5b7bff] shadow-[0_12px_32px_rgba(77,109,255,0.18)] ring-1 ring-[#4d6dff]/30"
-                      : "border-slate-200 hover:border-[#5b7bff] hover:shadow-[0_10px_24px_rgba(91,123,255,0.12)]"
-                  )}
-                >
-                  <div
-                    className={cn(
-                      "absolute inset-x-0 top-0 h-1 transition-all",
-                      testType === "find_detection_coverage" ? "bg-[#4d6dff]" : "bg-transparent"
-                    )}
-                  />
-                  <div className="flex items-start gap-3">
-                    <div
-                      className={cn(
-                        "h-10 w-10 rounded-lg flex items-center justify-center transition-colors",
-                        testType === "find_detection_coverage"
-                          ? "bg-indigo-50 text-indigo-700"
-                          : "bg-slate-100 text-slate-500"
-                      )}
-                    >
-                      <Search className="h-5 w-5" />
-                    </div>
-                    <div className="flex-1 space-y-1">
-                      <h3 className="font-display font-semibold text-slate-900">Explore Coverage Gaps</h3>
-                      <p className="text-xs text-slate-600 leading-relaxed">
-                        What should detect this ATT&amp;CK technique?
-                      </p>
-                    </div>
-                    {testType === "find_detection_coverage" && (
-                      <CheckCircle2 className="h-5 w-5 text-indigo-500 flex-shrink-0" />
-                    )}
-                  </div>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setSelectedGoalId(null);
-                      setTestType("telemetry_check");
-                      setSelectedDetection("");
-                      setSelectedScenario("");
-                      setTargetHost("");
-                      setResult(null);
-                      setError(null);
-                    setCurrentStep(2);
-                    }}
-                  className={cn(
-                    "relative overflow-hidden p-4 rounded-xl border-2 transition-all text-left group bg-white",
-                    testType === "telemetry_check"
-                      ? "border-[#5b7bff] shadow-[0_12px_32px_rgba(77,109,255,0.18)] ring-1 ring-[#4d6dff]/30"
-                      : "border-slate-200 hover:border-[#5b7bff] hover:shadow-[0_10px_24px_rgba(91,123,255,0.12)]"
-                  )}
-                >
-                  <div
-                    className={cn(
-                      "absolute inset-x-0 top-0 h-1 transition-all",
-                      testType === "telemetry_check" ? "bg-[#4d6dff]" : "bg-transparent"
-                    )}
-                  />
-                  <div className="flex items-start gap-3">
-                    <div
-                      className={cn(
-                        "h-10 w-10 rounded-lg flex items-center justify-center transition-colors",
-                        testType === "telemetry_check"
-                          ? "bg-indigo-50 text-indigo-700"
-                          : "bg-slate-100 text-slate-500"
-                      )}
-                    >
-                      <Waves className="h-5 w-5" />
-                </div>
-                    <div className="flex-1 space-y-1">
-                      <h3 className="font-display font-semibold text-slate-900">Verify Telemetry Health</h3>
-                      <p className="text-xs text-slate-600 leading-relaxed">
-                        Are logs even arriving?
-                </p>
-                </div>
-                    {testType === "telemetry_check" && (
-                      <CheckCircle2 className="h-5 w-5 text-indigo-500 flex-shrink-0" />
-                    )}
-                  </div>
-                </button>
-                  </div>
+                      <div
+                        className={cn(
+                          "absolute inset-x-0 top-0 h-1 transition-all",
+                          isActive ? "bg-[#4d6dff]" : "bg-transparent"
+                        )}
+                      />
+                      <div className="flex items-start gap-3">
+                        <div
+                          className={cn(
+                            "h-10 w-10 rounded-lg flex items-center justify-center transition-colors",
+                            isActive ? "bg-indigo-50 text-indigo-700" : "bg-slate-100 text-slate-500"
+                          )}
+                        >
+                          <Icon className="h-5 w-5" />
+                        </div>
+                        <div className="flex-1 space-y-1">
+                          <h3 className="font-display font-semibold text-slate-900">{mode.title}</h3>
+                          <p className="text-xs text-slate-600 leading-relaxed">{mode.question}</p>
+                        </div>
+                        {isActive && (
+                          <CheckCircle2 className="h-5 w-5 text-indigo-500 flex-shrink-0" />
+                        )}
+                      </div>
+                    </button>
+                  );
+                })}
               </div>
+            </div>
 
             {/* Step 2: Detection/Scenario Selection */}
               {currentStep >= 2 && (
@@ -1557,626 +1244,10 @@ function RunTestPageContent() {
                 )}
               </div>
 
-              <div className="ml-9 rounded-2xl border border-slate-200 bg-white/80 px-4 py-3">
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <div>
-                    <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">
-                      Guidance mode
-                    </p>
-                    <p className="text-sm text-slate-700">
-                      Choose a goal template or continue manually.
-                    </p>
-                  </div>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={() => setShowGoalLibrary(true)}
-                      className={cn(
-                        "rounded-full border px-3 py-1 text-xs font-semibold transition",
-                        showGoalLibrary
-                          ? "border-indigo-200 bg-white text-indigo-700 shadow-sm"
-                          : "border-slate-200 bg-white text-slate-600 hover:border-indigo-200 hover:text-slate-800"
-                      )}
-                    >
-                      Use goal template
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setShowGoalLibrary(false);
-                        setSelectedGoalId(null);
-                        setAppliedGoalId(null);
-                        setShowGoalForm(false);
-                      }}
-                      className={cn(
-                        "rounded-full border px-3 py-1 text-xs font-semibold transition",
-                        !showGoalLibrary
-                          ? "border-indigo-200 bg-white text-indigo-700 shadow-sm"
-                          : "border-slate-200 bg-white text-slate-600 hover:border-indigo-200 hover:text-slate-800"
-                      )}
-                    >
-                      Manual selection
-                    </button>
-                  </div>
-                </div>
-              </div>
-
-              {showGoalLibrary && (
-                <div className="ml-9 space-y-4 rounded-2xl border border-indigo-100 bg-indigo-50/40 px-4 py-4">
-                  <div className="flex flex-wrap items-center justify-between gap-3">
-                    <div className="flex flex-col gap-2">
-                      <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">
-                        Goal templates
-                      </p>
-                      <div className="flex flex-wrap items-center gap-2">
-                        {roleTiers.map((role) => {
-                          const isActive = activeGoalRoles.includes(role);
-                          return (
-                            <button
-                              key={role}
-                              type="button"
-                              onClick={() => toggleGoalRole(role)}
-                              className={cn(
-                                "rounded-full border px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.2em] transition",
-                                isActive
-                                  ? "border-indigo-200 bg-white text-indigo-700 shadow-sm"
-                                  : "border-slate-200 bg-white text-slate-500 hover:border-indigo-200 hover:text-slate-700"
-                              )}
-                            >
-                              <span className="flex items-center gap-1">
-                                {roleLabels[role]}
-                                <Tooltip content={roleTooltips[role]}>
-                                  <Info className="h-3 w-3 text-slate-400" />
-                                </Tooltip>
-                              </span>
-                            </button>
-                          );
-                        })}
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="icon-sm"
-                        className="h-8 w-8 border-slate-200 text-slate-700 hover:border-indigo-200 hover:bg-indigo-50"
-                        onClick={() => {
-                          goalCarouselRef.current?.scrollBy({ left: -360, behavior: "smooth" });
-                        }}
-                        aria-label="Scroll goal templates left"
-                      >
-                        <ChevronLeft className="h-4 w-4" />
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="icon-sm"
-                        className="h-8 w-8 border-slate-200 text-slate-700 hover:border-indigo-200 hover:bg-indigo-50"
-                        onClick={() => {
-                          goalCarouselRef.current?.scrollBy({ left: 360, behavior: "smooth" });
-                        }}
-                        aria-label="Scroll goal templates right"
-                      >
-                        <ChevronRight className="h-4 w-4" />
-                      </Button>
-                      {selectedGoalId && (
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setSelectedGoalId(null);
-                          }}
-                          className="text-xs font-semibold text-slate-500 hover:text-slate-800"
-                        >
-                          Clear selection
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                  <div className="relative">
-                    <div
-                      ref={goalCarouselRef}
-                      className="flex gap-4 overflow-x-auto scroll-smooth snap-x snap-mandatory pb-2 pr-2"
-                    >
-                      {!showGoalForm && (
-                        <button
-                          type="button"
-                          onClick={() => setShowGoalForm(true)}
-                          className="relative min-w-[280px] sm:min-w-[320px] md:min-w-[360px] snap-start overflow-hidden p-4 rounded-xl border-2 border-dashed border-slate-300 transition-all text-left group bg-white hover:border-indigo-300 hover:bg-indigo-50/40"
-                        >
-                          <div className="flex items-start gap-3">
-                            <div className="h-10 w-10 rounded-lg flex items-center justify-center bg-indigo-50 text-indigo-700">
-                              <Plus className="h-5 w-5" />
-                            </div>
-                            <div className="flex-1 space-y-1">
-                              <h3 className="font-display font-semibold text-slate-900">Create a goal template</h3>
-                              <p className="text-xs text-slate-600 leading-relaxed">
-                                Add your own goal, objective, and curated TTP list.
-                              </p>
-                              <p className="text-[11px] text-slate-500">Saved locally for now.</p>
-                            </div>
-                          </div>
-                        </button>
-                      )}
-                      {filteredGoalTemplates.map((goal) => {
-                        const isSelected = selectedGoalId === goal.id;
-                        return (
-                          <button
-                            key={goal.id}
-                            type="button"
-                            onClick={() => {
-                              setSelectedGoalId(goal.id);
-                            }}
-                            className={cn(
-                              "relative min-w-[280px] sm:min-w-[320px] md:min-w-[360px] snap-start overflow-hidden p-4 rounded-xl border-2 transition-all text-left group bg-white",
-                              isSelected
-                                ? "border-[#5b7bff] shadow-[0_12px_32px_rgba(77,109,255,0.18)] ring-1 ring-[#4d6dff]/30"
-                                : "border-slate-200 hover:border-[#5b7bff] hover:shadow-[0_10px_24px_rgba(91,123,255,0.12)]"
-                            )}
-                          >
-                            <div
-                              className={cn(
-                                "absolute inset-x-0 top-0 h-1 transition-all",
-                                isSelected ? "bg-[#4d6dff]" : "bg-transparent"
-                              )}
-                            />
-                            <div className="flex items-start gap-3">
-                              <div
-                                className={cn(
-                                  "h-10 w-10 rounded-lg flex items-center justify-center transition-colors",
-                                  isSelected ? "bg-indigo-50 text-indigo-700" : "bg-slate-100 text-slate-500"
-                                )}
-                              >
-                                <Target className="h-5 w-5" />
-                              </div>
-                              <div className="flex-1 space-y-1">
-                                <h3 className="font-display font-semibold text-slate-900">{goal.title}</h3>
-                                <p className="text-xs text-slate-600 leading-relaxed">{goal.description}</p>
-                                <p className="text-[11px] text-slate-700">
-                                  <span className="font-semibold text-slate-800">Objective:</span> {goal.objective}
-                                </p>
-                                <p className="text-[11px] text-slate-500">{goal.scopeHint}</p>
-                                <div className="flex flex-wrap items-center gap-2 pt-1 text-[10px]">
-                                  {goal.roles.map((role) => (
-                                    <span
-                                      key={`${goal.id}-${role}`}
-                                      className="rounded-full border border-slate-200 bg-white px-2 py-0.5 font-semibold uppercase tracking-[0.18em] text-slate-500"
-                                    >
-                                      {roleLabels[role]}
-                                    </span>
-                                  ))}
-                                </div>
-                              </div>
-                              {isSelected && (
-                                <CheckCircle2 className="h-5 w-5 text-indigo-500 flex-shrink-0" />
-                              )}
-                            </div>
-                          </button>
-                        );
-                      })}
-                    </div>
-                    <div className="pointer-events-none absolute inset-y-0 left-0 w-10 bg-gradient-to-r from-indigo-50 via-indigo-50/80 to-transparent" />
-                    <div className="pointer-events-none absolute inset-y-0 right-0 w-10 bg-gradient-to-l from-indigo-50 via-indigo-50/80 to-transparent" />
-                  </div>
-                  <div className="flex items-center justify-center gap-2 pt-1">
-                    {filteredGoalTemplates.map((goal) => (
-                      <span
-                        key={`${goal.id}-dot`}
-                        className={cn(
-                          "h-1.5 w-5 rounded-full transition-colors",
-                          selectedGoalId === goal.id ? "bg-indigo-500" : "bg-slate-200"
-                        )}
-                      />
-                    ))}
-                  </div>
-                  {selectedGoal && (
-                    <div className="rounded-2xl border border-indigo-100 bg-gradient-to-br from-white via-white to-indigo-50/50 px-5 py-4 text-sm text-slate-700 shadow-[0_12px_35px_rgba(15,23,42,0.06)]">
-                      <div className="flex flex-wrap items-start justify-between gap-3">
-                        <div className="space-y-1">
-                          <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500">Goal</p>
-                          <p className="text-base font-semibold text-slate-900">{selectedGoal.title}</p>
-                          <p className="text-xs text-slate-600">{selectedGoal.scopeHint}</p>
-                        </div>
-                        <div className="flex flex-wrap items-center gap-2">
-                          <Button
-                            type="button"
-                            size="sm"
-                            className="bg-indigo-600 text-white hover:bg-indigo-700"
-                            onClick={() => {
-                              if (!selectedGoal) return;
-                              setAppliedGoalId(selectedGoal.id);
-                              setTestType(selectedGoal.defaultTestType);
-                              setSelectedDetection("");
-                              setSelectedScenario("");
-                              setTargetHost("");
-                              setResult(null);
-                              setError(null);
-                              setCurrentStep(2);
-                            }}
-                          >
-                            Apply template
-                          </Button>
-                          <span className="text-xs text-slate-500">Manual selection stays editable.</span>
-                        </div>
-                      </div>
-                      <div className="mt-4 text-xs text-slate-600">
-                        <span className="font-semibold text-slate-700">Objective:</span>{" "}
-                        {selectedGoal.objective}
-                      </div>
-                      <div className="mt-4 grid gap-4 sm:grid-cols-2">
-                        <div className="space-y-2">
-                          <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500">Roles</p>
-                          <div className="flex flex-wrap gap-2">
-                            {selectedGoal.roles.map((role) => (
-                              <span
-                                key={`${selectedGoal.id}-role-${role}`}
-                                className="inline-flex items-center rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-500"
-                              >
-                                {roleLabels[role]}
-                              </span>
-                            ))}
-                          </div>
-                        </div>
-                        <div className="space-y-2">
-                          <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500">TTPs</p>
-                          <div className="flex flex-wrap gap-2">
-                            {selectedGoal.techniques.map((technique) => (
-                              <Link
-                                key={technique}
-                                href={`/tests/explore/${technique}`}
-                                className="inline-flex items-center rounded-full border border-indigo-200 bg-white px-2.5 py-1 text-xs font-semibold text-indigo-700 hover:border-indigo-300 hover:bg-indigo-50"
-                              >
-                                {technique}
-                              </Link>
-                            ))}
-                          </div>
-                        </div>
-                        <div className="space-y-2 sm:col-span-2">
-                          <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500">
-                            Required telemetry
-                          </p>
-                          <div className="flex flex-wrap gap-2">
-                            {selectedGoal.requiredTelemetry.map((item) => (
-                              <span
-                                key={item}
-                                className="inline-flex items-center rounded-full border border-slate-200 bg-white px-2.5 py-1 text-xs font-semibold text-slate-700"
-                              >
-                                {item}
-                              </span>
-                            ))}
-                          </div>
-                        </div>
-                      </div>
-                      <div className="mt-4">
-                        <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500">
-                          Recommended tests
-                        </p>
-                        <div className="mt-2 flex flex-wrap gap-2">
-                          {selectedGoal.recommendedTests.map((test) => (
-                            <Link
-                              key={`${test.technique}-${test.name}`}
-                              href={`/tests/explore/${test.technique}?atomic_name=${encodeURIComponent(test.name)}`}
-                              className="inline-flex items-center gap-1 rounded-full border border-indigo-200 bg-white px-2.5 py-1 text-xs font-semibold text-indigo-700 hover:border-indigo-300 hover:bg-indigo-50"
-                            >
-                              <span className="text-indigo-500">{test.technique}</span>
-                              <span className="text-slate-500">•</span>
-                              <span>{test.name}</span>
-                            </Link>
-                          ))}
-                        </div>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {showGoalForm && showGoalLibrary && (
-                <div className="ml-9 rounded-2xl border border-slate-200 bg-white/90 p-6 shadow-[0_22px_60px_rgba(15,23,42,0.12)]">
-                  <div className="flex items-start justify-between gap-4">
-                    <div>
-                      <h3 className="text-lg font-display font-semibold text-slate-900">Create goal template</h3>
-                      <p className="text-sm text-slate-600">
-                        Define the objective and TTP scope so analysts know exactly what to run.
-                      </p>
-                    </div>
-                    <Button
-                      variant="outline"
-                      size="icon-sm"
-                      className="h-8 w-8 border-slate-200 text-slate-700 hover:border-indigo-200 hover:bg-indigo-50"
-                      onClick={() => setShowGoalForm(false)}
-                      aria-label="Close goal template form"
-                    >
-                      <X className="h-4 w-4" />
-                    </Button>
-                  </div>
-                  <div className="mt-4 grid gap-4 sm:grid-cols-2">
-                    <div className="space-y-2 sm:col-span-2">
-                      <Label htmlFor="goal-title">Goal title</Label>
-                      <Input
-                        id="goal-title"
-                        className="bg-white text-slate-900 border-slate-200"
-                        value={goalForm.title}
-                        onChange={(e) => setGoalForm((prev) => ({ ...prev, title: e.target.value }))}
-                        placeholder="Validate lateral movement defenses"
-                      />
-                    </div>
-                    <div className="space-y-2 sm:col-span-2">
-                      <Label htmlFor="goal-description">Description</Label>
-                      <Textarea
-                        id="goal-description"
-                        className="bg-white text-slate-900 border-slate-200"
-                        value={goalForm.description}
-                        onChange={(e) => setGoalForm((prev) => ({ ...prev, description: e.target.value }))}
-                        placeholder="Prove detection coverage for common lateral movement techniques."
-                        rows={2}
-                      />
-                    </div>
-                    <div className="space-y-2 sm:col-span-2">
-                      <Label htmlFor="goal-objective">Objective</Label>
-                      <Input
-                        id="goal-objective"
-                        className="bg-white text-slate-900 border-slate-200"
-                        value={goalForm.objective}
-                        onChange={(e) => setGoalForm((prev) => ({ ...prev, objective: e.target.value }))}
-                        placeholder="Detect remote execution and credential reuse across hosts."
-                      />
-                    </div>
-                    <div className="space-y-2 sm:col-span-2">
-                      <Label htmlFor="goal-scope">Scope hint</Label>
-                      <Input
-                        id="goal-scope"
-                        className="bg-white text-slate-900 border-slate-200"
-                        value={goalForm.scopeHint}
-                        onChange={(e) => setGoalForm((prev) => ({ ...prev, scopeHint: e.target.value }))}
-                        placeholder="Focus on T1021, T1047, T1077, T1550."
-                      />
-                    </div>
-                    <div className="space-y-2 sm:col-span-2">
-                      <Label>Target roles</Label>
-                      <div className="flex flex-wrap gap-2">
-                        {roleTiers.map((role) => {
-                          const isActive = goalForm.roles.includes(role);
-                          return (
-                            <button
-                              key={`goal-role-${role}`}
-                              type="button"
-                              onClick={() =>
-                                setGoalForm((prev) => {
-                                  const next = prev.roles.includes(role)
-                                    ? prev.roles.filter((item) => item !== role)
-                                    : [...prev.roles, role];
-                                  return { ...prev, roles: next.length ? next : prev.roles };
-                                })
-                              }
-                              className={cn(
-                                "rounded-full border px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.2em] transition",
-                                isActive
-                                  ? "border-indigo-200 bg-white text-indigo-700 shadow-sm"
-                                  : "border-slate-200 bg-white text-slate-500 hover:border-indigo-200 hover:text-slate-700"
-                              )}
-                            >
-                              <span className="flex items-center gap-1">
-                                {roleLabels[role]}
-                                <Tooltip content={roleTooltips[role]}>
-                                  <Info className="h-3 w-3 text-slate-400" />
-                                </Tooltip>
-                              </span>
-                            </button>
-                          );
-                        })}
-                      </div>
-                      <p className="text-xs text-slate-500">
-                        Templates show by role so analysts see only what they should run.
-                      </p>
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="goal-techniques">TTPs</Label>
-                      <Select
-                        onValueChange={(value: string) => {
-                          if (!goalTtps.includes(value)) {
-                            setGoalTtps((prev) => [...prev, value]);
-                          }
-                        }}
-                      >
-                        <SelectTrigger id="goal-techniques" className="w-full h-11 bg-white border-slate-200 text-slate-900">
-                          <SelectValue placeholder="Add a TTP" />
-                        </SelectTrigger>
-                        <SelectContent className="bg-white border-slate-200 max-h-64">
-                          {mitreTechniques.length === 0 && (
-                            <SelectItem value="loading" disabled>
-                              Loading techniques...
-                            </SelectItem>
-                          )}
-                          {mitreTechniques.map((technique) => (
-                            <SelectItem key={technique.id} value={technique.id}>
-                              {technique.id} · {technique.name}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                      <div className="flex flex-wrap gap-2">
-                        {goalTtps.map((technique) => (
-                          <span
-                            key={technique}
-                            className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-2.5 py-1 text-xs font-semibold text-slate-700"
-                          >
-                            {technique}
-                            <button
-                              type="button"
-                              onClick={() => setGoalTtps((prev) => prev.filter((t) => t !== technique))}
-                              className="text-slate-400 hover:text-slate-700"
-                              aria-label={`Remove ${technique}`}
-                            >
-                              <X className="h-3 w-3" />
-                            </button>
-                          </span>
-                        ))}
-                      </div>
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="goal-telemetry">Required telemetry</Label>
-                      <div className="flex gap-2">
-                        <Input
-                          id="goal-telemetry"
-                          className="bg-white text-slate-900 border-slate-200"
-                          value={goalTelemetryInput}
-                          onChange={(e) => setGoalTelemetryInput(e.target.value)}
-                          placeholder="Process creation"
-                        />
-                        <Button
-                          type="button"
-                          variant="outline"
-                          className="border-slate-200 text-slate-900 hover:border-indigo-200 hover:bg-indigo-50"
-                          onClick={() => {
-                            const entries = goalTelemetryInput
-                              .split(",")
-                              .map((item) => item.trim())
-                              .filter(Boolean);
-                            if (entries.length === 0) return;
-                            setGoalTelemetry((prev) => Array.from(new Set([...prev, ...entries])));
-                            setGoalTelemetryInput("");
-                          }}
-                        >
-                          Add
-                        </Button>
-                      </div>
-                      <div className="flex flex-wrap gap-2">
-                        {goalTelemetry.map((item) => (
-                          <span
-                            key={item}
-                            className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-2.5 py-1 text-xs font-semibold text-slate-700"
-                          >
-                            {item}
-                            <button
-                              type="button"
-                              onClick={() => setGoalTelemetry((prev) => prev.filter((t) => t !== item))}
-                              className="text-slate-400 hover:text-slate-700"
-                              aria-label={`Remove ${item}`}
-                            >
-                              <X className="h-3 w-3" />
-                            </button>
-                          </span>
-                        ))}
-                      </div>
-                    </div>
-                    <div className="space-y-2 sm:col-span-2">
-                      <Label htmlFor="goal-tests">Recommended tests</Label>
-                      <div className="grid gap-2 sm:grid-cols-2">
-                        <Select
-                          value={recommendedTechnique}
-                          onValueChange={(value: string) => setRecommendedTechnique(value)}
-                        >
-                          <SelectTrigger className="w-full h-11 bg-white border-slate-200 text-slate-900">
-                            <SelectValue placeholder="Select technique" />
-                          </SelectTrigger>
-                          <SelectContent className="bg-white border-slate-200 max-h-64">
-                            {mitreTechniques.length === 0 && (
-                              <SelectItem value="loading" disabled>
-                                Loading techniques...
-                              </SelectItem>
-                            )}
-                            {mitreTechniques.map((technique) => (
-                              <SelectItem key={technique.id} value={technique.id}>
-                                {technique.id} · {technique.name}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                        <Select
-                          onValueChange={(value: string) => {
-                            const [technique, name] = value.split("||");
-                            if (!technique || !name) return;
-                            if (
-                              goalRecommendedTests.some(
-                                (entry) => entry.technique === technique && entry.name === name,
-                              )
-                            ) {
-                              return;
-                            }
-                            setGoalRecommendedTests((prev) => [...prev, { technique, name }]);
-                          }}
-                          disabled={!recommendedTechnique}
-                        >
-                          <SelectTrigger className="w-full h-11 bg-white border-slate-200 text-slate-900">
-                            <SelectValue
-                              placeholder={
-                                recommendedTechnique ? "Add recommended test" : "Choose technique first"
-                              }
-                            />
-                          </SelectTrigger>
-                          <SelectContent className="bg-white border-slate-200 max-h-64">
-                            {availableAtomicTests.length === 0 && (
-                              <SelectItem value="none" disabled>
-                                No tests found for this technique
-                              </SelectItem>
-                            )}
-                            {availableAtomicTests.map((test) => (
-                              <SelectItem key={test.id} value={`${test.technique_id}||${test.name}`}>
-                                {test.name}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      </div>
-                      <div className="flex flex-wrap gap-2">
-                        {goalRecommendedTests.map((test) => (
-                          <span
-                            key={`${test.technique}-${test.name}`}
-                            className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-2.5 py-1 text-xs font-semibold text-slate-700"
-                          >
-                            <span className="text-slate-500">{test.technique}</span>
-                            <span>•</span>
-                            <span>{test.name}</span>
-                            <button
-                              type="button"
-                              onClick={() =>
-                                setGoalRecommendedTests((prev) =>
-                                  prev.filter(
-                                    (entry) =>
-                                      !(entry.technique === test.technique && entry.name === test.name),
-                                  ),
-                                )
-                              }
-                              className="text-slate-400 hover:text-slate-700"
-                              aria-label={`Remove ${test.technique} ${test.name}`}
-                            >
-                              <X className="h-3 w-3" />
-                            </button>
-                          </span>
-                        ))}
-                      </div>
-                    </div>
-                    <div className="space-y-2 sm:col-span-2">
-                      <Label htmlFor="goal-mode">Default test mode</Label>
-                      <Select
-                        value={goalForm.defaultTestType}
-                        onValueChange={(value: UiTestType) =>
-                          setGoalForm((prev) => ({ ...prev, defaultTestType: value }))
-                        }
-                      >
-                        <SelectTrigger id="goal-mode" className="w-full h-11 bg-white border-slate-200 text-slate-900">
-                          <SelectValue placeholder="Select a default mode" />
-                        </SelectTrigger>
-                        <SelectContent className="bg-white border-slate-200">
-                          <SelectItem value="find_detection_coverage">Explore Coverage Gaps</SelectItem>
-                          <SelectItem value="detection_validation">Validate a Detection</SelectItem>
-                          <SelectItem value="telemetry_check">Verify Telemetry Health</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-                  </div>
-                  <div className="mt-5 flex items-center justify-end gap-2">
-                    <Button variant="outline" onClick={() => setShowGoalForm(false)}>
-                      Cancel
-                    </Button>
-                    <Button onClick={handleSaveGoal}>Save goal</Button>
-                  </div>
-                </div>
-              )}
-
               {!testType && (
                 <div className="ml-9 p-4 rounded-lg border border-slate-200 bg-slate-50">
                   <p className="text-sm text-slate-600">
-                    Select a test mode in Step 1 to continue
+                    Select a validation mode in Step 1 to continue
                   </p>
                   </div>
                 )}
@@ -2189,7 +1260,7 @@ function RunTestPageContent() {
                           type="text"
                           value={detectionSearch}
                           onChange={(e) => setDetectionSearch(e.target.value)}
-                          placeholder="Search detections by name, MITRE technique, or SIEM type…"
+                          placeholder="Search detections by name, MITRE technique, or SIEM type..."
                         className="pl-10 h-10 bg-white border-slate-200 text-sm text-slate-900 placeholder:text-slate-500"
                           disabled={isRunning}
                         />
@@ -2319,7 +1390,7 @@ function RunTestPageContent() {
                                 Optional: Choose Subtechnique
                             </p>
                               <p className="text-xs text-slate-600 mt-0.5">
-                                Select a specific ATT&CK subtechnique, or skip to use the detection's primary technique
+                                Select a specific ATT&CK subtechnique, or skip to use the detection&apos;s primary technique
                             </p>
                             </div>
                             <div className="max-h-40 overflow-y-auto overflow-x-hidden hide-scrollbar space-y-2 border border-slate-200 rounded-lg p-2 bg-white">
@@ -2407,7 +1478,7 @@ function RunTestPageContent() {
                             <p className="text-sm text-slate-700">
                               {selectedScenarioData.subtitle
                                 ? selectedScenarioData.subtitle
-                                : "PurveX will run this scenario and look for telemetry and events in your SIEM – even without an onboarded detection rule."}
+                                : "PurveX will run this scenario and look for telemetry and evidence in your SIEM, even without an onboarded detection rule."}
                             </p>
                         </div>
                       ) : null;
@@ -2415,7 +1486,7 @@ function RunTestPageContent() {
                     {telemetryScenarios.length === 0 && (
                       <div className="p-4 rounded-lg border border-slate-200 bg-slate-50">
                         <p className="text-sm text-slate-600">
-                          No test scenarios available. Add at least one detection or atomic test template first.
+                          No validation scenarios are available yet. Add at least one detection or scenario template first.
                       </p>
                       </div>
                     )}
@@ -2441,7 +1512,7 @@ function RunTestPageContent() {
                         </div>
                         <p className="text-sm text-slate-700">
                           {scenarioDescriptionFromExplore ||
-                            "PurveX will run this scenario and look for telemetry and events in your SIEM – even without an onboarded detection rule."}
+                            "PurveX will run this scenario and look for telemetry and evidence in your SIEM, even without an onboarded detection rule."}
                         </p>
                           <div className="flex items-center gap-3">
                             <Button
@@ -2467,28 +1538,161 @@ function RunTestPageContent() {
                         )}
                       </div>
                     ) : (
-                      <div className="p-4 rounded-lg border border-slate-200 bg-slate-50">
-                        <p className="text-sm text-slate-700 mb-3">
-                        Start from the{" "}
-                        <Link
-                          href="/tests/explore"
-                          className="text-indigo-600 hover:text-indigo-700 underline font-medium"
-                        >
-                          Explore techniques view
-                        </Link>{" "}
-                          to choose an attack scenario first.
-                        </p>
-                    <Button
-                      variant="outline"
-                          size="sm"
-                          asChild
-                      className="border-slate-200 text-slate-900 hover:border-indigo-200 hover:bg-indigo-50"
-                    >
-                          <Link href="/tests/explore">
-                            <Search className="h-4 w-4 mr-2" />
-                            Explore Techniques
-                          </Link>
-                    </Button>
+                      <div className="rounded-2xl border border-slate-200 bg-white">
+                        <div className="flex flex-wrap items-center gap-3 border-b border-slate-100 p-4">
+                          <div className="relative min-w-[240px] flex-1">
+                            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                            <Input
+                              value={techniquePickerSearch}
+                              onChange={(e) => {
+                                setTechniquePickerSearch(e.target.value);
+                                setTechniquePickerPage(0);
+                              }}
+                              placeholder="Search techniques by ID or name"
+                              className="h-10 border-slate-200 bg-white pl-9 text-sm"
+                            />
+                          </div>
+                          <Select
+                            value={techniquePickerTactic}
+                            onValueChange={(v) => {
+                              setTechniquePickerTactic(v);
+                              setTechniquePickerPage(0);
+                            }}
+                          >
+                            <SelectTrigger className="h-10 w-[200px] border-slate-200 bg-white text-sm">
+                              <SelectValue placeholder="All tactics" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="all">All tactics</SelectItem>
+                              {techniquePickerAllTactics.map((t) => (
+                                <SelectItem key={t} value={t}>
+                                  {t}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            asChild
+                            className="border-slate-200 text-slate-900 hover:border-indigo-200 hover:bg-indigo-50"
+                          >
+                            <Link href="/tests/explore">
+                              Open full explore view
+                            </Link>
+                          </Button>
+                        </div>
+
+                        {mitreTechniques.length === 0 ? (
+                          <div className="flex items-center justify-center p-12 text-sm text-slate-500">
+                            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                            Loading techniques...
+                          </div>
+                        ) : techniquePickerPageSlice.length === 0 ? (
+                          <div className="p-12 text-center">
+                            <p className="text-sm font-semibold text-slate-900">No techniques match your filters</p>
+                            <p className="mt-1 text-xs text-slate-500">Try broadening your search or clearing filters.</p>
+                          </div>
+                        ) : (
+                          <>
+                            <div className="grid gap-3 p-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                              {techniquePickerPageSlice.map((item) => {
+                                const meta = TECHNIQUE_STATUS_META[item.status];
+                                return (
+                                  <button
+                                    key={item.id}
+                                    type="button"
+                                    onClick={() => {
+                                      router.push(
+                                        `/run-test?technique_id=${encodeURIComponent(item.id)}&focus=validation&step=2`
+                                      );
+                                    }}
+                                    className="group flex flex-col rounded-xl border border-slate-200 bg-white p-4 text-left transition hover:border-indigo-300 hover:shadow-md"
+                                  >
+                                    <div className="flex items-start justify-between gap-2">
+                                      <span className="font-mono text-xs font-bold text-indigo-700">{item.id}</span>
+                                      <span
+                                        className={cn(
+                                          "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-semibold",
+                                          meta.badge
+                                        )}
+                                      >
+                                        <span className={cn("h-1.5 w-1.5 rounded-full", meta.dot)} />
+                                        {meta.label}
+                                      </span>
+                                    </div>
+                                    <p className="mt-2 line-clamp-2 min-h-[2.5rem] text-sm font-semibold text-slate-900">
+                                      {item.name}
+                                    </p>
+                                    <p className="mt-1 truncate text-xs text-slate-500">
+                                      {item.tactics[0] || "No tactic"}
+                                    </p>
+                                    <div className="mt-3 flex items-center justify-between border-t border-slate-100 pt-3 text-xs text-slate-600">
+                                      <div>
+                                        <p className="text-[10px] uppercase tracking-wider text-slate-400">Mapped</p>
+                                        <p className="font-semibold text-slate-900">{item.mappedCount}</p>
+                                      </div>
+                                      <div>
+                                        <p className="text-[10px] uppercase tracking-wider text-slate-400">Passing</p>
+                                        <p className="font-semibold text-slate-900">{item.validatedCount}</p>
+                                      </div>
+                                      <div>
+                                        <p className="text-[10px] uppercase tracking-wider text-slate-400">Best</p>
+                                        <p className="font-semibold text-slate-900">
+                                          {typeof item.highestScore === "number" ? item.highestScore : "—"}
+                                        </p>
+                                      </div>
+                                    </div>
+                                    <div className="mt-3 inline-flex items-center justify-center gap-1.5 rounded-md border border-slate-200 bg-slate-50 py-1.5 text-xs font-semibold text-slate-700 transition group-hover:border-indigo-200 group-hover:bg-indigo-50 group-hover:text-indigo-700">
+                                      <Play className="h-3 w-3" />
+                                      Select technique
+                                    </div>
+                                  </button>
+                                );
+                              })}
+                            </div>
+
+                            {techniquePickerTotalPages > 1 && (
+                              <div className="flex items-center justify-between border-t border-slate-100 px-4 py-3">
+                                <p className="text-xs text-slate-500">
+                                  Showing {techniquePickerPage * TECHNIQUE_PICKER_PAGE_SIZE + 1}–
+                                  {Math.min(
+                                    (techniquePickerPage + 1) * TECHNIQUE_PICKER_PAGE_SIZE,
+                                    techniquePickerFiltered.length
+                                  )}{" "}
+                                  of {techniquePickerFiltered.length}
+                                </p>
+                                <div className="flex items-center gap-2">
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    className="h-8 w-8 p-0"
+                                    onClick={() => setTechniquePickerPage(Math.max(0, techniquePickerPage - 1))}
+                                    disabled={techniquePickerPage === 0}
+                                  >
+                                    <ChevronLeft className="h-4 w-4" />
+                                  </Button>
+                                  <span className="text-xs text-slate-600">
+                                    {techniquePickerPage + 1} / {techniquePickerTotalPages}
+                                  </span>
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    className="h-8 w-8 p-0"
+                                    onClick={() =>
+                                      setTechniquePickerPage(
+                                        Math.min(techniquePickerTotalPages - 1, techniquePickerPage + 1)
+                                      )
+                                    }
+                                    disabled={techniquePickerPage >= techniquePickerTotalPages - 1}
+                                  >
+                                    <ChevronRight className="h-4 w-4" />
+                                  </Button>
+                                </div>
+                              </div>
+                            )}
+                          </>
+                        )}
                       </div>
                     )}
                   </div>
@@ -2507,7 +1711,7 @@ function RunTestPageContent() {
                     Environment & Target
                   </h2>
                   <p className="text-sm text-slate-600 pl-11">
-                    Configure where and how to execute the test
+                    Configure where and how to run this validation
                   </p>
                 </div>
 
@@ -2516,17 +1720,12 @@ function RunTestPageContent() {
                   <div className="p-4 rounded-lg border border-slate-200 bg-slate-50 space-y-3">
                     <p className="text-xs uppercase tracking-wider text-slate-600 font-medium">Configuration Summary</p>
                     <div className="flex flex-wrap gap-2">
-                      {selectedGoal && (
-                        <Badge variant="outline" className="bg-indigo-50 text-indigo-700 border-indigo-200">
-                          Goal: {selectedGoal.title}
-                        </Badge>
-                      )}
                       <Badge variant="outline" className="bg-indigo-50 text-indigo-700 border-indigo-200">
                         Mode: {testType === "detection_validation"
                           ? "Validate a Detection"
                           : testType === "find_detection_coverage"
-                          ? "Explore Coverage Gaps"
-                          : "Verify Telemetry Health"}
+                          ? "Explore Coverage"
+                          : "Verify Telemetry Readiness"}
                       </Badge>
                     {techniqueFromExplore && (
                         <Badge variant="outline" className="bg-indigo-50 text-indigo-700 border-indigo-200">
@@ -2574,7 +1773,7 @@ function RunTestPageContent() {
                       </SelectContent>
                     </Select>
                     <p className="text-xs text-slate-600 leading-relaxed">
-                      Choose the environment where the test will execute
+                      Choose the environment where this validation will run
                     </p>
                   </div>
 
@@ -2612,7 +1811,7 @@ function RunTestPageContent() {
                       />
                     )}
                     <p className="text-xs text-slate-600 leading-relaxed">
-                      The specific host where the attack will run. Telemetry and detections will be tied to this host.
+                      The specific host where the scenario will run. Telemetry and validation evidence will be tied to this host.
                     </p>
                   </div>
                 </div>
@@ -2671,7 +1870,7 @@ function RunTestPageContent() {
                   </div>
                 )}
 
-          {error && (
+        {error && (
                   <div className="p-4 rounded-lg border border-red-500/40 bg-red-500/10">
                     <div className="flex items-center gap-2">
           <AlertTriangle className="h-5 w-5 text-red-400" />
@@ -2679,6 +1878,24 @@ function RunTestPageContent() {
         </div>
       </div>
     )}
+        {(mitreLoadWarning || runnerLoadWarning) && (
+                  <div className="p-4 rounded-lg border border-amber-300 bg-amber-50">
+                    <div className="space-y-2 text-sm text-amber-900">
+                      {mitreLoadWarning && (
+                        <div className="flex items-start gap-2">
+                          <AlertTriangle className="mt-0.5 h-4 w-4 text-amber-700" />
+                          <p>{mitreLoadWarning}</p>
+                        </div>
+                      )}
+                      {runnerLoadWarning && (
+                        <div className="flex items-start gap-2">
+                          <AlertTriangle className="mt-0.5 h-4 w-4 text-amber-700" />
+                          <p>{runnerLoadWarning}</p>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+        )}
         {execution && (
           <LiveExecutionPanel
             execution={execution}
@@ -2691,7 +1908,7 @@ function RunTestPageContent() {
                 {/* Execution Options */}
                 <div className="space-y-4 pt-6 border-t border-slate-200">
                   <div className="space-y-3">
-                    <Label className="text-slate-900 text-sm font-medium">Execution Mode</Label>
+                    <Label className="text-slate-900 text-sm font-medium">Run Mode</Label>
                     <p className="text-xs text-slate-600 leading-relaxed">
                       Choose to run immediately or set a schedule.
                     </p>
@@ -2707,7 +1924,7 @@ function RunTestPageContent() {
                           onClick={() => setRunMode("now")}
                           disabled={isRunning || isScheduling}
                         >
-                        Run Now
+                        Run now
                         </button>
                         <button
                           type="button"
@@ -2782,9 +1999,9 @@ function RunTestPageContent() {
                           </div>
                       <div className="p-3 rounded-lg bg-slate-100 border border-slate-200">
                         <p className="text-xs text-slate-700">
-                          <span className="font-medium text-slate-900">Admin-only:</span> Only administrators can assign users to run a test.
-                          </p>
-                        </div>
+                          Scheduling is permission-scoped by environment. Production scheduling requires explicit production scheduling permission.
+                        </p>
+                      </div>
                       </div>
                     )}
 
@@ -2809,17 +2026,17 @@ function RunTestPageContent() {
                         ? "border-slate-300 bg-white text-black hover:bg-slate-50 shadow-sm"
                         : "border-slate-200 bg-slate-200 text-slate-500 cursor-not-allowed"
                     )}
-                    aria-label={isRunning ? "Test is running" : canRun ? "Run the detection test" : "Complete all steps to run test"}
+                    aria-label={isRunning ? "Validation is running" : canRun ? "Run the validation" : "Complete all steps to run validation"}
                   >
                     {isRunning ? (
                       <>
                           <Loader2 className="mr-2 h-5 w-5 animate-spin" />
-                          Running Test...
+                          Running validation...
                       </>
                     ) : (
                       <>
                           <Play className="mr-2 h-5 w-5" />
-                          {runMode === "schedule" ? "Save Schedule" : "Run Test"}
+                          {runMode === "schedule" ? "Save schedule" : "Run validation"}
                       </>
                     )}
                   </Button>
@@ -2831,12 +2048,12 @@ function RunTestPageContent() {
         </CardContent>
       </Card>
 
-      {/* Test Results */}
+      {/* Validation Result */}
       {result && (
         <Card className="mt-6 border border-slate-200 shadow-lg shadow-slate-200/40 rounded-2xl bg-white">
           <CardHeader className="pb-3 flex flex-row items-center justify-between gap-3">
             <CardTitle className="text-base font-semibold text-slate-900">
-              Test Result
+              Validation result
             </CardTitle>
             {lastRunType && (
               <span className="inline-flex items-center gap-1 rounded-full border border-indigo-200 bg-indigo-50 px-2 py-0.5 text-[10px] uppercase tracking-[0.18em] text-indigo-700">
@@ -2861,25 +2078,25 @@ function RunTestPageContent() {
                   color: "bg-emerald-50 border-emerald-200 text-emerald-800",
                   icon: <CheckCircle2 className="h-4 w-4 text-emerald-600" />,
                   title: "Detection validated",
-                  sub: "Logs were ingested and the detection rule fired.",
+                  sub: "Evidence was ingested and the detection fired.",
                 },
                 FAIL_RULE_VISIBILITY: {
                   color: "bg-amber-50 border-amber-200 text-amber-800",
                   icon: <AlertTriangle className="h-4 w-4 text-amber-600" />,
-                  title: "Rule visibility issue",
+                  title: "Detection needs tuning",
                   sub: "Logs were ingested, but the detection rule did not fire.",
                 },
                 NO_LOGS: {
                   color: "bg-red-50 border-red-200 text-red-800",
                   icon: <XCircle className="h-4 w-4 text-red-600" />,
-                  title: "No logs found",
-                  sub: "No expected events were seen in your SIEM. This indicates a telemetry or ingestion issue.",
+                  title: "No evidence found",
+                  sub: "No expected evidence was seen in your SIEM. This indicates a telemetry or ingestion issue.",
                 },
                 SYSTEM_ERROR: {
                   color: "bg-slate-100 border-slate-200 text-slate-800",
                   icon: <Slash className="h-4 w-4 text-slate-500" />,
                   title: "System error",
-                  sub: "PurveX could not evaluate this test run due to a system or SIEM error.",
+                  sub: "PurveX could not evaluate this validation run due to a system or SIEM error.",
                 },
               };
 
@@ -2906,13 +2123,13 @@ function RunTestPageContent() {
                         Telemetry
                       </div>
                       <p className="text-[11px] text-slate-700">
-                        Logs present:{" "}
+                        Evidence present:{" "}
                         <span className="font-semibold text-slate-900">
                           {result.telemetry_summary.has_logs ? "Yes" : "No"}
                         </span>
                       </p>
                       <p className="text-[11px] text-slate-700">
-                        Events found:{" "}
+                        Records found:{" "}
                         <span className="font-semibold text-slate-900">{result.telemetry_summary.events_found}</span>
                       </p>
                     </div>
@@ -2923,13 +2140,13 @@ function RunTestPageContent() {
                           Detection
                         </div>
                         <p className="text-[11px] text-slate-700">
-                          Rule fired:{" "}
+                          Detection fired:{" "}
                           <span className="font-semibold text-slate-900">
                             {result.detection_summary.rule_fired ? "Yes" : "No"}
                           </span>
                         </p>
                         <p className="text-[11px] text-slate-700">
-                          Events found:{" "}
+                          Matches found:{" "}
                           <span className="font-semibold text-slate-900">
                             {result.detection_summary.alerts_found}
                           </span>
@@ -2946,7 +2163,7 @@ function RunTestPageContent() {
                       onClick={handleRunTest}
                       disabled={!canRun}
                     >
-                      Run again
+                      Run validation again
                     </Button>
                     <Button
                       size="sm"
@@ -2954,7 +2171,7 @@ function RunTestPageContent() {
                       className="border-slate-200 text-[11px] text-slate-700 hover:border-indigo-200 hover:bg-indigo-50"
                       onClick={() => router.push(`/tests/${result.run_id}`)}
                     >
-                      View full test report
+                      View validation report
                     </Button>
                   </div>
                 </>

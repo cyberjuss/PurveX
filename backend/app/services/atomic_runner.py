@@ -1,93 +1,163 @@
-import secrets
-import logging
-from datetime import datetime, timedelta
-import json
 import asyncio
-from typing import Optional
+import json
+import logging
+import re
+import secrets
+import shlex
+from datetime import datetime, timedelta
+from typing import Any, Dict, Optional
 
 import anyio
-from sqlalchemy import select, delete
+import paramiko
+from sqlalchemy import delete, select
 
 from .. import models
 from ..db import async_sessionmaker
-from ..services.scoring import validate_detection_for_test, validate_telemetry_for_test
 from ..services.ai_assistant import analyze_detection
+from ..services.scoring import validate_detection_for_test, validate_telemetry_for_test
 
 logger = logging.getLogger(__name__)
+_TECHNIQUE_ID_RE = r"^T\d{4}(?:\.\d{3})?$"
 
 
-def generate_marker(environment: str) -> str:
-    """Generate a unique marker for atomic tests, tagged by environment."""
-    return f"purvex_{environment}_{secrets.token_hex(4)}"
+def generate_marker(environment: str, connection: Optional[models.SIEMConnection] = None) -> str:
+    """Generate a unique marker for atomic tests, tagged by environment.
 
-
-def run_atomic_test(technique_id: str, marker: str) -> str:
-    """Stub for running an atomic test via SSH. Returns the command string.
-
-    In v1 this does not actually talk to a VM yet – it returns the command
-    string that *would* be executed so we can store it in TestArtifact.
+    Honors the SIEM connection's `log_marker_pattern` so customers who have
+    rebranded their PurveX integration (e.g. `acme_purvex_*`) get markers that
+    match the SIEM-side filter the analyst already configured.
     """
-    logger.info("Simulating atomic test for %s with marker %s", technique_id, marker)
-    command = (
-        f'Invoke-AtomicTest {technique_id} -TestNumbers 1 -GetPrereqs '
-        f'-ExecutionPolicy Bypass -CommandToExecute "echo {marker}"'
+    pattern = (getattr(connection, "log_marker_pattern", None) or "purvex_*").strip()
+    if "*" in pattern:
+        prefix = pattern.replace("*", "")
+    else:
+        prefix = pattern.rstrip("_") + "_"
+    if not prefix:
+        prefix = "purvex_"
+    suffix = f"{environment}_{secrets.token_hex(4)}"
+    return f"{prefix}{suffix}"
+
+
+def _runner_snapshot(runner: models.EnvironmentRunnerConfig) -> Dict[str, Any]:
+    return {
+        "id": runner.id,
+        "environment_name": runner.environment_name,
+        "runner_type": runner.runner_type,
+        "hostname": runner.hostname,
+        "port": runner.port or 22,
+        "username": runner.username,
+        "auth_method": runner.auth_method,
+        "key_path": runner.key_path,
+        "os": (runner.os or "").lower(),
+    }
+
+
+def _build_atomic_command(technique_id: str, marker: str, runner: Dict[str, Any]) -> str:
+    technique_id = technique_id.strip().upper()
+    if not re.fullmatch(_TECHNIQUE_ID_RE, technique_id):
+        raise RuntimeError(f"Invalid technique_id for atomic execution: {technique_id!r}")
+
+    is_windows = "win" in (runner.get("os") or "")
+    safe_marker = marker.replace("'", "''")
+    if is_windows:
+        safe_technique_id = technique_id.replace("'", "''")
+        return (
+            "powershell -NoProfile -ExecutionPolicy Bypass -Command "
+            f"\"$ErrorActionPreference='Stop'; "
+            f"try {{ eventcreate /T INFORMATION /ID 100 /L APPLICATION /SO PurveX /D '{safe_marker}' | Out-Null }} catch {{}}; "
+            f"Import-Module Invoke-AtomicRedTeam -ErrorAction Stop; "
+            f"Invoke-AtomicTest '{safe_technique_id}' -TestNumbers 1 -GetPrereqs\""
+        )
+    safe_technique_id = shlex.quote(technique_id)
+    safe_marker_shell = shlex.quote(marker)
+    return (
+        "bash -lc "
+        f"\"logger -t purvex {safe_marker_shell} || true; "
+        f"pwsh -NoProfile -Command 'Import-Module Invoke-AtomicRedTeam -ErrorAction Stop; "
+        f"Invoke-AtomicTest {safe_technique_id} -TestNumbers 1 -GetPrereqs'\""
     )
-    return command
+
+
+def run_atomic_test(technique_id: str, marker: str, runner: Optional[Dict[str, Any]]) -> str:
+    """Run an Atomic Red Team test over SSH using the configured runner."""
+    if not runner:
+        raise RuntimeError("No environment runner is configured for this test.")
+    if (runner.get("runner_type") or "").upper() != "SSH":
+        raise RuntimeError(f"Unsupported runner type: {runner.get('runner_type')}")
+    if not runner.get("hostname") or not runner.get("username"):
+        raise RuntimeError("Runner hostname and username are required for SSH execution.")
+
+    command = _build_atomic_command(technique_id, marker, runner)
+    client = paramiko.SSHClient()
+    client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+
+    try:
+        connect_kwargs: Dict[str, Any] = {
+            "hostname": runner["hostname"],
+            "port": int(runner.get("port") or 22),
+            "username": runner["username"],
+            "timeout": 20,
+            "banner_timeout": 20,
+            "auth_timeout": 20,
+        }
+        key_path = runner.get("key_path")
+        if key_path:
+            connect_kwargs["key_filename"] = key_path
+
+        client.connect(**connect_kwargs)
+        _, stdout, stderr = client.exec_command(command, timeout=300)
+        exit_status = stdout.channel.recv_exit_status()
+        stderr_text = stderr.read().decode("utf-8", errors="ignore").strip()
+        if exit_status != 0:
+            raise RuntimeError(
+                f"Atomic test command failed on runner {runner['hostname']} with exit code {exit_status}. {stderr_text}"
+            )
+        logger.info("Atomic test completed on runner %s", runner["hostname"])
+        return command
+    finally:
+        client.close()
 
 
 async def _get_test_retention_days(db, org_id: int) -> int:
-  """Return the configured test data retention window (in days) for this org."""
-  try:
-      stmt = select(models.TestingPolicy).where(
-          (models.TestingPolicy.organization_id == org_id)
-      )
-      result = await db.execute(stmt)
-      policy = result.scalar_one_or_none()
-      if policy and getattr(policy, "test_data_retention_days", None):
-          days = int(policy.test_data_retention_days)
-      else:
-          days = 90
-  except Exception:
-      days = 90
-  return max(1, days)
+    """Return the configured test data retention window (in days) for this org."""
+    try:
+        stmt = select(models.TestingPolicy).where(models.TestingPolicy.organization_id == org_id)
+        result = await db.execute(stmt)
+        policy = result.scalar_one_or_none()
+        if policy and getattr(policy, "test_data_retention_days", None):
+            days = int(policy.test_data_retention_days)
+        else:
+            days = 90
+    except Exception:
+        days = 90
+    return max(1, days)
 
 
 async def _purge_old_test_data(db, org_id: int) -> None:
-  """Purge old tests, artifacts and sample SIEM data based on retention policy."""
-  days = await _get_test_retention_days(db, org_id)
-  cutoff = datetime.utcnow() - timedelta(days=days)
+    """Purge old tests, artifacts and sample SIEM data based on retention policy."""
+    days = await _get_test_retention_days(db, org_id)
+    cutoff = datetime.utcnow() - timedelta(days=days)
 
-  # Find old tests for this org that finished before the cutoff.
-  result = await db.execute(
-      select(models.Test.id).where(
-          models.Test.organization_id == org_id,
-          models.Test.finished_at != None,  # noqa: E711
-          models.Test.finished_at < cutoff,
-      )
-  )
-  old_test_ids = [row[0] for row in result]
-  if not old_test_ids:
-      return
+    result = await db.execute(
+        select(models.Test.id).where(
+            models.Test.organization_id == org_id,
+            models.Test.finished_at != None,  # noqa: E711
+            models.Test.finished_at < cutoff,
+        )
+    )
+    old_test_ids = [row[0] for row in result]
+    if not old_test_ids:
+        return
 
-  # Delete artifacts tied to those tests, then the tests themselves.
-  await db.execute(
-      delete(models.TestArtifact).where(models.TestArtifact.test_id.in_(old_test_ids))
-  )
-  await db.execute(
-      delete(models.Test).where(models.Test.id.in_(old_test_ids))
-  )
-  await db.commit()
+    await db.execute(delete(models.TestArtifact).where(models.TestArtifact.test_id.in_(old_test_ids)))
+    await db.execute(delete(models.Test).where(models.Test.id.in_(old_test_ids)))
+    await db.commit()
 
 
 async def execute_test_pipeline(test_id: int, expected_org_id: int):
-    """Executes the full test pipeline for a given test ID.
-    
-    SECURITY: Requires expected_org_id to prevent cross-tenant access.
-    The test must belong to the specified organization.
-    """
+    """Execute the full test pipeline for a given test ID."""
     async with async_sessionmaker() as db:
         try:
-            # 1. Load Test + Detection from DB with org_id check for tenant isolation.
             result = await db.execute(
                 select(models.Test)
                 .filter(models.Test.id == test_id)
@@ -96,7 +166,9 @@ async def execute_test_pipeline(test_id: int, expected_org_id: int):
             test = result.scalar_one_or_none()
             if not test:
                 logger.error(
-                    f"Test with ID {test_id} not found or does not belong to org {expected_org_id}."
+                    "Test with ID %s not found or does not belong to org %s.",
+                    test_id,
+                    expected_org_id,
                 )
                 return
 
@@ -105,50 +177,99 @@ async def execute_test_pipeline(test_id: int, expected_org_id: int):
                 result = await db.execute(select(models.Detection).filter(models.Detection.id == test.detection_id))
                 detection = result.scalar_one_or_none()
                 if not detection:
-                    logger.error(f"Detection with ID {test.detection_id} not found.")
-                    # For scenario‑only tests we allow detection_id to be null; if it was
-                    # explicitly set but cannot be loaded we treat this as a hard error.
+                    logger.error("Detection with ID %s not found.", test.detection_id)
                     return
 
-            # 2. Set status="running", started_at=now
             test.status = "running"
             test.started_at = datetime.utcnow()
             db.add(test)
             await db.commit()
             await db.refresh(test)
-            logger.info(f"Test {test_id} status set to 'running'.")
 
-            # 3. Generate marker if not already set (should be set by router now)
+            runner_stmt = (
+                select(models.EnvironmentRunnerConfig)
+                .where(models.EnvironmentRunnerConfig.organization_id == test.organization_id)
+                .where(models.EnvironmentRunnerConfig.environment_name == test.environment)
+            )
+            if test.endpoint:
+                runner_stmt = runner_stmt.where(models.EnvironmentRunnerConfig.hostname == test.endpoint)
+            runner_result = await db.execute(
+                runner_stmt.order_by(
+                    models.EnvironmentRunnerConfig.last_check_in.desc().nullslast(),
+                    models.EnvironmentRunnerConfig.id.desc(),
+                )
+            )
+            runner_config = runner_result.scalar_one_or_none()
+
+            # Prefer the SIEM bound to the runner's host — that's where this
+            # host's telemetry actually lands. Fall back to the org-wide most
+            # recently validated connection only if no binding exists.
+            siem_connection: Optional[models.SIEMConnection] = None
+            if runner_config and getattr(runner_config, "siem_connection_id", None):
+                bound = await db.execute(
+                    select(models.SIEMConnection).where(
+                        models.SIEMConnection.id == runner_config.siem_connection_id,
+                        models.SIEMConnection.organization_id == test.organization_id,
+                    )
+                )
+                siem_connection = bound.scalar_one_or_none()
+            if siem_connection is None:
+                siem_result = await db.execute(
+                    select(models.SIEMConnection)
+                    .where(models.SIEMConnection.organization_id == test.organization_id)
+                    .order_by(
+                        models.SIEMConnection.last_validated_at.desc().nullslast(),
+                        models.SIEMConnection.id.desc(),
+                    )
+                    .limit(1)
+                )
+                siem_connection = siem_result.scalar_one_or_none()
+
+            # Refuse to "validate" a SIEM-synced detection on a host whose
+            # telemetry doesn't reach the SIEM that owns the rule. Without
+            # this guard a PASS/FAIL would be meaningless — the alert could
+            # never fire on that path regardless of detection quality.
+            if (
+                detection is not None
+                and getattr(detection, "source", "manual") == "siem_sync"
+                and detection.siem_connection_id is not None
+                and siem_connection is not None
+                and detection.siem_connection_id != siem_connection.id
+            ):
+                raise RuntimeError(
+                    f"Detection {detection.id} was synced from SIEM connection "
+                    f"{detection.siem_connection_id} but the selected runner is bound to "
+                    f"SIEM connection {siem_connection.id}. Bind the host to the matching "
+                    "SIEM or pick a different runner."
+                )
+
             if not test.marker:
-                test.marker = generate_marker(test.environment)
+                test.marker = generate_marker(test.environment, siem_connection)
                 db.add(test)
                 await db.commit()
                 await db.refresh(test)
-                logger.info(f"Test {test_id} marker generated: {test.marker}")
 
-            # 4. Run the atomic test (stubbed) and capture the command string.
             technique_id = detection.technique_id if detection is not None else (test.technique_id or "UNKNOWN")
-            command_str = await anyio.to_thread.run_sync(run_atomic_test, technique_id, test.marker)
+            runner_payload = _runner_snapshot(runner_config) if runner_config else None
+            command_str = await anyio.to_thread.run_sync(run_atomic_test, technique_id, test.marker, runner_payload)
             logger.info("Atomic test command for %s: %s", test_id, command_str)
 
-            # 5. Sleep a short delay (e.g., 30–60s) to simulate execution + log ingestion.
-            await asyncio.sleep(10)
+            await asyncio.sleep(20)
 
-            # 6. Validate detection in the SIEM (telemetry + detection logic check).
             if detection is not None:
                 result_status, score, sample_events = await anyio.to_thread.run_sync(
                     validate_detection_for_test,
                     test,
                     detection,
+                    siem_connection,
                 )
             else:
                 result_status, score, sample_events = await anyio.to_thread.run_sync(
                     validate_telemetry_for_test,
                     test,
+                    siem_connection,
                 )
-            logger.info(f"Test {test_id} validation result: {result_status}, Score: {score}")
 
-            # 7. Update Test: result, score, finished_at, status
             test.result = result_status
             test.score = score
             test.finished_at = datetime.utcnow()
@@ -156,43 +277,34 @@ async def execute_test_pipeline(test_id: int, expected_org_id: int):
             db.add(test)
             await db.commit()
             await db.refresh(test)
-            logger.info("Test %s status set to 'completed'.", test_id)
 
-            # 8. Update detection lifecycle fields based on this test outcome.
             if detection is not None:
                 detection.last_tested_at = test.finished_at
                 if result_status == "PASS":
                     if not detection.last_pass_at or test.finished_at > detection.last_pass_at:
                         detection.last_pass_at = test.finished_at
-                    # PASS implies the alert fired for this marker in the SIEM.
                     if not detection.last_alert_at or test.finished_at > detection.last_alert_at:
                         detection.last_alert_at = test.finished_at
-                    # Simple rule: high‑scoring PASS → mark as ACTIVE.
                     if (score or 0) >= 80:
                         detection.status = "ACTIVE"
                 elif result_status == "FAIL":
                     if not detection.last_fail_at or test.finished_at > detection.last_fail_at:
                         detection.last_fail_at = test.finished_at
                     detection.status = "NEEDS_IMPROVEMENT"
-                # INCONCLUSIVE keeps status as‑is but still updates last_tested_at above.
 
                 db.add(detection)
                 await db.commit()
                 await db.refresh(detection)
-                logger.info("Detection %s lifecycle updated from test %s.", detection.id, test_id)
 
-            # 9a. Apply simple data retention for old tests and SIEM samples.
             try:
                 org_id = detection.organization_id if detection is not None else test.organization_id
                 if org_id is not None:
                     await _purge_old_test_data(db, org_id)
-            except Exception as retention_err:  # pragma: no cover - defensive safety
+            except Exception as retention_err:  # pragma: no cover
                 logger.warning("Error applying test data retention: %s", retention_err)
 
-            # 10. Call analyze_detection (AI assistant) to enrich the test artifact.
             existing_artifact = None
             if detection is not None:
-                existing_artifact = None
                 try:
                     artifact_result = await db.execute(
                         select(models.TestArtifact).where(models.TestArtifact.test_id == test.id)
@@ -208,7 +320,6 @@ async def execute_test_pipeline(test_id: int, expected_org_id: int):
                         "ai_root_cause_category": existing_artifact.ai_root_cause_category,
                         "ai_confidence_score": existing_artifact.ai_confidence_score,
                     }
-                    logger.info("Test %s AI analysis loaded from cache.", test_id)
                 else:
                     ai_settings = None
                     try:
@@ -219,9 +330,7 @@ async def execute_test_pipeline(test_id: int, expected_org_id: int):
                         )
                         ai_settings = settings_result.scalar_one_or_none()
                         if not ai_settings:
-                            ai_settings = models.AIAssistantSettings(
-                                organization_id=test.organization_id
-                            )
+                            ai_settings = models.AIAssistantSettings(organization_id=test.organization_id)
                             db.add(ai_settings)
                             await db.commit()
                             await db.refresh(ai_settings)
@@ -231,12 +340,9 @@ async def execute_test_pipeline(test_id: int, expected_org_id: int):
                     ai_result = await anyio.to_thread.run_sync(
                         analyze_detection, test, detection, sample_events, ai_settings
                     )
-                    logger.info("Test %s AI analysis completed.", test_id)
             else:
                 ai_result = {}
 
-            # 11. Create or update a TestArtifact with command, sample events, and AI output.
-            # CRITICAL: Set organization_id from test to enforce tenant isolation.
             if existing_artifact:
                 existing_artifact.atomic_command = command_str
                 existing_artifact.siem_sample_events = json.dumps(sample_events) if sample_events else "[]"
@@ -247,7 +353,6 @@ async def execute_test_pipeline(test_id: int, expected_org_id: int):
                 db.add(existing_artifact)
                 await db.commit()
                 await db.refresh(existing_artifact)
-                logger.info("Test artifact for %s updated.", test_id)
             else:
                 artifact = models.TestArtifact(
                     organization_id=test.organization_id,
@@ -262,7 +367,6 @@ async def execute_test_pipeline(test_id: int, expected_org_id: int):
                 db.add(artifact)
                 await db.commit()
                 await db.refresh(artifact)
-                logger.info("Test artifact for %s created.", test_id)
 
         except Exception as e:
             logger.error("Error in test pipeline for test ID %s: %s", test_id, e)

@@ -91,14 +91,6 @@ async def request_password_reset(payload: PasswordResetRequest, request: Request
     logger = logging.getLogger("purvex.api")
     logger.info("Password reset token generated for %s", user.email)
 
-    # Do not return the raw token in production APIs – here we include it only
-    # to make local testing and development easier.
-    if app_settings.DEPLOYMENT_ENV.lower() != "prod":
-        return {
-            "message": "If an account exists for this email, a reset link has been generated.",
-            "reset_token": reset_token,
-        }
-
     return {"message": "If an account exists for this email, a reset link has been generated."}
 
 

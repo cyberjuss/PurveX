@@ -1,5 +1,13 @@
 @import "tailwindcss";
-@import "tw-animate-css";
+
+/* Offline-safe font stack. Previously loaded via next/font/google which
+   requires network access at build time. */
+:root {
+  --font-inter: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, "Noto Sans", sans-serif;
+  --font-space-grotesk: ui-sans-serif, system-ui, -apple-system, "Segoe UI",
+    Roboto, "Helvetica Neue", Arial, sans-serif;
+}
 
 /* Hide browser default loading indicators and scrollbar during loading */
 /* Only apply when splash elements are actually present */
@@ -65,13 +73,13 @@ html:has([data-loading-splash="true"]:not([style*="display: none"])) {
 
   /* Light mode palette */
   --pvrx-primary-light: #ffffff;
-  --pvrx-primary-light-alt: #f8fafc;
+  --pvrx-primary-light-alt: #ffffff;
   --pvrx-accent: #7561f6;
   --pvrx-accent-light: #9fb2ff;
   --pvrx-surface-light: #ffffff;
-  --pvrx-surface-alt-light: #f1f5f9;
-  --pvrx-background-light: #f7f9fc;
-  --pvrx-border-light: #e2e8f0;
+  --pvrx-surface-alt-light: #ffffff;
+  --pvrx-background-light: #ffffff;
+  --pvrx-border-light: #d9e2ef;
   --pvrx-text-primary-light: #0f172a;
   --pvrx-text-secondary-light: #475569;
   --pvrx-text-muted-light: #64748b;
@@ -261,16 +269,54 @@ select {
 }
 
 :root {
-  --surface-page: #f7f9fc;
+  --surface-page: #ffffff;
   --surface-card: #ffffff;
-  --surface-muted: #f1f5f9;
-  --stroke-soft: #e5e7eb;
+  --surface-muted: #f8fafc;
+  --surface-card-foreground: #0f172a;
+  --stroke-soft: #d9e2ef;
   --shadow-soft: 0 12px 38px -18px rgba(15, 23, 42, 0.24);
+  --surface-shell: #ffffff;
+  --surface-shell-foreground: #0f172a;
+  --surface-elevated: #ffffff;
+  --surface-elevated-foreground: #0f172a;
+  --surface-subtle: #f8fafc;
+  --surface-subtle-foreground: #475569;
+  --hover-soft: rgba(79, 124, 255, 0.08);
+  --accent-strong: #4f7cff;
+  --accent-soft: rgba(79, 124, 255, 0.12);
+  --accent-line: rgba(79, 124, 255, 0.26);
+  --interactive-surface: #ffffff;
+  --interactive-surface-hover: #f8fafc;
+  --interactive-border: #d9e2ef;
+  --interactive-foreground: #0f172a;
+}
+
+.dark {
+  --surface-page: #0b0d10;
+  --surface-card: #15181d;
+  --surface-muted: #12161b;
+  --surface-card-foreground: #f3f4f6;
+  --stroke-soft: #2a2f37;
+  --shadow-soft: 0 18px 45px -24px rgba(0, 0, 0, 0.72);
+  --surface-shell: #0f1318;
+  --surface-shell-foreground: #f3f4f6;
+  --surface-elevated: #1a1e24;
+  --surface-elevated-foreground: #f3f4f6;
+  --surface-subtle: #11161c;
+  --surface-subtle-foreground: #b8c1ce;
+  --hover-soft: rgba(255, 255, 255, 0.06);
+  --accent-strong: #8ab4ff;
+  --accent-soft: rgba(138, 180, 255, 0.12);
+  --accent-line: rgba(138, 180, 255, 0.24);
+  --interactive-surface: #171b21;
+  --interactive-surface-hover: #1d232b;
+  --interactive-border: #2b3139;
+  --interactive-foreground: #f3f4f6;
 }
 
 [data-slot="card"] {
   background-color: var(--surface-card);
-  color: #0f172a;
+  color: var(--surface-card-foreground);
   border-color: var(--stroke-soft);
   box-shadow: var(--shadow-soft);
 }
@@ -280,7 +326,7 @@ select {
 [data-slot="card"] .card-base,
 [data-slot="card"] .card-container {
   background-color: var(--surface-card);
-  color: #0f172a;
+  color: var(--surface-card-foreground);
   border-color: var(--stroke-soft);
   box-shadow: var(--shadow-soft);
 }
@@ -292,17 +338,17 @@ select {
 
 .dark {
   /* Dark mode palette */
-  --pvrx-primary: #050f1d;
-  --pvrx-primary-light: #0b1c33;
-  --pvrx-accent: #7561f6;
-  --pvrx-accent-light: #9fb2ff;
-  --pvrx-surface: #0f1b2d;
-  --pvrx-surface-alt: #0b1224;
-  --pvrx-background: #050f1d;
-  --pvrx-border: #242f4b;
-  --pvrx-text-primary: #e7ecf5;
-  --pvrx-text-secondary: #c4cee0;
-  --pvrx-text-muted: #8ca0c2;
+  --pvrx-primary: #0f1318;
+  --pvrx-primary-light: #171b21;
+  --pvrx-accent: #8ab4ff;
+  --pvrx-accent-light: #223b5c;
+  --pvrx-surface: #15181d;
+  --pvrx-surface-alt: #1a1e24;
+  --pvrx-background: #0b0d10;
+  --pvrx-border: #2a2f37;
+  --pvrx-text-primary: #f3f4f6;
+  --pvrx-text-secondary: #d7dce3;
+  --pvrx-text-muted: #98a2b3;
 
   /* Map to design tokens - Dark mode */
   --background: var(--pvrx-background);
@@ -352,10 +398,14 @@ select {
     @apply border-border outline-ring/50;
   }
   body {
-    /* Keep a soft SaaS canvas under every page */
-    background: var(--surface-page);
-    color: #0f172a;
+    background: var(--background);
+    color: var(--foreground);
     position: relative;
+  }
+
+  .dark body {
+    background: var(--surface-page);
+    color: var(--foreground);
   }
 
   /* subtle cyber grid overlay */
@@ -372,10 +422,10 @@ select {
   input[type="search"],
   textarea,
   select {
-    background-color: #ffffff;
-    border: 1px solid #e5e7eb;
+    background-color: var(--surface-card);
+    border: 1px solid var(--stroke-soft);
     border-radius: 10px;
-    color: #0f172a;
+    color: var(--foreground);
     transition: border-color 150ms ease, box-shadow 150ms ease, background-color 150ms ease;
   }
 
@@ -385,12 +435,13 @@ select {
     outline: none;
     border-color: rgba(117, 97, 246, 0.5);
     box-shadow: 0 0 0 3px rgba(117, 97, 246, 0.18), 0 10px 25px -18px rgba(64, 38, 146, 0.25);
-    background-color: #ffffff;
+    background-color: var(--surface-card);
   }
 
 input::placeholder,
 textarea::placeholder {
-  color: rgba(15, 23, 42, 0.45);
+  color: var(--muted-foreground);
+  opacity: 0.7;
 }
 
 /* Hide native password reveal icons so only the custom eye renders */
@@ -600,6 +651,97 @@ input[type="password"]::-webkit-textfield-decoration-container {
   border: 1px solid var(--pvrx-border);
   box-shadow: var(--pvrx-shadow);
   backdrop-filter: none;
+}
+
+.dark .bg-white {
+  background-color: var(--surface-elevated) !important;
+}
+
+.dark .bg-white\/80,
+.dark .bg-white\/85,
+.dark .bg-white\/90 {
+  background-color: rgba(21, 24, 29, 0.92) !important;
+}
+
+.dark .bg-slate-50,
+.dark .bg-slate-100,
+.dark .bg-slate-200,
+.dark .bg-slate-300,
+.dark .bg-\[\#f9f6f1\] {
+  background-color: var(--surface-subtle) !important;
+}
+
+.dark .bg-blue-50,
+.dark .bg-emerald-50,
+.dark .bg-amber-50,
+.dark .bg-rose-50,
+.dark .bg-indigo-50,
+.dark .bg-sky-50 {
+  background-color: var(--surface-subtle) !important;
+}
+
+.dark .bg-blue-100,
+.dark .bg-emerald-100,
+.dark .bg-amber-100 {
+  background-color: color-mix(in srgb, var(--surface-subtle) 72%, var(--accent-strong) 28%) !important;
+}
+
+.dark .hover\:bg-white:hover,
+.dark .hover\:bg-slate-50:hover,
+.dark .hover\:bg-slate-100:hover {
+  background-color: var(--interactive-surface-hover) !important;
+}
+
+.dark .text-black,
+.dark .text-slate-900,
+.dark .text-slate-800 {
+  color: #f3f4f6 !important;
+}
+
+.dark .text-slate-700,
+.dark .text-slate-600 {
+  color: #d1d5db !important;
+}
+
+.dark .text-slate-500,
+.dark .text-slate-400 {
+  color: #9ca3af !important;
+}
+
+.dark .border-slate-200,
+.dark .border-slate-300,
+.dark .border-slate-800\/50,
+.dark .border-slate-900\/70 {
+  border-color: var(--stroke-soft) !important;
+}
+
+.dark .border-blue-200,
+.dark .border-blue-300,
+.dark .border-sky-200,
+.dark .border-sky-300,
+.dark .border-emerald-200,
+.dark .border-amber-200,
+.dark .border-rose-200,
+.dark .border-indigo-200 {
+  border-color: var(--stroke-soft) !important;
+}
+
+.dark .text-blue-500,
+.dark .text-blue-600,
+.dark .text-sky-500,
+.dark .text-sky-600 {
+  color: var(--accent-strong) !important;
+}
+
+.dark .text-emerald-500,
+.dark .text-emerald-600 {
+  color: #63d4a4 !important;
+}
+
+.dark .shadow-emerald-100,
+.dark .shadow-sm,
+.dark .shadow-md {
+  box-shadow: var(--shadow-soft) !important;
 }
 
 /* Override legacy glassy gradients on dashboard cards */
@@ -958,10 +1100,10 @@ input[type="password"]::-webkit-textfield-decoration-container {
 }
 
 .elite-card {
-  background: var(--surface-card, #ffffff);
-  border: 1px solid var(--stroke-soft, #e2e8f0);
-  box-shadow: var(--shadow-soft, 0 10px 30px rgba(15, 23, 42, 0.05));
-  color: #0f172a;
+  background: var(--surface-card);
+  border: 1px solid var(--stroke-soft);
+  box-shadow: var(--shadow-soft);
+  color: var(--surface-card-foreground);
 }
 
 .login-hero {

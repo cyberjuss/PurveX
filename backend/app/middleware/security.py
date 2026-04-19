@@ -21,9 +21,6 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     """
     
     async def dispatch(self, request: Request, call_next):
-        # Disable rate limiting in dev to avoid local DB lock storms.
-        if not IS_PRODUCTION:
-            return await call_next(request)
         response: Response = await call_next(request)
         
         # Content Security Policy
@@ -230,8 +227,8 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
             f"Time: {process_time:.3f}s"
         )
         
-        # Add timing header (only if response has headers attribute)
-        if hasattr(response, 'headers'):
+        # Add timing header only in non-production
+        if not IS_PRODUCTION and hasattr(response, 'headers'):
             response.headers["X-Process-Time"] = f"{process_time:.3f}"
         
         return response

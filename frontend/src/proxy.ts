@@ -11,13 +11,27 @@ const rateLimitStore: Map<string, { count: number; expires: number }> = new Map(
 
 export default function proxy(request: NextRequest) {
   const isDev = process.env.NODE_ENV !== "production";
+  const hostname = request.nextUrl.hostname;
+  const protocol = request.nextUrl.protocol;
+  const isPotentiallyTrustworthyOrigin =
+    protocol === "https:" || hostname === "localhost" || hostname === "127.0.0.1";
+
+  if (
+    isDev &&
+    protocol === "http:" &&
+    hostname !== "localhost" &&
+    hostname !== "127.0.0.1" &&
+    /^(\d{1,3}\.){3}\d{1,3}$/.test(hostname)
+  ) {
+    const redirectUrl = request.nextUrl.clone();
+    redirectUrl.hostname = "localhost";
+    return NextResponse.redirect(redirectUrl, 307);
+  }
 
   // Basic rate limiting for API routes.
   if (request.nextUrl.pathname.startsWith("/api")) {
     const ip =
-      request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
-      (request as any).ip ||
-      "unknown";
+      request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || "unknown";
 
     const now = Date.now();
     const entry = rateLimitStore.get(ip);
@@ -79,10 +93,22 @@ export default function proxy(request: NextRequest) {
   res.headers.set("X-Content-Type-Options", "nosniff");
   res.headers.set("X-Frame-Options", "DENY");
   res.headers.set("Permissions-Policy", "geolocation=(), microphone=(), camera=(), interest-cohort=()");
-  res.headers.set("Cross-Origin-Opener-Policy", "same-origin");
-  res.headers.set("Cross-Origin-Resource-Policy", "same-origin");
-  res.headers.set("Strict-Transport-Security", "max-age=63072000; includeSubDomains; preload");
-  res.headers.set("Origin-Agent-Cluster", "?1");
+
+  if (isPotentiallyTrustworthyOrigin) {
+    res.headers.set("Cross-Origin-Opener-Policy", "same-origin");
+    res.headers.set("Cross-Origin-Resource-Policy", "same-origin");
+    res.headers.set("Origin-Agent-Cluster", "?1");
+  } else {
+    res.headers.delete("Cross-Origin-Opener-Policy");
+    res.headers.delete("Cross-Origin-Resource-Policy");
+    res.headers.delete("Origin-Agent-Cluster");
+  }
+
+  if (protocol === "https:" && !isDev) {
+    res.headers.set("Strict-Transport-Security", "max-age=63072000; includeSubDomains; preload");
+  } else {
+    res.headers.delete("Strict-Transport-Security");
+  }
 
   return res;
 }

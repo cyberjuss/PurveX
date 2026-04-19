@@ -6,7 +6,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { getMitreTechniques, type MitreTechnique } from "@/lib/api";
+import { getDetections, getMitreTechniques, type MitreTechnique } from "@/lib/api";
 import { 
   Target, 
   Search, 
@@ -72,6 +72,7 @@ export default function ExplorePage() {
   const router = useRouter();
   const { toast } = useToast();
   const [mitreTechniques, setMitreTechniques] = useState<MitreTechnique[]>([]);
+  const [mappedTechniqueIds, setMappedTechniqueIds] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
@@ -86,20 +87,37 @@ export default function ExplorePage() {
   const [startX, setStartX] = useState(0);
   const [scrollLeft, setScrollLeft] = useState(0);
   const carouselRef = useRef<HTMLDivElement>(null);
+  const getBaseTechniqueId = useCallback((techniqueId: string) => techniqueId.split(".")[0], []);
+
+  const hasDetectionMapped = useCallback(
+    (techniqueId: string) => {
+      const baseId = getBaseTechniqueId(techniqueId);
+      return mappedTechniqueIds.has(techniqueId) || mappedTechniqueIds.has(baseId);
+    },
+    [getBaseTechniqueId, mappedTechniqueIds]
+  );
 
   const loadData = useCallback(async () => {
     try {
       setLoading(true);
       setError(null);
       const data = await getMitreTechniques();
+      const detections = await getDetections().catch(() => []);
+      const mappedIds = new Set<string>();
+      for (const detection of detections) {
+        if (!detection.technique_id) continue;
+        mappedIds.add(detection.technique_id);
+        mappedIds.add(getBaseTechniqueId(detection.technique_id));
+      }
       setMitreTechniques(data);
+      setMappedTechniqueIds(mappedIds);
     } catch (err: any) {
       const errorMessage = err.message || "Failed to load MITRE techniques.";
       setError(errorMessage);
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [getBaseTechniqueId]);
 
   useEffect(() => {
     loadData();
@@ -111,7 +129,7 @@ export default function ExplorePage() {
       tactics: {} as Record<string, number>,
       total: mitreTechniques.length,
       withDetections: 0,
-      withoutDetections: mitreTechniques.length,
+      withoutDetections: 0,
       subtechniques: 0,
       parentTechniques: 0,
     };
@@ -128,10 +146,15 @@ export default function ExplorePage() {
       } else {
         counts.parentTechniques++;
       }
+      if (hasDetectionMapped(tech.id)) {
+        counts.withDetections++;
+      } else {
+        counts.withoutDetections++;
+      }
     });
 
     return counts;
-  }, [mitreTechniques]);
+  }, [hasDetectionMapped, mitreTechniques]);
 
   // Filter techniques
   const filteredTechniques = useMemo(() => {
@@ -152,14 +175,11 @@ export default function ExplorePage() {
         }
       }
 
-      // Detection filter (for now, all show "No mapped detections" so this is placeholder)
-      // This would be enhanced when detection data is available
+      const hasMappedDetection = hasDetectionMapped(tech.id);
       if (filters.hasDetections === "yes") {
-        // Would check if tech has detections
-        return false; // Placeholder
+        if (!hasMappedDetection) return false;
       } else if (filters.hasDetections === "no") {
-        // Would check if tech has no detections
-        return true; // Placeholder - all show no detections currently
+        if (hasMappedDetection) return false;
       }
 
       // Sub-technique filter
@@ -171,7 +191,7 @@ export default function ExplorePage() {
 
       return true;
     });
-  }, [mitreTechniques, searchQuery, filters]);
+  }, [hasDetectionMapped, mitreTechniques, searchQuery, filters]);
 
   // Organize techniques by tactic
   const visibleTactics =
@@ -297,7 +317,7 @@ export default function ExplorePage() {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6">
           <PageHeader
             title="Explore MITRE Coverage"
-            subtitle="Browse techniques, filter by tactics, and launch tests to validate coverage."
+            subtitle="Find the next test that will teach you something real and move your coverage forward."
           />
           <LoadingState message="Loading MITRE techniques..." size="lg" />
         </div>
@@ -311,7 +331,7 @@ export default function ExplorePage() {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6">
           <PageHeader
             title="Explore MITRE Coverage"
-            subtitle="Browse techniques, filter by tactics, and launch tests to validate coverage."
+            subtitle="Find the next test that will teach you something real and move your coverage forward."
           />
           <ErrorState
             title="Failed to load techniques"
@@ -328,7 +348,7 @@ export default function ExplorePage() {
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6">
         <PageHeader
           title="Explore MITRE Coverage"
-          subtitle="Browse techniques, filter by tactics, and launch tests to validate coverage."
+          subtitle="Find the next test that will teach you something real and move your coverage forward."
         />
         {tacticColumns.length === 0 ? (
           <Card className="shadow-2xl">
@@ -591,13 +611,25 @@ export default function ExplorePage() {
 
                                     {/* Status Indicators */}
                               <div className="flex items-center gap-3 pt-1 text-xs">
-                                <div className="inline-flex items-center gap-2 px-2 py-1 rounded-md bg-slate-50 border border-slate-200 text-slate-600">
-                                  <Shield className="h-3.5 w-3.5 text-slate-500" />
-                                  <span>No detections</span>
-                                        </div>
+                                <div
+                                  className={cn(
+                                    "inline-flex items-center gap-2 px-2 py-1 rounded-md border",
+                                    hasDetectionMapped(parent.id)
+                                      ? "bg-emerald-50 border-emerald-200 text-emerald-700"
+                                      : "bg-slate-50 border-slate-200 text-slate-600"
+                                  )}
+                                >
+                                  <Shield
+                                    className={cn(
+                                      "h-3.5 w-3.5",
+                                      hasDetectionMapped(parent.id) ? "text-emerald-600" : "text-slate-500"
+                                    )}
+                                  />
+                                  <span>{hasDetectionMapped(parent.id) ? "Detections mapped" : "No detections"}</span>
+                                </div>
                                 <div className="inline-flex items-center gap-2 px-2 py-1 rounded-md bg-slate-50 border border-slate-200 text-slate-600">
                                   <Clock className="h-3.5 w-3.5 text-slate-500" />
-                                  <span>Never tested</span>
+                                  <span>Test status unavailable</span>
                                       </div>
                                     </div>
 

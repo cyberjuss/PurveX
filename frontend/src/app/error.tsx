@@ -1,0 +1,42 @@
+"use client";
+
+import { useEffect } from "react";
+import { AlertTriangle, RefreshCw } from "lucide-react";
+
+import { PageContainer } from "@/components/layout/page-container";
+import { Button } from "@/components/ui/button";
+
+export default function GlobalError({
+  error,
+  reset,
+}: {
+  error: Error & { digest?: string };
+  reset: () => void;
+}) {
+  useEffect(() => {
+    console.error(error);
+  }, [error]);
+
+  return (
+    <PageContainer>
+      <div className="flex min-h-[60vh] items-center justify-center">
+        <div className="max-w-xl rounded-[28px] border border-slate-200 bg-white p-8 text-center shadow-[0_20px_48px_-36px_rgba(15,23,42,0.55)]">
+          <div className="mx-auto mb-5 flex h-14 w-14 items-center justify-center rounded-2xl bg-red-50 text-red-600">
+            <AlertTriangle className="h-7 w-7" />
+          </div>
+          <h2 className="text-2xl font-display font-semibold text-slate-900">Something went wrong</h2>
+          <p className="mt-3 text-sm leading-6 text-slate-600">
+            PurveX hit an unexpected error while loading this page. Retry the view, and if the problem
+            persists, inspect the backend logs for the underlying exception.
+          </p>
+          <div className="mt-6 flex justify-center">
+            <Button onClick={() => reset()}>
+              <RefreshCw className="mr-2 h-4 w-4" />
+              Try again
+            </Button>
+          </div>
+        </div>
+      </div>
+    </PageContainer>
+  );
+}

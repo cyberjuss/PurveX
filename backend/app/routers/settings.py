@@ -6,7 +6,7 @@ import hashlib
 import secrets
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
-from sqlalchemy import func # for default timestamps
+from sqlalchemy import delete, func # for default timestamps
 import json
 
 from ..db import get_db, async_sessionmaker
@@ -14,6 +14,7 @@ from .. import models, schemas
 from ..routers.auth import get_current_user
 from ..utils.tenant import require_org_id
 from ..utils.authz import require_permission, Permission
+from ..utils.encryption import encrypt_value, decrypt_value
 from ..config import settings
 
 router = APIRouter(
@@ -52,8 +53,10 @@ async def get_organization_settings(
     db: DBSession,
     current_user: CurrentUser, # Requires authentication
 ):
-    # Assuming a single organization for MVP
-    result = await db.execute(select(models.Organization))
+    org_id = require_org_id(current_user)
+    result = await db.execute(
+        select(models.Organization).where(models.Organization.id == org_id)
+    )
     organization = result.scalar_one_or_none()
 
     # If no organization exists, create a fully-populated default one
@@ -132,7 +135,10 @@ async def update_organization_settings(
         # Combine sanitized regular fields with JSON fields (JSON fields are already strings)
         sanitized_data = {**sanitized_regular, **json_fields}
 
-        result = await db.execute(select(models.Organization))
+        org_id = require_org_id(current_user)
+        result = await db.execute(
+            select(models.Organization).where(models.Organization.id == org_id)
+        )
         organization = result.scalar_one_or_none()
 
         if not organization:
@@ -149,7 +155,8 @@ async def update_organization_settings(
                             sanitized_data[key] = json.dumps([v.strip() for v in sanitized_data[key].split(",") if v.strip()])
                         else:
                             sanitized_data[key] = "[]"
-            organization = models.Organization(**sanitized_data)
+            # Create if missing for this org_id (dev-only / legacy repair).
+            organization = models.Organization(id=org_id, **sanitized_data)
             db.add(organization)
         else:
             # Update existing organization
@@ -235,7 +242,9 @@ async def create_siem_connection(
     from ..utils.sanitize_inputs import sanitize_model_inputs
     sanitized_data = sanitize_model_inputs(siem_create)
     sanitized_data.pop("organization_id", None)
-    
+    if "credentials" in sanitized_data and sanitized_data["credentials"]:
+        sanitized_data["credentials"] = encrypt_value(sanitized_data["credentials"])
+
     org_id = require_org_id(current_user)
     db_siem = models.SIEMConnection(
         organization_id=org_id,
@@ -322,13 +331,14 @@ async def update_siem_connection(
         except Exception:
             incoming_data = {}
         try:
-            existing_data = json.loads(siem_connection.credentials) if siem_connection.credentials else {}
+            decrypted_existing = decrypt_value(siem_connection.credentials) if siem_connection.credentials else None
+            existing_data = json.loads(decrypted_existing) if decrypted_existing else {}
         except Exception:
             existing_data = {}
         if isinstance(existing_data, dict) and isinstance(incoming_data, dict):
             if "token" not in incoming_data and existing_data.get("token"):
                 incoming_data["token"] = existing_data.get("token")
-            update_data["credentials"] = json.dumps(incoming_data)
+            update_data["credentials"] = encrypt_value(json.dumps(incoming_data))
     for key, value in update_data.items():
         setattr(siem_connection, key, value)
     
@@ -350,6 +360,49 @@ async def update_siem_connection(
 
     from ..services.siem_universal import SIEMUniversalService
     return SIEMUniversalService(siem_connection).to_connection_response()
+
+
+@router.post("/siem-connections/{siem_id}/sync-detections")
+async def sync_siem_detections(
+    siem_id: int,
+    db: DBSession,
+    current_user: CurrentUser,
+    limit: int = 500,
+):
+    """Pull detection rules from a SIEM connection and upsert into PurveX."""
+    if siem_id <= 0:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid SIEM connection ID")
+    await require_permission(current_user, Permission.SETTINGS_SIEM_MANAGE, db)
+    user_id, user_email = safe_user_identity(current_user)
+
+    org_id = require_org_id(current_user)
+    result = await db.execute(
+        select(models.SIEMConnection)
+        .filter(models.SIEMConnection.id == siem_id)
+        .filter(models.SIEMConnection.organization_id == org_id)
+    )
+    siem_connection = result.scalar_one_or_none()
+    if not siem_connection:
+        raise HTTPException(status_code=404, detail="SIEM Connection not found")
+
+    from ..services.detection_sync import sync_connection
+    report = await sync_connection(db, siem_connection, limit=max(1, min(limit, 1000)))
+
+    async with async_sessionmaker() as session:
+        session.add(
+            models.AuditEvent(
+                user_id=user_id,
+                user_email=user_email,
+                action="SYNC_SIEM_DETECTIONS",
+                resource_type="settings",
+                resource_id=str(siem_connection.id),
+                details=json.dumps(report.to_dict()),
+            )
+        )
+        await session.commit()
+
+    return report.to_dict()
+
 
 @router.delete("/siem-connections/{siem_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_siem_connection(
@@ -376,7 +429,12 @@ async def delete_siem_connection(
     if not siem_connection:
         raise HTTPException(status_code=404, detail="SIEM Connection not found or access denied")
     
-    await db.delete(siem_connection)
+    await db.execute(
+        delete(models.SIEMConnection).where(
+            models.SIEMConnection.id == siem_id,
+            models.SIEMConnection.organization_id == org_id,
+        )
+    )
     await db.commit()
 
     async with async_sessionmaker() as session:
@@ -544,8 +602,7 @@ async def generate_agent_registration_token(
     """
     from ..security import create_access_token, decode_access_token
 
-    if not current_user.is_admin:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only administrators can generate registration tokens")
+    await require_permission(current_user, Permission.SETTINGS_RUNNERS_MANAGE, db)
     
     # Create a token that expires in 1 year (long-lived for agent registration)
     # Include user info and a flag indicating this is an agent registration token
@@ -588,6 +645,7 @@ async def list_environment_runners(
     db: DBSession,
     current_user: CurrentUser,
 ):
+    await require_permission(current_user, Permission.SETTINGS_RUNNERS_MANAGE, db)
     org_id = require_org_id(current_user)
     result = await db.execute(
         select(models.EnvironmentRunnerConfig).where(
@@ -603,8 +661,7 @@ async def create_environment_runner(
     db: DBSession,
     current_user: CurrentUser,
 ):
-    if not current_user.is_admin:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only administrators can create environment runners")
+    await require_permission(current_user, Permission.SETTINGS_RUNNERS_MANAGE, db, request)
     user_id, user_email = safe_user_identity(current_user)
     
     # SECURITY: Sanitize all input fields
@@ -690,11 +747,11 @@ async def create_environment_runner(
 @router.post("/environment-runners/{runner_id}/stop", response_model=dict)
 async def stop_environment_runner(
     runner_id: int,
+    request: Request,
     db: DBSession,
     current_user: CurrentUser,
 ):
-    if not current_user.is_admin:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only administrators can stop environment runners")
+    await require_permission(current_user, Permission.SETTINGS_RUNNERS_MANAGE, db, request)
     user_id, user_email = safe_user_identity(current_user)
     org_id = require_org_id(current_user)
     result = await db.execute(
@@ -746,11 +803,11 @@ async def stop_environment_runner(
 @router.post("/environment-runners/{runner_id}/pause", response_model=dict)
 async def pause_environment_runner(
     runner_id: int,
+    request: Request,
     db: DBSession,
     current_user: CurrentUser,
 ):
-    if not current_user.is_admin:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only administrators can pause environment runners")
+    await require_permission(current_user, Permission.SETTINGS_RUNNERS_MANAGE, db, request)
     user_id, user_email = safe_user_identity(current_user)
     org_id = require_org_id(current_user)
     result = await db.execute(
@@ -802,11 +859,11 @@ async def pause_environment_runner(
 @router.post("/environment-runners/{runner_id}/resume", response_model=dict)
 async def resume_environment_runner(
     runner_id: int,
+    request: Request,
     db: DBSession,
     current_user: CurrentUser,
 ):
-    if not current_user.is_admin:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only administrators can resume environment runners")
+    await require_permission(current_user, Permission.SETTINGS_RUNNERS_MANAGE, db, request)
     user_id, user_email = safe_user_identity(current_user)
     org_id = require_org_id(current_user)
     result = await db.execute(
@@ -858,11 +915,11 @@ async def resume_environment_runner(
 @router.post("/environment-runners/{runner_id}/rotate-token", response_model=dict)
 async def rotate_environment_runner_token(
     runner_id: int,
+    request: Request,
     db: DBSession,
     current_user: CurrentUser,
 ):
-    if not current_user.is_admin:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only administrators can rotate runner tokens")
+    await require_permission(current_user, Permission.SETTINGS_RUNNERS_MANAGE, db, request)
     org_id = require_org_id(current_user)
     result = await db.execute(
         select(models.EnvironmentRunnerConfig)
@@ -914,6 +971,7 @@ async def get_environment_runner(
     if runner_id <= 0:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid environment runner ID")
     
+    await require_permission(current_user, Permission.SETTINGS_RUNNERS_MANAGE, db)
     org_id = require_org_id(current_user)
     result = await db.execute(
         select(models.EnvironmentRunnerConfig)
@@ -928,6 +986,7 @@ async def get_environment_runner(
 @router.put("/environment-runners/{runner_id}", response_model=schemas.EnvironmentRunnerConfig)
 async def update_environment_runner(
     runner_id: int,
+    request: Request,
     runner_update: schemas.EnvironmentRunnerConfigCreate,
     db: DBSession,
     current_user: CurrentUser,
@@ -936,8 +995,7 @@ async def update_environment_runner(
     if runner_id <= 0:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid environment runner ID")
     
-    if not current_user.is_admin:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only administrators can update environment runners")
+    await require_permission(current_user, Permission.SETTINGS_RUNNERS_MANAGE, db, request)
     user_id, user_email = safe_user_identity(current_user)
     
     org_id = require_org_id(current_user)
@@ -1032,29 +1090,15 @@ async def update_environment_runner_heartbeat(
                 else:
                     runner_token_valid = False
                 if not runner_token_valid:
-                    return Response(status_code=status.HTTP_204_NO_CONTENT)
+                    return Response(status_code=status.HTTP_401_UNAUTHORIZED)
         else:
             # Backfill missing runner token hash for legacy records.
             runner_config.runner_token_hash = token_hash
             runner_config.runner_token_last_rotated_at = datetime.now(timezone.utc)
             runner_config.runner_token_expires_at = datetime.now(timezone.utc) + timedelta(days=settings.RUNNER_TOKEN_TTL_DAYS)
     else:
-        # Legacy endpoint: only accept user-authenticated calls; otherwise ignore quietly.
-        if "access_token" not in request.cookies:
-            return Response(status_code=status.HTTP_204_NO_CONTENT)
-        try:
-            current_user = await get_current_user(request, db)
-        except HTTPException:
-            return Response(status_code=status.HTTP_204_NO_CONTENT)
-        org_id = require_org_id(current_user)
-        result = await db.execute(
-            select(models.EnvironmentRunnerConfig)
-            .filter(models.EnvironmentRunnerConfig.id == runner_id)
-            .filter(models.EnvironmentRunnerConfig.organization_id == org_id)
-        )
-        runner_config = result.scalar_one_or_none()
-        if not runner_config:
-            return Response(status_code=status.HTTP_404_NOT_FOUND)
+        # Security hardening: heartbeat must be authenticated by runner bearer token.
+        return Response(status_code=status.HTTP_401_UNAUTHORIZED)
 
     update_data = {}
     try:
@@ -1079,11 +1123,11 @@ async def update_environment_runner_heartbeat(
 @router.delete("/environment-runners/{runner_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_environment_runner(
     runner_id: int,
+    request: Request,
     db: DBSession,
     current_user: CurrentUser,
 ):
-    if not current_user.is_admin:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only administrators can delete environment runners")
+    await require_permission(current_user, Permission.SETTINGS_RUNNERS_MANAGE, db, request)
     user_id, user_email = safe_user_identity(current_user)
     
     # CRITICAL: Verify environment runner belongs to this org before deletion.
@@ -1097,7 +1141,12 @@ async def delete_environment_runner(
     if not runner_config:
         raise HTTPException(status_code=404, detail="Environment Runner Config not found or access denied")
     
-    await db.delete(runner_config)
+    await db.execute(
+        delete(models.EnvironmentRunnerConfig).where(
+            models.EnvironmentRunnerConfig.id == runner_id,
+            models.EnvironmentRunnerConfig.organization_id == org_id,
+        )
+    )
     await db.commit()
 
     async with async_sessionmaker() as session:
@@ -1377,16 +1426,23 @@ async def get_ai_assistant_settings(
     ai_settings = result.scalar_one_or_none()
     if not ai_settings:
         # Create default AI settings for this organization
-        ai_settings = models.AIAssistantSettings(organization_id=org_id)
+        ai_settings = models.AIAssistantSettings(
+            organization_id=org_id,
+            provider=settings.AI_PROVIDER,
+            model_name=settings.OPENAI_MODEL,
+            api_base_url=settings.OPENAI_API_BASE_URL,
+        )
         db.add(ai_settings)
         await db.commit()
         await db.refresh(ai_settings)
     else:
-        # Ensure default local model is set for Ollama deployments.
-        if not ai_settings.model_name or ai_settings.model_name.strip() == "":
-            ai_settings.model_name = settings.OLLAMA_MODEL_NAME
-        if ai_settings.provider in {"Local LLaMA", "Local Llama", "Ollama"} and ai_settings.model_name == "llama3.1":
-            ai_settings.model_name = settings.OLLAMA_MODEL_NAME
+        legacy_provider = (ai_settings.provider or "").strip().lower()
+        if legacy_provider in {"", "built-in", "builtin", "local llama", "local llama (ollama)"}:
+            ai_settings.provider = settings.AI_PROVIDER
+        if not ai_settings.model_name:
+            ai_settings.model_name = settings.OPENAI_MODEL
+        if not ai_settings.api_base_url:
+            ai_settings.api_base_url = settings.OPENAI_API_BASE_URL
         if not ai_settings.analysis_mode:
             ai_settings.analysis_mode = "fast"
         await db.commit()
@@ -1433,10 +1489,14 @@ async def update_ai_assistant_settings(
         # Create new AI settings for this organization
         ai_settings_data = ai_settings_update.model_dump()
         ai_settings_data["organization_id"] = org_id
+        if ai_settings_data.get("api_key"):
+            ai_settings_data["api_key"] = encrypt_value(ai_settings_data["api_key"])
         ai_settings = models.AIAssistantSettings(**ai_settings_data)
         db.add(ai_settings)
     else:
         update_data = ai_settings_update.model_dump(exclude_unset=True)
+        if update_data.get("api_key"):
+            update_data["api_key"] = encrypt_value(update_data["api_key"])
         for key, value in update_data.items():
             setattr(ai_settings, key, value)
     

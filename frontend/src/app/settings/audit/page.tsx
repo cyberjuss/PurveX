@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
@@ -10,11 +10,11 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { getAuditEvents, getAuditStats, cleanupAuditEvents, AuditEvent, AuditStats } from "@/lib/api";
 import { 
-  Search, Filter, Download, RefreshCw, Calendar, User, Activity, 
-  Shield, Settings, TestTube, Key, Server, TrendingUp, Clock,
-  FileText, AlertCircle, CheckCircle2, XCircle
+  Search, Filter, Download, RefreshCw, User, Activity, 
+  Shield, Settings, TestTube, Key, Server, Clock,
+  FileText, AlertCircle
 } from "lucide-react";
-import { format, formatRelative, parseISO } from "date-fns";
+import { format, parseISO } from "date-fns";
 import { cn } from "@/lib/utils";
 import { PageContainer } from "@/components/layout/page-container";
 import { PageHeader } from "@/components/layout/page-header";
@@ -38,7 +38,7 @@ const ACTION_COLORS: Record<string, string> = {
   "RESET_SANDBOX": "bg-yellow-500/20 text-yellow-400 border-yellow-500/30",
 };
 
-const RESOURCE_ICONS: Record<string, any> = {
+const RESOURCE_ICONS: Record<string, typeof Activity> = {
   "detection": FileText,
   "test": TestTube,
   "settings": Settings,
@@ -46,6 +46,23 @@ const RESOURCE_ICONS: Record<string, any> = {
   "user": User,
   "sandbox": Server,
 };
+
+interface AuditQueryParams {
+  skip: number;
+  limit: number;
+  search?: string;
+  action?: string;
+  resource_type?: string;
+  start_date?: string;
+  end_date?: string;
+}
+
+function getErrorMessage(error: unknown, fallback: string): string {
+  if (error instanceof Error && error.message) {
+    return error.message;
+  }
+  return fallback;
+}
 
 function getActionIcon(action: string) {
   if (action.includes("LOGIN")) return Shield;
@@ -62,7 +79,6 @@ export default function AuditLogPage() {
   const [stats, setStats] = useState<AuditStats | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [refreshing, setRefreshing] = useState(false);
   const [cleaning, setCleaning] = useState(false);
   const [cleanupDays, setCleanupDays] = useState(30);
   const { isAdmin } = usePermissions();
@@ -76,10 +92,10 @@ export default function AuditLogPage() {
   const [page, setPage] = useState(0);
   const [limit] = useState(50);
 
-  const fetchEvents = async () => {
+  const fetchEvents = useCallback(async () => {
     try {
       setError(null);
-      const params: any = {
+      const params: AuditQueryParams = {
         skip: page * limit,
         limit,
       };
@@ -107,36 +123,29 @@ export default function AuditLogPage() {
 
       const data = await getAuditEvents(params);
       setEvents(data);
-    } catch (err: any) {
-      setError(err.message || "Failed to load audit events");
+    } catch (err: unknown) {
+      setError(getErrorMessage(err, "Failed to load audit events"));
       console.error("Error fetching audit events:", err);
     } finally {
       setLoading(false);
-      setRefreshing(false);
     }
-  };
+  }, [actionFilter, dateRange, limit, page, resourceTypeFilter, searchQuery]);
 
-  const fetchStats = async () => {
+  const fetchStats = useCallback(async () => {
     try {
       const days = dateRange === "7d" ? 7 : dateRange === "30d" ? 30 : dateRange === "90d" ? 90 : 7;
       const data = await getAuditStats(days);
       setStats(data);
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error("Error fetching audit stats:", err);
     }
-  };
+  }, [dateRange]);
 
   useEffect(() => {
     setLoading(true);
-    fetchEvents();
-    fetchStats();
-  }, [page, actionFilter, resourceTypeFilter, dateRange]);
-
-  const handleRefresh = () => {
-    setRefreshing(true);
-    fetchEvents();
-    fetchStats();
-  };
+    void fetchEvents();
+    void fetchStats();
+  }, [fetchEvents, fetchStats]);
 
   const handleCleanup = async () => {
     if (!Number.isFinite(cleanupDays) || cleanupDays < 1) {
@@ -158,12 +167,13 @@ export default function AuditLogPage() {
         title: "Audit log cleaned",
         description: `Removed ${result?.deleted ?? 0} event(s) older than ${cleanupDays} day(s).`,
       });
-    } catch (err: any) {
-      setError(err?.message || "Failed to clean audit events");
+    } catch (err: unknown) {
+      const message = getErrorMessage(err, "Failed to clean audit events");
+      setError(message);
       toast({
         type: "error",
         title: "Cleanup failed",
-        description: err?.message || "Failed to clean audit events",
+        description: message,
       });
     } finally {
       setCleaning(false);
@@ -205,56 +215,63 @@ export default function AuditLogPage() {
         <PageHeader
           className="mb-6"
           eyebrow="Governance"
-          title="Audit Log"
-          subtitle="View and analyze all security-sensitive actions and administrative changes"
+          title="Audit"
+          subtitle="Review who changed what and when so configuration, access, and operational changes stay traceable."
           icon={<FileText className="h-5 w-5" />}
           actions={
-            <div className="flex items-center justify-end">
-              <div className="flex flex-nowrap items-center gap-3 rounded-2xl border border-slate-200 bg-white px-3 py-2 shadow-sm">
-                {isAdmin() && (
-                  <div className="flex flex-nowrap items-center gap-2 rounded-xl border border-slate-200 bg-white px-2 py-1 shadow-inner">
-                    <Input
-                      type="number"
-                      min={1}
-                      value={cleanupDays}
-                      onChange={(e) => setCleanupDays(Number(e.target.value))}
-                      className="h-9 w-20 text-center border-slate-200 bg-slate-50 text-slate-900 font-semibold"
-                      aria-label="Audit cleanup days"
-                    />
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={handleCleanup}
-                      disabled={cleaning}
-                      className="h-9 whitespace-nowrap bg-white border-slate-200 text-slate-900 hover:bg-slate-50 shadow-sm"
-                    >
-                      <Filter className={cn("h-4 w-4 mr-2", cleaning && "animate-spin")} />
-                      Clean {cleanupDays}+ days
-                    </Button>
-                  </div>
-                )}
-                <div className="flex flex-nowrap items-center gap-2">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={handleExport}
-                    disabled={events.length === 0}
-                    className="h-9 whitespace-nowrap bg-white border-slate-200 text-slate-900 hover:bg-slate-50 shadow-sm"
-                  >
-                    <Download className="h-4 w-4 mr-2" />
-                    Export CSV
-                  </Button>
-                </div>
-              </div>
-            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleExport}
+              disabled={events.length === 0}
+              className="h-9 whitespace-nowrap bg-white border-slate-200 text-slate-900 hover:bg-slate-50 shadow-sm"
+            >
+              <Download className="h-4 w-4 mr-2" />
+              Export CSV
+            </Button>
           }
         />
       </div>
 
-      {/* Statistics Cards */}
+      {isAdmin() && (
+        <Card className="mb-6 border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-950">
+          <CardHeader>
+            <CardTitle className="text-base">Retention cleanup</CardTitle>
+            <CardDescription>
+              Delete older audit records only when you need to reduce retained history.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex items-center gap-3">
+                <Input
+                  type="number"
+                  min={1}
+                  value={cleanupDays}
+                  onChange={(e) => setCleanupDays(Number(e.target.value))}
+                  className="h-9 w-24 text-center border-slate-200 bg-slate-50 text-slate-900 font-semibold"
+                  aria-label="Audit cleanup days"
+                />
+                <span className="text-sm text-slate-600 dark:text-slate-400">days to keep at minimum</span>
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleCleanup}
+                disabled={cleaning}
+                className="h-9 whitespace-nowrap bg-white border-slate-200 text-slate-900 hover:bg-slate-50 shadow-sm"
+              >
+                <Filter className={cn("h-4 w-4 mr-2", cleaning && "animate-spin")} />
+                Clean records older than {cleanupDays} days
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       {stats && (
         <div className="grid gap-4 md:grid-cols-4 mb-6">
-          <Card className="elite-card ">
+          <Card className="border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-950">
             <CardHeader className="pb-3">
               <CardTitle className="text-sm font-medium text-slate-400">Total Events</CardTitle>
             </CardHeader>
@@ -264,7 +281,7 @@ export default function AuditLogPage() {
             </CardContent>
           </Card>
 
-          <Card className="elite-card ">
+          <Card className="border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-950">
             <CardHeader className="pb-3">
               <CardTitle className="text-sm font-medium text-slate-400">Top Action</CardTitle>
             </CardHeader>
@@ -278,7 +295,7 @@ export default function AuditLogPage() {
             </CardContent>
           </Card>
 
-          <Card className="elite-card ">
+          <Card className="border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-950">
             <CardHeader className="pb-3">
               <CardTitle className="text-sm font-medium text-slate-400">Top Resource</CardTitle>
             </CardHeader>
@@ -292,7 +309,7 @@ export default function AuditLogPage() {
             </CardContent>
           </Card>
 
-          <Card className="elite-card ">
+          <Card className="border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-950">
             <CardHeader className="pb-3">
               <CardTitle className="text-sm font-medium text-slate-400">Most Active User</CardTitle>
             </CardHeader>
@@ -308,10 +325,10 @@ export default function AuditLogPage() {
         </div>
       )}
 
-      {/* Filters */}
-      <Card className="elite-card  mb-6">
+      <Card className="mb-6 border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-950">
         <CardHeader>
-          <CardTitle className="text-base">Filters</CardTitle>
+          <CardTitle className="text-base">Find changes</CardTitle>
+          <CardDescription>Search audit history by person, action, resource type, and time range.</CardDescription>
         </CardHeader>
         <CardContent>
           <div className="grid gap-4 md:grid-cols-4">
@@ -371,7 +388,7 @@ export default function AuditLogPage() {
 
             <div className="space-y-2">
               <Label htmlFor="dateRange" className="text-xs text-slate-400">Date Range</Label>
-              <Select value={dateRange} onValueChange={(v: any) => { setDateRange(v); setPage(0); }}>
+              <Select value={dateRange} onValueChange={(value: "7d" | "30d" | "90d" | "all") => { setDateRange(value); setPage(0); }}>
                 <SelectTrigger id="dateRange" className="h-9 bg-white border-slate-200 text-slate-900">
                   <SelectValue />
                 </SelectTrigger>
@@ -387,10 +404,9 @@ export default function AuditLogPage() {
         </CardContent>
       </Card>
 
-      {/* Events Table */}
-      <Card className="elite-card ">
+      <Card className="border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-950">
         <CardHeader>
-          <CardTitle className="text-base">Audit Events</CardTitle>
+          <CardTitle className="text-base">Change history</CardTitle>
           <CardDescription className="text-slate-500">
             Showing {events.length} event{events.length !== 1 ? "s" : ""}
           </CardDescription>
@@ -467,11 +483,11 @@ export default function AuditLogPage() {
                                 )}
                               </div>
                             ) : (
-                              <span className="text-sm text-slate-500">—</span>
+                              <span className="text-sm text-slate-500">-</span>
                             )}
                           </TableCell>
                           <TableCell className="text-slate-400 text-sm max-w-md truncate">
-                            {event.details || "—"}
+                            {event.details || "-"}
                           </TableCell>
                         </TableRow>
                       );
@@ -483,7 +499,7 @@ export default function AuditLogPage() {
               {/* Pagination */}
               <div className="flex items-center justify-between mt-4">
                 <div className="text-sm text-slate-500">
-                  Page {page + 1} • {events.length} events
+                  Page {page + 1} - {events.length} events
                 </div>
                 <div className="flex gap-2">
                   <Button
