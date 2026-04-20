@@ -60,7 +60,7 @@ async def generate_report(
     """
     Generate a comprehensive PDF report for the specified date range and environments.
     """
-    await require_permission(current_user, Permission.DETECTIONS_READ, db, request)
+    await require_permission(current_user, Permission.REPORTS_EXPORT, db, request)
     org_id = require_org_id(current_user)
     
     # Validate date range
@@ -263,7 +263,7 @@ async def list_reports(
     limit: int = Query(20, ge=1, le=100),
 ):
     """List all reports for the current organization."""
-    await require_permission(current_user, Permission.DETECTIONS_READ, db, request)
+    await require_permission(current_user, Permission.REPORTS_VIEW, db, request)
     org_id = require_org_id(current_user)
     
     stmt = (
@@ -287,7 +287,7 @@ async def download_report(
     request: Request,
 ):
     """Download a generated PDF report."""
-    await require_permission(current_user, Permission.DETECTIONS_READ, db, request)
+    await require_permission(current_user, Permission.REPORTS_EXPORT, db, request)
     org_id = require_org_id(current_user)
     
     stmt = select(Report).where(
@@ -334,7 +334,7 @@ async def delete_report(
     request: Request,
 ):
     """Delete a report and its associated PDF file."""
-    await require_permission(current_user, Permission.DETECTIONS_UPDATE, db, request)
+    await require_permission(current_user, Permission.REPORTS_EXPORT, db, request)
     org_id = require_org_id(current_user)
     
     stmt = select(Report).where(

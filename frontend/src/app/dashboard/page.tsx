@@ -1,12 +1,22 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useMemo } from "react";
+import useSWR from "swr";
 import { useRouter } from "next/navigation";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import Link from "next/link";
-import { Detection, getApiBaseCandidates, getTests, TestWithDetectionTitle, getDetections, getMitreTechniques, getSiemConnections, getEnvironmentRunners } from "@/lib/api";
+import {
+  Detection,
+  getTests,
+  TestWithDetectionTitle,
+  getDetections,
+  getCoverageSummary,
+  getSiemConnections,
+  getEnvironmentRunners,
+  CoverageSummary,
+} from "@/lib/api";
 import { formatRelative, format, subDays, startOfDay, eachDayOfInterval } from "date-fns";
 import { 
   AlertCircle, Play, Shield, TrendingUp, CheckCircle2, Cpu, ScanLine, 
@@ -24,13 +34,38 @@ import { LifecycleBadge, LifecycleProgress, LifecycleStage } from "@/components/
 import { cn } from "@/lib/utils";
 import { PageContainer } from "@/components/layout/page-container";
 import { PageHeader } from "@/components/layout/page-header";
-import { LoadingState } from "@/components/ui/loading-state";
 import { ErrorState } from "@/components/ui/error-state";
+import { Skeleton, SkeletonStatCard, SkeletonCard } from "@/components/ui/skeleton";
 import { useToast } from "@/components/ui/toast";
-import { 
-  AreaChart, Area, PieChart, Pie, Cell,
-  XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer
-} from "recharts";
+import dynamic from "next/dynamic";
+
+// Lazy-load chart bundles so the ~100KB recharts payload only ships when a
+// user actually lands on /dashboard, not on every navigation that preloads
+// layout-level code. ssr:false skips server rendering (charts need real DOM
+// sizing to measure ResponsiveContainer).
+const TestTrendChart = dynamic(
+  () => import("@/components/charts/test-trend-chart"),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="flex h-[300px] items-center justify-center">
+        <Skeleton className="h-full w-full rounded-lg" />
+      </div>
+    ),
+  },
+);
+
+const DetectionStatusPie = dynamic(
+  () => import("@/components/charts/detection-status-pie"),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="flex h-[300px] items-center justify-center">
+        <Skeleton className="h-[260px] w-[260px] rounded-full" />
+      </div>
+    ),
+  },
+);
 
 const DASHBOARD_POLL_INTERVAL_MS = 30_000;
 const DASHBOARD_ALL_TIME_TREND_DAYS = 90;
@@ -45,249 +80,123 @@ type DashboardRunner = {
   enabled?: boolean | null;
 };
 
-type DetectionStatusPieLabel = {
-  name?: string;
-  percent?: number;
-};
-
 export default function DashboardPage() {
   const router = useRouter();
   const { toast } = useToast();
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [allDetections, setAllDetections] = useState<Detection[]>([]);
-  const [detectionsSummary, setDetectionsSummary] = useState({
-    total: 0,
-    pass: 0,
-    fail: 0,
-    inconclusive: 0,
-    untested: 0,
-  });
-  const [lifecycleSummary, setLifecycleSummary] = useState({
-    total: 0,
-    identify: 0,
-    design: 0,
-    develop: 0,
-    test: 0,
-    deploy: 0,
-    maintain: 0,
-    progress: 0,
-  });
   const [timeFilter, setTimeFilter] = useState<"today" | "7days" | "30days" | "all">("today");
-  const [allTests, setAllTests] = useState<TestWithDetectionTitle[]>([]);
-  const [mitreStats, setMitreStats] = useState({ total: 0, covered: 0, coveragePercent: 0, rawPercent: 0 });
-  const [systemHealth, setSystemHealth] = useState({ siemConnected: 0, siemTotal: 0, runnersActive: 0, runnersTotal: 0 });
 
-  const hasSessionHint = useCallback(() => {
-    if (typeof window === "undefined") return false;
+  // SWR-cached queries — navigation back to /dashboard renders from cache instantly
+  // and revalidates in the background. Poll interval matches the previous 30s
+  // behaviour but is paused automatically when the tab is hidden.
+  const swrOptions = {
+    refreshInterval: DASHBOARD_POLL_INTERVAL_MS,
+    refreshWhenHidden: false,
+  };
+  const testsQ = useSWR<TestWithDetectionTitle[]>("dashboard:tests", getTests, swrOptions);
+  const detectionsQ = useSWR<Detection[]>("dashboard:detections", getDetections, swrOptions);
+  const coverageQ = useSWR<CoverageSummary>("dashboard:coverage", getCoverageSummary, swrOptions);
+  const siemQ = useSWR("dashboard:siem", getSiemConnections, swrOptions);
+  const runnersQ = useSWR("dashboard:runners", getEnvironmentRunners, swrOptions);
 
-    try {
-      return Boolean(
-        window.localStorage.getItem("purvex_username") ||
-        window.localStorage.getItem("purvex_seen_login")
-      );
-    } catch {
-      return false;
+  const allTests = useMemo(() => testsQ.data ?? [], [testsQ.data]);
+  const allDetections = useMemo(() => detectionsQ.data ?? [], [detectionsQ.data]);
+
+  // First load of *any* query → show full skeleton. Subsequent navigations
+  // return cached data immediately so `loading` stays false.
+  const loading =
+    (!testsQ.data && !testsQ.error) ||
+    (!detectionsQ.data && !detectionsQ.error) ||
+    (!coverageQ.data && !coverageQ.error) ||
+    (!siemQ.data && !siemQ.error) ||
+    (!runnersQ.data && !runnersQ.error);
+
+  // Surface the first non-auth error. Auth failures are handled by the
+  // session-enforcement effect in root-client.tsx, so we don't replicate
+  // that logic here.
+  const firstError =
+    testsQ.error || detectionsQ.error || coverageQ.error || siemQ.error || runnersQ.error;
+  const error = useMemo(() => {
+    if (!firstError) return null;
+    const msg = firstError instanceof Error ? firstError.message : String(firstError);
+    const lower = msg.toLowerCase();
+    if (lower.includes("not authenticated") || lower.includes("sign in again") || lower.includes("session has expired")) {
+      return null;
     }
-  }, []);
+    return msg;
+  }, [firstError]);
 
-  const clearLocalSessionHints = useCallback(() => {
-    if (typeof window === "undefined") return;
-
-    try {
-      window.localStorage.removeItem("purvex_username");
-      window.localStorage.removeItem("purvex_seen_login");
-      window.localStorage.removeItem("purvex_user_role");
-      window.localStorage.removeItem("purvex_logged_in");
-    } catch {
-      // Ignore localStorage cleanup failures during redirect handling.
-    }
-  }, []);
-
-  const redirectToLogin = useCallback(
-    (reason?: "expired") => {
-      router.replace(reason ? `/login?reason=${reason}` : "/login");
-    },
-    [router]
-  );
-
-  const hasCookieBackedSession = useCallback(async () => {
-    const apiBases = getApiBaseCandidates();
-    for (const base of apiBases) {
-      try {
-        const res = await fetch(`${base}/auth/me`, {
-          cache: "no-store",
-          credentials: "include",
-        });
-        if (res.ok) {
-          return true;
-        }
-      } catch {
-        continue;
-      }
-    }
-    return false;
-  }, []);
-
-  const ensureAuthenticated = useCallback(async () => {
-    const authenticated = await hasCookieBackedSession();
-    if (authenticated) {
-      return true;
-    }
-
-    if (!hasSessionHint()) {
-      clearLocalSessionHints();
-      redirectToLogin();
-      return false;
-    }
-
-    clearLocalSessionHints();
-    redirectToLogin("expired");
-    return false;
-  }, [clearLocalSessionHints, hasCookieBackedSession, hasSessionHint, redirectToLogin]);
-
-  const fetchData = useCallback(async (showToast = false) => {
-    try {
-      setError(null);
-      const [tests, allDetections, mitreTechniques, siemConnections, runners] = await Promise.all([
-        getTests(),
-        getDetections(),
-        getMitreTechniques(),
-        getSiemConnections(),
-        getEnvironmentRunners(),
-      ]);
-      
-      setAllTests(tests);
-      setAllDetections(allDetections);
-
-      const totalDetections = allDetections.length;
-      const passedDetections = allDetections.filter(d => d.last_result === "PASS").length;
-      const failedDetections = allDetections.filter(d => d.last_result === "FAIL").length;
-      const inconclusiveDetections = allDetections.filter(d => d.last_result === "INCONCLUSIVE").length;
-      const untestedDetections = allDetections.filter(d => !d.last_result).length;
-
-      setDetectionsSummary({
-        total: totalDetections,
-        pass: passedDetections,
-        fail: failedDetections,
-        inconclusive: inconclusiveDetections,
-        untested: untestedDetections,
-      });
-
-      setLifecycleSummary({
-        total: totalDetections,
-        identify: allDetections.filter(d => d["lifecycle_stage"] === "identify").length,
-        design: allDetections.filter(d => d["lifecycle_stage"] === "design").length,
-        develop: allDetections.filter(d => d["lifecycle_stage"] === "develop").length,
-        test: allDetections.filter(d => d["lifecycle_stage"] === "test").length,
-        deploy: allDetections.filter(d => d["lifecycle_stage"] === "deploy").length,
-        maintain: allDetections.filter(d => d["lifecycle_stage"] === "maintain").length,
-        progress: Math.round(
-          (
-            allDetections.filter(
-              d => d["lifecycle_stage"] === "deploy" || d["lifecycle_stage"] === "maintain"
-            ).length / (totalDetections || 1)
-          ) * 100
-        ),
-      });
-
-      // Calculate MITRE coverage stats
-      const totalTechniques = mitreTechniques.length;
-      const uniqueCoveredTechniques = new Set(allDetections.map(d => d.technique_id).filter(Boolean)).size;
-      // Calculate accurate percentage with proper precision (1/691 ≈ 0.1447%)
-      const rawPercent = totalTechniques > 0 ? (uniqueCoveredTechniques / totalTechniques) * 100 : 0;
-      // For display: show 2 decimal places if < 1%, otherwise round to whole number
-      const coveragePercent = uniqueCoveredTechniques > 0 && rawPercent < 1 
-        ? Math.round(rawPercent * 100) / 100 
-        : Math.round(rawPercent);
-      setMitreStats({
-        total: totalTechniques,
-        covered: uniqueCoveredTechniques,
-        coveragePercent: coveragePercent,
-        rawPercent: rawPercent, // Store raw percent for accurate circle visualization
-      });
-
-      // System health
-      setSystemHealth({
-        siemConnected: siemConnections.filter((s: DashboardSiemConnection) => s.status === "connected" || s.status === "active").length,
-        siemTotal: siemConnections.length,
-        runnersActive: runners.filter((r: DashboardRunner) => r.status === "active" || r.enabled === true).length,
-        runnersTotal: runners.length,
-      });
-    } catch (err: unknown) {
-      const errorMessage = err instanceof Error ? err.message : "Failed to load dashboard data.";
-      // Keep auth failures out of a dead-end dashboard state.
-      if (
-        errorMessage.toLowerCase().includes("not authenticated") ||
-        errorMessage.toLowerCase().includes("session has expired") ||
-        errorMessage.toLowerCase().includes("sign in again")
-      ) {
-        console.error("[PurveX] Dashboard auth failure", err);
-        clearLocalSessionHints();
-        redirectToLogin("expired");
-        return;
-      }
-
-      console.error("[PurveX] Dashboard data load failed", err);
-      setError(errorMessage);
-      if (showToast) {
-        toast({
-          type: "error",
-          title: "Refresh failed",
-          description: errorMessage,
-          action: {
-            label: "Retry",
-            onClick: () => fetchData(true),
-          },
-        });
-      } else {
-        toast({
-          type: "error",
-          title: "Failed to load dashboard",
-          description: errorMessage,
-          action: {
-            label: "Retry",
-            onClick: () => fetchData(false),
-          },
-        });
-      }
-    } finally {
-      setLoading(false);
-    }
-  }, [clearLocalSessionHints, redirectToLogin, toast]);
-
-  useEffect(() => {
-    let cancelled = false;
-    let intervalId: ReturnType<typeof setInterval> | null = null;
-
-    async function startDashboard() {
-      const authenticated = await ensureAuthenticated();
-      if (!authenticated || cancelled) {
-        setLoading(false);
-        return;
-      }
-
-      await fetchData();
-      if (cancelled) return;
-
-      intervalId = setInterval(() => {
-        void fetchData();
-      }, DASHBOARD_POLL_INTERVAL_MS);
-    }
-
-    void startDashboard();
-
-    return () => {
-      cancelled = true;
-      if (intervalId) {
-        clearInterval(intervalId);
-      }
+  const detectionsSummary = useMemo(() => {
+    const total = allDetections.length;
+    return {
+      total,
+      pass: allDetections.filter(d => d.last_result === "PASS").length,
+      fail: allDetections.filter(d => d.last_result === "FAIL").length,
+      inconclusive: allDetections.filter(d => d.last_result === "INCONCLUSIVE").length,
+      untested: allDetections.filter(d => !d.last_result).length,
     };
-  }, [ensureAuthenticated, fetchData]);
+  }, [allDetections]);
+
+  const lifecycleSummary = useMemo(() => {
+    const total = allDetections.length;
+    const inProd = allDetections.filter(
+      d => d.lifecycle_stage === "deploy" || d.lifecycle_stage === "maintain"
+    ).length;
+    return {
+      total,
+      identify: allDetections.filter(d => d.lifecycle_stage === "identify").length,
+      design: allDetections.filter(d => d.lifecycle_stage === "design").length,
+      develop: allDetections.filter(d => d.lifecycle_stage === "develop").length,
+      test: allDetections.filter(d => d.lifecycle_stage === "test").length,
+      deploy: allDetections.filter(d => d.lifecycle_stage === "deploy").length,
+      maintain: allDetections.filter(d => d.lifecycle_stage === "maintain").length,
+      progress: Math.round((inProd / (total || 1)) * 100),
+    };
+  }, [allDetections]);
+
+  // MITRE coverage now comes from /mitre/coverage/summary (tiny payload)
+  // instead of /mitre/techniques (691 rows). Server already computed the
+  // counts so the dashboard does zero heavy work here.
+  const mitreStats = useMemo(() => {
+    const totals = coverageQ.data?.totals;
+    const total = totals?.total_techniques ?? 0;
+    const covered = totals?.mapped ?? 0;
+    const rawPercent = coverageQ.data?.simple_coverage_percent ?? 0;
+    const coveragePercent =
+      covered > 0 && rawPercent > 0 && rawPercent < 1
+        ? Math.round(rawPercent * 100) / 100
+        : Math.round(rawPercent);
+    return { total, covered, coveragePercent, rawPercent };
+  }, [coverageQ.data]);
+
+  const systemHealth = useMemo(() => {
+    const siem = siemQ.data ?? [];
+    const runners = runnersQ.data ?? [];
+    return {
+      siemConnected: siem.filter((s: DashboardSiemConnection) => s.status === "connected" || s.status === "active").length,
+      siemTotal: siem.length,
+      runnersActive: runners.filter((r: DashboardRunner) => r.status === "active" || r.enabled === true).length,
+      runnersTotal: runners.length,
+    };
+  }, [siemQ.data, runnersQ.data]);
 
   const handleRefresh = useCallback(async () => {
-    await fetchData(true);
-  }, [fetchData]);
+    try {
+      await Promise.all([
+        testsQ.mutate(),
+        detectionsQ.mutate(),
+        coverageQ.mutate(),
+        siemQ.mutate(),
+        runnersQ.mutate(),
+      ]);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Refresh failed.";
+      toast({
+        type: "error",
+        title: "Refresh failed",
+        description: msg,
+      });
+    }
+  }, [testsQ, detectionsQ, coverageQ, siemQ, runnersQ, toast]);
 
   // Filter tests based on time period
   const getFilteredTests = () => {
@@ -397,8 +306,24 @@ export default function DashboardPage() {
 
   if (loading) {
     return (
-      <PageContainer>
-        <LoadingState message="Loading dashboard..." size="lg" />
+      <PageContainer maxWidth="full" className="space-y-3">
+        <div className="flex items-center justify-between">
+          <div>
+            <Skeleton className="mb-2 h-7 w-48" />
+            <Skeleton className="h-4 w-72" />
+          </div>
+          <Skeleton className="h-9 w-32" />
+        </div>
+        <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-4">
+          <SkeletonStatCard />
+          <SkeletonStatCard />
+          <SkeletonStatCard />
+          <SkeletonStatCard />
+        </div>
+        <div className="grid gap-3 lg:grid-cols-2">
+          <SkeletonCard />
+          <SkeletonCard />
+        </div>
       </PageContainer>
     );
   }
@@ -409,7 +334,7 @@ export default function DashboardPage() {
         <ErrorState 
           title="Error loading dashboard"
           message={error}
-          onRetry={() => fetchData(false)}
+          onRetry={() => void handleRefresh()}
         />
       </PageContainer>
     );
@@ -906,73 +831,7 @@ export default function DashboardPage() {
               </CardHeader>
               <CardContent className="pt-6">
                 {testTrendData.length > 0 ? (
-                  <ResponsiveContainer width="100%" height={300}>
-                    <AreaChart data={testTrendData} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
-                      <defs>
-                        <linearGradient id="colorPass" x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="5%" stopColor="#10b981" stopOpacity={0.4} />
-                          <stop offset="95%" stopColor="#10b981" stopOpacity={0} />
-                        </linearGradient>
-                        <linearGradient id="colorFail" x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="5%" stopColor="#ef4444" stopOpacity={0.4} />
-                          <stop offset="95%" stopColor="#ef4444" stopOpacity={0} />
-                        </linearGradient>
-                        <linearGradient id="colorInconclusive" x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="5%" stopColor="#f59e0b" stopOpacity={0.4} />
-                          <stop offset="95%" stopColor="#f59e0b" stopOpacity={0} />
-                        </linearGradient>
-                      </defs>
-                      <CartesianGrid strokeDasharray="3 3" stroke="#334155" opacity={0.3} />
-                      <XAxis 
-                        dataKey="date" 
-                        stroke="#94a3b8" 
-                        style={{ fontSize: "11px" }}
-                        tick={{ fill: "#94a3b8" }}
-                      />
-                      <YAxis 
-                        stroke="#94a3b8" 
-                        style={{ fontSize: "11px" }}
-                        tick={{ fill: "#94a3b8" }}
-                      />
-                      <Tooltip
-                        contentStyle={{
-                          backgroundColor: "rgba(15, 23, 42, 0.95)",
-                          border: "1px solid rgba(59, 130, 246, 0.3)",
-                          borderRadius: "8px",
-                          color: "#e2e8f0",
-                        }}
-                        labelStyle={{ color: "#cbd5e1" }}
-                      />
-                      <Legend 
-                        wrapperStyle={{ fontSize: "12px", color: "#94a3b8" }}
-                        iconType="circle"
-                      />
-                      <Area
-                        type="monotone"
-                        dataKey="Pass"
-                        stackId="1"
-                        stroke="#10b981"
-                        fill="url(#colorPass)"
-                        strokeWidth={2}
-                      />
-                      <Area
-                        type="monotone"
-                        dataKey="Fail"
-                        stackId="1"
-                        stroke="#ef4444"
-                        fill="url(#colorFail)"
-                        strokeWidth={2}
-                      />
-                      <Area
-                        type="monotone"
-                        dataKey="Inconclusive"
-                        stackId="1"
-                        stroke="#f59e0b"
-                        fill="url(#colorInconclusive)"
-                        strokeWidth={2}
-                      />
-                    </AreaChart>
-                  </ResponsiveContainer>
+                  <TestTrendChart data={testTrendData} />
                 ) : (
                   <div className="flex h-[300px] flex-col items-center justify-center text-[var(--surface-subtle-foreground)]">
                     <TrendingUp className="h-12 w-12 mb-3 opacity-30" />
@@ -1020,36 +879,7 @@ export default function DashboardPage() {
               <CardContent className="pt-6">
                 {detectionStatusData.length > 0 ? (
                   <div className="flex items-center justify-center">
-                    <ResponsiveContainer width="100%" height={300}>
-                      <PieChart>
-                        <Pie
-                          data={detectionStatusData}
-                          cx="50%"
-                          cy="50%"
-                          labelLine={false}
-                          label={(props: DetectionStatusPieLabel) => {
-                            const { name, percent } = props;
-                            if (!name || percent === undefined) return '';
-                            return `${name}: ${(percent * 100).toFixed(0)}%`;
-                          }}
-                          outerRadius={100}
-                          fill="#8884d8"
-                          dataKey="value"
-                        >
-                          {detectionStatusData.map((entry, index) => (
-                            <Cell key={`cell-${index}`} fill={entry.color} />
-                          ))}
-                        </Pie>
-                        <Tooltip
-                          contentStyle={{
-                            backgroundColor: "rgba(15, 23, 42, 0.95)",
-                            border: "1px solid rgba(59, 130, 246, 0.3)",
-                            borderRadius: "8px",
-                            color: "#e2e8f0",
-                          }}
-                        />
-                      </PieChart>
-                    </ResponsiveContainer>
+                    <DetectionStatusPie data={detectionStatusData} />
                   </div>
                 ) : (
                   <div className="flex h-[300px] flex-col items-center justify-center text-[var(--surface-subtle-foreground)]">
@@ -1203,4 +1033,3 @@ export default function DashboardPage() {
       </PageContainer>
   );
 }
-

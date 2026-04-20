@@ -4,14 +4,14 @@ import { useState, useEffect, useMemo } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
+import { Chip } from "@/components/ui/chip";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { getUsers, getUserRoles, assignRole, removeRole, listRoles, setUserPassword, apiFetch } from "@/lib/api";
 import { usePermissions } from "@/hooks/usePermissions";
-import { Permission } from "@/lib/permissions";
+import { Permission, ROLE_GUIDANCE, Role } from "@/lib/permissions";
 import { 
   Search, UserPlus, Shield, Key, Users, Filter, CheckCircle2, XCircle, Clock, 
   Download, AlertCircle, Mail, Calendar, X, Loader2
@@ -20,6 +20,10 @@ import { format, formatRelative } from "date-fns";
 import { cn } from "@/lib/utils";
 import { PageContainer } from "@/components/layout/page-container";
 import { PageHeader } from "@/components/layout/page-header";
+import { PageSkeleton } from "@/components/ui/skeleton";
+import { FieldError, FormError } from "@/components/ui/form-error";
+import { z } from "zod";
+import { emailSchema, passwordSchema } from "@/lib/validators";
 
 interface User {
   id: number;
@@ -111,6 +115,11 @@ export default function UserManagementPage() {
   const [newUserPassword, setNewUserPassword] = useState("");
   const [newUserConfirmPassword, setNewUserConfirmPassword] = useState("");
   const [creatingUser, setCreatingUser] = useState(false);
+  const [inviteFieldErrors, setInviteFieldErrors] = useState<{
+    email?: string;
+    password?: string;
+    confirm?: string;
+  }>({});
   const [viewUserDetails, setViewUserDetails] = useState<number | null>(null);
   const fetchUsers = async () => {
       try {
@@ -236,32 +245,48 @@ export default function UserManagementPage() {
   }
 
   async function handleCreateUser() {
-    if (!newUserEmail || !newUserPassword) {
-      setError("Email and password are required.");
-      return;
-    }
-    if (newUserPassword.length < 8) {
-      setError("Password must be at least 8 characters long.");
-      return;
-    }
-    if (!/(?=.*[a-z])(?=.*[A-Z])(?=.*\d)/.test(newUserPassword)) {
-      setError("Password must contain uppercase, lowercase, and a number.");
-      return;
-    }
-    if (newUserPassword !== newUserConfirmPassword) {
-      setError("Passwords do not match.");
+    const inviteSchema = z
+      .object({
+        email: emailSchema,
+        password: passwordSchema,
+        confirm: z.string(),
+      })
+      .superRefine((v, ctx) => {
+        if (v.password !== v.confirm) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ["confirm"],
+            message: "Passwords do not match.",
+          });
+        }
+      });
+
+    const parsed = inviteSchema.safeParse({
+      email: newUserEmail,
+      password: newUserPassword,
+      confirm: newUserConfirmPassword,
+    });
+
+    if (!parsed.success) {
+      const next: { email?: string; password?: string; confirm?: string } = {};
+      for (const issue of parsed.error.issues) {
+        const key = issue.path[0] as "email" | "password" | "confirm" | undefined;
+        if (key && !next[key]) next[key] = issue.message;
+      }
+      setInviteFieldErrors(next);
+      setError(null);
       return;
     }
 
     try {
       setCreatingUser(true);
       setError(null);
-      // Use the register endpoint (will create non-admin user)
+      setInviteFieldErrors({});
       await apiFetch("/auth/register", {
         method: "POST",
         body: JSON.stringify({
-          email: newUserEmail,
-          password: newUserPassword,
+          email: parsed.data.email,
+          password: parsed.data.password,
         }),
       });
       setCreateUserOpen(false);
@@ -309,7 +334,7 @@ export default function UserManagementPage() {
   if (!hasPermission(Permission.SETTINGS_USERS_MANAGE)) {
     return (
       <PageContainer>
-        <Card className="border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-950">
+        <Card className="border border-[var(--stroke-soft)] bg-[var(--surface-card)] shadow-sm dark:border-slate-800 dark:bg-slate-950">
           <CardContent className="pt-6">
             <p className="text-slate-600 dark:text-slate-300">You don&apos;t have permission to manage members.</p>
           </CardContent>
@@ -321,12 +346,7 @@ export default function UserManagementPage() {
   if (loading && users.length === 0) {
     return (
       <PageContainer>
-        <div className="flex items-center justify-center min-h-[400px]">
-          <div className="text-center space-y-4">
-            <Loader2 className="h-12 w-12 animate-spin text-primary mx-auto" />
-            <p className="text-muted-foreground">Loading users...</p>
-          </div>
-        </div>
+        <PageSkeleton withEyebrow withActions variant="table" rows={6} />
       </PageContainer>
     );
   }
@@ -361,15 +381,22 @@ export default function UserManagementPage() {
               </DialogHeader>
               <div className="space-y-4 py-4">
                 <div className="space-y-2">
-                  <Label htmlFor="new-email">Username</Label>
+                  <Label htmlFor="new-email">Email</Label>
                   <Input
                     id="new-email"
                     type="email"
                     value={newUserEmail}
-                    onChange={(e) => setNewUserEmail(e.target.value)}
+                    onChange={(e) => {
+                      setNewUserEmail(e.target.value);
+                      if (inviteFieldErrors.email)
+                        setInviteFieldErrors((prev) => ({ ...prev, email: undefined }));
+                    }}
                     placeholder="user@example.com"
-                    className="bg-white border-slate-200 text-slate-900"
+                    className="bg-[var(--surface-card)] border-[var(--stroke-soft)] text-[var(--foreground)]"
+                    aria-invalid={!!inviteFieldErrors.email}
+                    aria-describedby="new-email-error"
                   />
+                  <FieldError id="new-email-error" message={inviteFieldErrors.email} />
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="new-password">Password</Label>
@@ -377,11 +404,18 @@ export default function UserManagementPage() {
                     id="new-password"
                     type="password"
                     value={newUserPassword}
-                    onChange={(e) => setNewUserPassword(e.target.value)}
+                    onChange={(e) => {
+                      setNewUserPassword(e.target.value);
+                      if (inviteFieldErrors.password)
+                        setInviteFieldErrors((prev) => ({ ...prev, password: undefined }));
+                    }}
                     placeholder="Enter password"
-                    className="bg-white border-slate-200 text-slate-900"
+                    className="bg-[var(--surface-card)] border-[var(--stroke-soft)] text-[var(--foreground)]"
+                    aria-invalid={!!inviteFieldErrors.password}
+                    aria-describedby="new-password-error"
                   />
                   <PasswordStrengthIndicator password={newUserPassword} />
+                  <FieldError id="new-password-error" message={inviteFieldErrors.password} />
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="new-confirm">Confirm Password</Label>
@@ -389,16 +423,19 @@ export default function UserManagementPage() {
                     id="new-confirm"
                     type="password"
                     value={newUserConfirmPassword}
-                    onChange={(e) => setNewUserConfirmPassword(e.target.value)}
+                    onChange={(e) => {
+                      setNewUserConfirmPassword(e.target.value);
+                      if (inviteFieldErrors.confirm)
+                        setInviteFieldErrors((prev) => ({ ...prev, confirm: undefined }));
+                    }}
                     placeholder="Confirm password"
-                    className="bg-white border-slate-200 text-slate-900"
+                    className="bg-[var(--surface-card)] border-[var(--stroke-soft)] text-[var(--foreground)]"
+                    aria-invalid={!!inviteFieldErrors.confirm}
+                    aria-describedby="new-confirm-error"
                   />
+                  <FieldError id="new-confirm-error" message={inviteFieldErrors.confirm} />
                 </div>
-                {error && (
-                  <div className="p-3 bg-red-500/10 border border-red-500/20 rounded-lg">
-                    <p className="text-sm text-red-400">{error}</p>
-                  </div>
-                )}
+                <FormError message={error} />
               </div>
               <DialogFooter className="gap-2">
                 <Button variant="outline" onClick={() => setCreateUserOpen(false)} className="flex-1">
@@ -426,7 +463,7 @@ export default function UserManagementPage() {
       </div>
 
       <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-        <Card className="border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-950">
+        <Card className="border border-[var(--stroke-soft)] bg-[var(--surface-card)] shadow-sm dark:border-slate-800 dark:bg-slate-950">
           <CardContent className="pt-6">
             <div className="flex items-center justify-between">
               <div>
@@ -437,7 +474,7 @@ export default function UserManagementPage() {
             </div>
           </CardContent>
         </Card>
-        <Card className="border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-950">
+        <Card className="border border-[var(--stroke-soft)] bg-[var(--surface-card)] shadow-sm dark:border-slate-800 dark:bg-slate-950">
           <CardContent className="pt-6">
             <div className="flex items-center justify-between">
               <div>
@@ -448,7 +485,7 @@ export default function UserManagementPage() {
             </div>
           </CardContent>
         </Card>
-        <Card className="border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-950">
+        <Card className="border border-[var(--stroke-soft)] bg-[var(--surface-card)] shadow-sm dark:border-slate-800 dark:bg-slate-950">
           <CardContent className="pt-6">
             <div className="flex items-center justify-between">
               <div>
@@ -462,8 +499,8 @@ export default function UserManagementPage() {
       </div>
 
       {/* Main Users Table Card */}
-      <Card className="border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-950">
-        <CardHeader className="border-b border-slate-200 dark:border-slate-800">
+      <Card className="border border-[var(--stroke-soft)] bg-[var(--surface-card)] shadow-sm dark:border-slate-800 dark:bg-slate-950">
+        <CardHeader className="border-b border-[var(--stroke-soft)] dark:border-slate-800">
           <div className="flex items-center justify-between">
           <div>
               <CardTitle className="text-2xl font-display font-semibold flex items-center gap-2">
@@ -610,10 +647,10 @@ export default function UserManagementPage() {
                               <div className="flex-1 min-w-0">
                                 <div className="font-medium text-sm truncate">{user.email}</div>
                                 {user.is_admin && (
-                                  <Badge variant="outline" className="bg-purple-500/10 text-purple-300 border-purple-500/30 text-xs mt-1 w-fit">
-                                    <Shield className="h-3 w-3 mr-1" />
+                                  <Chip tone="accent" className="mt-1 w-fit">
+                                    <Shield className="h-3 w-3" />
                                     Administrator
-                                  </Badge>
+                                  </Chip>
                                 )}
                               </div>
                             </div>
@@ -622,9 +659,9 @@ export default function UserManagementPage() {
                         <TableCell className="align-middle py-3">
                           <div className="flex flex-wrap gap-1.5">
                             {displayRoles.map(ur => (
-                              <Badge 
-                                key={ur.id} 
-                                className="bg-blue-500/20 text-blue-300 border-blue-500/40 text-xs"
+                              <Chip
+                                key={ur.id}
+                                tone="info"
                               >
                                 {ur.role_name}
                                 {ur.expires_at && (
@@ -638,7 +675,7 @@ export default function UserManagementPage() {
                                 >
                                   ×
                                 </Button>
-                              </Badge>
+                              </Chip>
                             ))}
                             {!user.is_admin && currentRoles.length === 0 && (
                               <span className="text-xs text-muted-foreground italic">No roles assigned</span>
@@ -646,25 +683,19 @@ export default function UserManagementPage() {
                           </div>
                         </TableCell>
                     <TableCell className="align-middle py-3">
-                          <Badge 
-                            className={
-                              user.is_active 
-                                ? "bg-emerald-500/20 text-emerald-300 border-emerald-500/40 text-xs" 
-                                : "bg-slate-500/20 text-slate-300 border-slate-500/40 text-xs"
-                            }
-                          >
+                          <Chip tone={user.is_active ? "success" : "neutral"}>
                             {user.is_active ? (
                               <>
-                                <CheckCircle2 className="h-3 w-3 mr-1" />
+                                <CheckCircle2 className="h-3 w-3" />
                                 Active
                               </>
                             ) : (
                               <>
-                                <XCircle className="h-3 w-3 mr-1" />
+                                <XCircle className="h-3 w-3" />
                                 Inactive
                               </>
                             )}
-                      </Badge>
+                          </Chip>
                     </TableCell>
                     <TableCell className="align-middle py-3">
                           <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
@@ -725,7 +756,7 @@ export default function UserManagementPage() {
                                       value={currentPassword}
                                       onChange={(e) => setCurrentPassword(e.target.value)}
                                       placeholder="Enter your current password"
-                                      className="bg-white border-slate-200 text-slate-900"
+                                      className="bg-[var(--surface-card)] border-[var(--stroke-soft)] text-[var(--foreground)]"
                                     />
                                   </div>
                                   <div className="space-y-2 text-left">
@@ -736,7 +767,7 @@ export default function UserManagementPage() {
                                       value={newPassword}
                                       onChange={(e) => setNewPassword(e.target.value)}
                                       placeholder="Enter new password"
-                                      className="bg-white border-slate-200 text-slate-900"
+                                      className="bg-[var(--surface-card)] border-[var(--stroke-soft)] text-[var(--foreground)]"
                                     />
                                     <PasswordStrengthIndicator password={newPassword} />
                                   </div>
@@ -748,7 +779,7 @@ export default function UserManagementPage() {
                                       value={confirmPassword}
                                       onChange={(e) => setConfirmPassword(e.target.value)}
                                       placeholder="Confirm password"
-                                      className="bg-white border-slate-200 text-slate-900"
+                                      className="bg-[var(--surface-card)] border-[var(--stroke-soft)] text-[var(--foreground)]"
                                     />
                                   </div>
                                   {error && passwordDialogOpen === user.id && (
@@ -825,43 +856,37 @@ export default function UserManagementPage() {
               <div>
                 <Label className="text-xs text-muted-foreground uppercase tracking-wider">Status</Label>
                 <div className="mt-1">
-                  <Badge 
-                    className={
-                      selectedUser.is_active 
-                        ? "bg-emerald-500/20 text-emerald-300 border-emerald-500/40" 
-                        : "bg-slate-500/20 text-slate-300 border-slate-500/40"
-                    }
-                  >
+                  <Chip tone={selectedUser.is_active ? "success" : "neutral"} size="md">
                     {selectedUser.is_active ? (
                       <>
-                        <CheckCircle2 className="h-3 w-3 mr-1" />
+                        <CheckCircle2 className="h-3 w-3" />
                         Active
                       </>
                     ) : (
                       <>
-                        <XCircle className="h-3 w-3 mr-1" />
+                        <XCircle className="h-3 w-3" />
                         Inactive
                       </>
                     )}
-                  </Badge>
+                  </Chip>
                 </div>
               </div>
               <div>
                 <Label className="text-xs text-muted-foreground uppercase tracking-wider">Roles</Label>
                 <div className="flex flex-wrap gap-2 mt-2">
                   {selectedUser.is_admin && (
-                    <Badge className="bg-purple-500/20 text-purple-300 border-purple-500/40">
-                      <Shield className="h-3 w-3 mr-1" />
+                    <Chip tone="accent" size="md">
+                      <Shield className="h-3 w-3" />
                       Administrator
-                    </Badge>
+                    </Chip>
                   )}
                   {selectedUserRoles.map(ur => (
-                    <Badge key={ur.id} className="bg-blue-500/20 text-blue-300 border-blue-500/40">
+                    <Chip key={ur.id} tone="info" size="md">
                       {ur.role_name}
                       {ur.expires_at && (
                         <span className="ml-1 text-xs">(expires {format(new Date(ur.expires_at), "MMM d")})</span>
                       )}
-                    </Badge>
+                    </Chip>
                   ))}
                   {!selectedUser.is_admin && selectedUserRoles.length === 0 && (
                     <span className="text-sm text-muted-foreground">No roles assigned</span>
@@ -885,8 +910,8 @@ export default function UserManagementPage() {
 
       {/* Available Roles Info */}
       {availableRoles.length > 0 && (
-        <Card className="border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-950">
-          <CardHeader className="border-b border-slate-200 dark:border-slate-800">
+        <Card className="border border-[var(--stroke-soft)] bg-[var(--surface-card)] shadow-sm dark:border-slate-800 dark:bg-slate-950">
+          <CardHeader className="border-b border-[var(--stroke-soft)] dark:border-slate-800">
             <CardTitle className="text-2xl font-display font-semibold flex items-center gap-2">
               <Shield className="h-5 w-5" />
               Available roles
@@ -898,13 +923,33 @@ export default function UserManagementPage() {
           <CardContent className="pt-6">
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
               {availableRoles.map(role => (
-                <div key={role.id} className="rounded-2xl border border-slate-200 bg-slate-50 p-4 transition-colors dark:border-slate-800 dark:bg-slate-900">
+                <div key={role.id} className="rounded-2xl border border-[var(--stroke-soft)] bg-slate-50 p-4 transition-colors dark:border-slate-800 dark:bg-slate-900">
                   <div className="font-medium text-sm mb-1 flex items-center gap-2">
                     <Shield className="h-4 w-4 text-slate-500" />
-                    {role.name}
+                    {ROLE_GUIDANCE[role.name as Role]?.label || role.name}
                   </div>
                   {role.description && (
                     <div className="text-xs text-muted-foreground mt-2">{role.description}</div>
+                  )}
+                  {ROLE_GUIDANCE[role.name as Role] && (
+                    <div className="mt-4 grid gap-3 text-xs">
+                      <div>
+                        <p className="mb-1 font-semibold text-emerald-600 dark:text-emerald-300">Can do</p>
+                        <ul className="space-y-1 text-muted-foreground">
+                          {ROLE_GUIDANCE[role.name as Role].can.map((item) => (
+                            <li key={item}>- {item}</li>
+                          ))}
+                        </ul>
+                      </div>
+                      <div>
+                        <p className="mb-1 font-semibold text-rose-600 dark:text-rose-300">Cannot do</p>
+                        <ul className="space-y-1 text-muted-foreground">
+                          {ROLE_GUIDANCE[role.name as Role].cannot.map((item) => (
+                            <li key={item}>- {item}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    </div>
                   )}
                 </div>
               ))}

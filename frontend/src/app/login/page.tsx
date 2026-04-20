@@ -3,9 +3,21 @@
 import { Suspense, useEffect, useState } from "react";
 import Image from "next/image";
 import { useRouter, useSearchParams } from "next/navigation";
+import { z } from "zod";
 import TwoFactorVerify from "@/components/auth/TwoFactorVerify";
 import { getApiBaseCandidates, getBootstrapStatus } from "@/lib/api";
 import { AlertCircle, ArrowRight, Eye, EyeOff, Loader2, RefreshCw, ShieldCheck, Zap, Lock } from "lucide-react";
+import { FieldError } from "@/components/ui/form-error";
+
+// Login accepts whatever the backend will accept (existing accounts may pre-date
+// our current username policy), so we only enforce "not empty" here and let the
+// server reject malformed input.
+const loginSchema = z.object({
+  username: z.string().trim().min(1, "Enter your username."),
+  password: z.string().min(1, "Enter your password."),
+});
+
+type LoginFieldErrors = Partial<Record<"username" | "password", string>>;
 
 const LOCKOUT_WINDOW_MS = 10 * 60 * 1000;
 const LOCKOUT_DURATION_MS = 5 * 60 * 1000;
@@ -40,6 +52,7 @@ function LoginPageContent() {
   const [pendingFirstLogin, setPendingFirstLogin] = useState<boolean | null>(null);
   const [lockoutUntil, setLockoutUntil] = useState<number | null>(null);
   const [backendStatus, setBackendStatus] = useState<"checking" | "online" | "offline">("checking");
+  const [fieldErrors, setFieldErrors] = useState<LoginFieldErrors>({});
 
   const getApiBases = () =>
     typeof window !== "undefined"
@@ -146,10 +159,24 @@ function LoginPageContent() {
       setErrorState("Too many login attempts. Please wait 5 minutes.", "auth");
       return;
     }
-    if (!submittedUsername || !submittedPassword) {
-      setErrorState("Please enter both username and password.", "auth");
+
+    const parsed = loginSchema.safeParse({
+      username: submittedUsername,
+      password: submittedPassword,
+    });
+    if (!parsed.success) {
+      const nextErrors: LoginFieldErrors = {};
+      for (const issue of parsed.error.issues) {
+        const key = issue.path[0];
+        if (key === "username" || key === "password") {
+          if (!nextErrors[key]) nextErrors[key] = issue.message;
+        }
+      }
+      setFieldErrors(nextErrors);
       return;
     }
+
+    setFieldErrors({});
     setUsername(submittedUsername);
     setPassword(submittedPassword);
     setError(null);
@@ -198,7 +225,6 @@ function LoginPageContent() {
       try {
         if (typeof window !== "undefined") {
           window.localStorage.setItem("purvex_username", submittedUsername);
-          window.localStorage.removeItem("purvex_access_token");
           window.localStorage.removeItem("purvex_login_failures");
           window.localStorage.removeItem("purvex_login_lockout_until");
           setLockoutUntil(null);
@@ -209,8 +235,9 @@ function LoginPageContent() {
         }
       } catch {}
 
-      if (typeof window !== "undefined") window.location.assign("/dashboard");
-      else router.push("/dashboard");
+      const destination = getPostLoginDestination();
+      if (typeof window !== "undefined") window.location.assign(destination);
+      else router.push(destination);
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : "";
       const name = err instanceof Error ? err.name : "";
@@ -229,23 +256,43 @@ function LoginPageContent() {
 
   const showExpiredBanner = searchParams?.get("reason") === "expired";
 
+  function getPostLoginDestination(): string {
+    const raw = searchParams?.get("next");
+    if (!raw) return "/dashboard";
+    try {
+      const decoded = decodeURIComponent(raw);
+      // Only allow same-origin relative paths. Disallow protocol-relative
+      // (`//evil.com`) or absolute URLs to avoid open redirects.
+      if (
+        decoded.startsWith("/") &&
+        !decoded.startsWith("//") &&
+        !decoded.startsWith("/\\")
+      ) {
+        return decoded;
+      }
+    } catch {
+      // fall through to default
+    }
+    return "/dashboard";
+  }
+
   function handle2FASuccess(result: { verified: boolean; method: string }) {
     if (!result.verified) {
       setErrorState("2FA verification failed.", "auth");
       setPhase("idle");
       return;
     }
+    const destination = getPostLoginDestination();
     const finalizeRedirect = async () => {
       if (typeof window !== "undefined") {
         window.localStorage.setItem("purvex_username", username);
-        window.localStorage.removeItem("purvex_access_token");
         window.localStorage.setItem(
           "purvex_seen_login",
           pendingFirstLogin !== null ? (pendingFirstLogin ? "0" : "1") : "1",
         );
-        window.location.href = "/dashboard";
+        window.location.href = destination;
       } else {
-        router.push("/dashboard");
+        router.push(destination);
       }
     };
     void finalizeRedirect();
@@ -369,10 +416,18 @@ function LoginPageContent() {
                   autoFocus
                   placeholder="you@company.com"
                   value={username}
-                  onChange={(e) => setUsername(e.target.value)}
+                  onChange={(e) => {
+                    setUsername(e.target.value);
+                    if (fieldErrors.username) {
+                      setFieldErrors((prev) => ({ ...prev, username: undefined }));
+                    }
+                  }}
                   disabled={phase === "auth" || isLocked}
-                  className="h-11 w-full rounded-xl border border-slate-200 bg-white/90 px-3.5 text-sm text-slate-950 placeholder:text-slate-400 focus:border-cyan-400/50 focus:bg-white focus:ring-2 focus:ring-cyan-400/15 focus:outline-none disabled:opacity-40"
+                  aria-invalid={!!fieldErrors.username}
+                  aria-describedby="login-username-error"
+                  className="h-11 w-full rounded-xl border border-slate-200 bg-white/90 px-3.5 text-sm text-slate-950 placeholder:text-slate-400 focus:border-cyan-400/50 focus:bg-white focus:ring-2 focus:ring-cyan-400/15 focus:outline-none disabled:opacity-40 aria-[invalid=true]:border-rose-400/70 aria-[invalid=true]:focus:border-rose-400/70 aria-[invalid=true]:focus:ring-rose-400/20"
                 />
+                <FieldError id="login-username-error" message={fieldErrors.username} />
               </div>
 
               <div className="mb-5">
@@ -387,11 +442,18 @@ function LoginPageContent() {
                     autoComplete="current-password"
                     placeholder="••••••••••"
                     value={password}
-                    onChange={(e) => setPassword(e.target.value)}
+                    onChange={(e) => {
+                      setPassword(e.target.value);
+                      if (fieldErrors.password) {
+                        setFieldErrors((prev) => ({ ...prev, password: undefined }));
+                      }
+                    }}
                     onKeyDown={handleCapsLockCheck}
                     onKeyUp={handleCapsLockCheck}
                     disabled={phase === "auth" || isLocked}
-                    className="h-11 w-full rounded-xl border border-slate-200 bg-white/90 px-3.5 pr-10 text-sm text-slate-950 placeholder:text-slate-400 focus:border-cyan-400/50 focus:bg-white focus:ring-2 focus:ring-cyan-400/15 focus:outline-none disabled:opacity-40"
+                    aria-invalid={!!fieldErrors.password}
+                    aria-describedby="login-password-error"
+                    className="h-11 w-full rounded-xl border border-slate-200 bg-white/90 px-3.5 pr-10 text-sm text-slate-950 placeholder:text-slate-400 focus:border-cyan-400/50 focus:bg-white focus:ring-2 focus:ring-cyan-400/15 focus:outline-none disabled:opacity-40 aria-[invalid=true]:border-rose-400/70 aria-[invalid=true]:focus:border-rose-400/70 aria-[invalid=true]:focus:ring-rose-400/20"
                   />
                   <button
                     type="button"
@@ -402,6 +464,7 @@ function LoginPageContent() {
                     {showPassword ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}
                   </button>
                 </div>
+                <FieldError id="login-password-error" message={fieldErrors.password} />
                 {capsLockOn && <p className="mt-1.5 text-xs text-amber-700">Caps Lock is on</p>}
               </div>
 

@@ -4,14 +4,36 @@ Tests for RBAC (Role-Based Access Control) system.
 Tests permission checking, criticality-based restrictions, and environment-based access.
 """
 import pytest
+import pytest_asyncio
 from datetime import datetime, timedelta
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from app.models import User, Role, Permission, RolePermission, UserRole, Organization, Detection
+from app.models import Base, User, Role, UserRole, Organization
 from app.services.rbac import RBACService, Role as RoleEnum, Permission as PermissionEnum, Criticality
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
+async def db():
+    """Create an isolated in-memory database for RBAC tests."""
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
+
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
+    async with sessionmaker() as session:
+        yield session
+
+    await engine.dispose()
+
+
+async def get_role(db: AsyncSession, role: RoleEnum) -> Role:
+    result = await db.execute(select(Role).where(Role.name == role.value))
+    return result.scalar_one()
+
+
+@pytest_asyncio.fixture
 async def test_org(db: AsyncSession):
     """Create a test organization."""
     org = Organization(name="Test Org")
@@ -21,7 +43,7 @@ async def test_org(db: AsyncSession):
     return org
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def test_user(db: AsyncSession, test_org):
     """Create a test user."""
     user = User(
@@ -37,7 +59,7 @@ async def test_user(db: AsyncSession, test_org):
     return user
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def admin_user(db: AsyncSession, test_org):
     """Create an admin user."""
     user = User(
@@ -53,7 +75,7 @@ async def admin_user(db: AsyncSession, test_org):
     return user
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def seeded_roles(db: AsyncSession):
     """Seed default roles."""
     roles = [
@@ -86,10 +108,7 @@ async def test_engineer_permissions(db: AsyncSession, test_user, test_org, seede
     rbac = RBACService(db)
     
     # Get engineer role
-    engineer_role = await db.execute(
-        "SELECT * FROM roles WHERE name = 'DETECTION_ENGINEER'"
-    )
-    engineer = engineer_role.scalar_one()
+    engineer = await get_role(db, RoleEnum.DETECTION_ENGINEER)
     
     # Assign engineer role to user
     user_role = UserRole(
@@ -106,6 +125,7 @@ async def test_engineer_permissions(db: AsyncSession, test_user, test_org, seede
     assert await rbac.has_permission(test_user, PermissionEnum.DETECTIONS_UPDATE)
     assert await rbac.has_permission(test_user, PermissionEnum.TESTS_RUN_LAB)
     assert await rbac.has_permission(test_user, PermissionEnum.TESTS_RUN_DEV)
+    assert await rbac.has_permission(test_user, PermissionEnum.SETTINGS_READ)
     
     # Engineer should NOT have these permissions
     assert not await rbac.has_permission(test_user, PermissionEnum.DETECTIONS_DELETE)
@@ -119,10 +139,7 @@ async def test_analyst_permissions(db: AsyncSession, test_user, test_org, seeded
     rbac = RBACService(db)
     
     # Get analyst role
-    analyst_role = await db.execute(
-        "SELECT * FROM roles WHERE name = 'SECURITY_ANALYST'"
-    )
-    analyst = analyst_role.scalar_one()
+    analyst = await get_role(db, RoleEnum.SECURITY_ANALYST)
     
     # Assign analyst role to user
     user_role = UserRole(
@@ -137,6 +154,7 @@ async def test_analyst_permissions(db: AsyncSession, test_user, test_org, seeded
     assert await rbac.has_permission(test_user, PermissionEnum.DETECTIONS_READ)
     assert await rbac.has_permission(test_user, PermissionEnum.TESTS_READ)
     assert await rbac.has_permission(test_user, PermissionEnum.TESTS_RUN_LAB)
+    assert await rbac.has_permission(test_user, PermissionEnum.SETTINGS_READ)
     
     # Analyst should NOT have write permissions
     assert not await rbac.has_permission(test_user, PermissionEnum.DETECTIONS_CREATE)
@@ -151,10 +169,7 @@ async def test_viewer_permissions(db: AsyncSession, test_user, test_org, seeded_
     rbac = RBACService(db)
     
     # Get viewer role
-    viewer_role = await db.execute(
-        "SELECT * FROM roles WHERE name = 'VIEWER'"
-    )
-    viewer = viewer_role.scalar_one()
+    viewer = await get_role(db, RoleEnum.VIEWER)
     
     # Assign viewer role to user
     user_role = UserRole(
@@ -168,6 +183,7 @@ async def test_viewer_permissions(db: AsyncSession, test_user, test_org, seeded_
     # Viewer should only have read permissions
     assert await rbac.has_permission(test_user, PermissionEnum.DETECTIONS_READ)
     assert await rbac.has_permission(test_user, PermissionEnum.TESTS_READ)
+    assert await rbac.has_permission(test_user, PermissionEnum.SETTINGS_READ)
     assert await rbac.has_permission(test_user, PermissionEnum.REPORTS_VIEW)
     
     # Viewer should NOT have any write permissions
@@ -182,10 +198,7 @@ async def test_environment_based_restrictions(db: AsyncSession, test_user, test_
     rbac = RBACService(db)
     
     # Get engineer role
-    engineer_role = await db.execute(
-        "SELECT * FROM roles WHERE name = 'DETECTION_ENGINEER'"
-    )
-    engineer = engineer_role.scalar_one()
+    engineer = await get_role(db, RoleEnum.DETECTION_ENGINEER)
     
     # Assign engineer role
     user_role = UserRole(
@@ -218,10 +231,7 @@ async def test_criticality_based_restrictions(db: AsyncSession, test_user, test_
     rbac = RBACService(db)
     
     # Get engineer role
-    engineer_role = await db.execute(
-        "SELECT * FROM roles WHERE name = 'DETECTION_ENGINEER'"
-    )
-    engineer = engineer_role.scalar_one()
+    engineer = await get_role(db, RoleEnum.DETECTION_ENGINEER)
     
     # Assign engineer role
     user_role = UserRole(
@@ -275,10 +285,7 @@ async def test_schedule_permissions(db: AsyncSession, test_user, test_org, seede
     rbac = RBACService(db)
     
     # Get engineer role
-    engineer_role = await db.execute(
-        "SELECT * FROM roles WHERE name = 'DETECTION_ENGINEER'"
-    )
-    engineer = engineer_role.scalar_one()
+    engineer = await get_role(db, RoleEnum.DETECTION_ENGINEER)
     
     # Assign engineer role
     user_role = UserRole(
@@ -309,10 +316,7 @@ async def test_expired_role(db: AsyncSession, test_user, test_org, seeded_roles)
     rbac = RBACService(db)
     
     # Get engineer role
-    engineer_role = await db.execute(
-        "SELECT * FROM roles WHERE name = 'DETECTION_ENGINEER'"
-    )
-    engineer = engineer_role.scalar_one()
+    engineer = await get_role(db, RoleEnum.DETECTION_ENGINEER)
     
     # Assign engineer role with expiration in the past
     user_role = UserRole(
@@ -352,10 +356,7 @@ async def test_get_user_roles(db: AsyncSession, test_user, test_org, seeded_role
     rbac = RBACService(db)
     
     # Get engineer role
-    engineer_role = await db.execute(
-        "SELECT * FROM roles WHERE name = 'DETECTION_ENGINEER'"
-    )
-    engineer = engineer_role.scalar_one()
+    engineer = await get_role(db, RoleEnum.DETECTION_ENGINEER)
     
     # Assign engineer role
     user_role = UserRole(

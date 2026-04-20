@@ -5,6 +5,8 @@ import re
 from typing import Optional
 from html import escape
 
+from ..security import validate_password_complexity
+
 def sanitize_string(value: str, max_length: Optional[int] = None) -> str:
     """
     Sanitize a string input to prevent XSS and injection attacks.
@@ -21,6 +23,14 @@ def sanitize_string(value: str, max_length: Optional[int] = None) -> str:
     
     # Remove null bytes
     value = value.replace("\x00", "")
+
+    # Remove script/style blocks and common inline execution vectors. This is
+    # a defensive API-layer cleanup; UI rendering should still escape output.
+    value = re.sub(r"(?is)<\s*(script|style)\b[^>]*>.*?<\s*/\s*\1\s*>", "", value)
+    value = re.sub(r"(?is)<\s*/?\s*(script|style)\b[^>]*>", "", value)
+    value = re.sub(r"(?i)\s+on[a-z]+\s*=\s*(['\"]).*?\1", "", value)
+    value = re.sub(r"(?i)\s+on[a-z]+\s*=\s*[^\s>]+", "", value)
+    value = re.sub(r"(?i)javascript\s*:", "", value)
     
     # Trim whitespace
     value = value.strip()

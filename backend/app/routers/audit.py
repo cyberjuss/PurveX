@@ -1,7 +1,7 @@
 from typing import List, Annotated, Optional
 from datetime import datetime, timedelta
 
-from fastapi import APIRouter, Depends, HTTPException, status, Query
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy import and_, or_
@@ -12,6 +12,7 @@ from ..routers.auth import get_current_user
 from ..utils.tenant import require_org_id
 from ..config import settings
 from ..services.audit_retention import cleanup_audit_events
+from ..utils.authz import require_permission, Permission
 
 router = APIRouter(
     prefix="/audit",
@@ -47,12 +48,7 @@ async def list_audit_events(
     - RBAC: SET_USER_PASSWORD, ASSIGN_ROLE, REMOVE_ROLE
     - Sandbox: PROVISION_SANDBOX, RESET_SANDBOX
     """
-    # RBAC: Require admin permission
-    if not current_user.is_admin:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only administrators can view audit events",
-        )
+    await require_permission(current_user, Permission.SETTINGS_USERS_MANAGE, db)
     
     # Build query with filters
     org_id = require_org_id(current_user)
@@ -108,11 +104,7 @@ async def get_audit_stats(
     days: int = Query(7, ge=1, le=365, description="Number of days to analyze"),
 ):
     """Get audit event statistics (admin-only)."""
-    if not current_user.is_admin:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only administrators can view audit statistics",
-        )
+    await require_permission(current_user, Permission.SETTINGS_USERS_MANAGE, db)
     
     from datetime import timedelta
     cutoff_date = datetime.utcnow() - timedelta(days=days)
@@ -186,11 +178,7 @@ async def cleanup_audit_events_endpoint(
     days: int = Query(settings.AUDIT_RETENTION_DAYS, ge=1, le=3650),
 ):
     """Manually purge audit events older than the retention window (admin-only)."""
-    if not current_user.is_admin:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only administrators can clean audit events",
-        )
+    await require_permission(current_user, Permission.SETTINGS_USERS_MANAGE, db)
 
     deleted = await cleanup_audit_events(db, retention_days=days, actor=current_user)
     cutoff = (datetime.utcnow() - timedelta(days=days)).isoformat()

@@ -1,10 +1,14 @@
 import json
+import logging
 from typing import Dict, List, Optional
 
 import httpx
 
 from .. import models
 from ..config import settings
+
+
+logger = logging.getLogger(__name__)
 
 
 def call_llm(
@@ -18,16 +22,16 @@ def call_llm(
 ) -> str:
     resolved_provider = (provider or settings.AI_PROVIDER or "OpenAI").strip().lower()
     if resolved_provider not in {"openai", "deepseek", "built-in", "builtin"}:
-        return f"Error communicating with AI provider: Unsupported provider '{provider}'."
+        return "Error communicating with AI provider: provider not supported."
 
     if resolved_provider in {"built-in", "builtin"}:
         return "Error communicating with AI provider: Built-in provider does not support external model calls."
 
+    label = "DeepSeek" if resolved_provider == "deepseek" else "OpenAI"
+
     api_key = settings.OPENAI_API_KEY
     if not api_key:
-        if resolved_provider == "deepseek":
-            return "Error communicating with DeepSeek: OPENAI_API_KEY is not configured."
-        return "Error communicating with OpenAI: OPENAI_API_KEY is not configured."
+        return f"Error communicating with {label}: API key is not configured."
 
     default_base_url = "https://api.deepseek.com/v1" if resolved_provider == "deepseek" else settings.OPENAI_API_BASE_URL
     base_url = (api_base_url or default_base_url).rstrip("/")
@@ -54,16 +58,20 @@ def call_llm(
             response.raise_for_status()
             payload = response.json()
     except httpx.HTTPStatusError as exc:
-        error_detail = exc.response.text.strip()
-        label = "DeepSeek" if resolved_provider == "deepseek" else "OpenAI"
-        return f"Error communicating with {label}: {exc.response.status_code} {error_detail}"
+        # Log the upstream body server-side for diagnostics, but never echo it
+        # to the client — provider error bodies can include request IDs, model
+        # internals, or partial credentials.
+        logger.warning(
+            "LLM upstream HTTP error: provider=%s status=%s body=%s",
+            label, exc.response.status_code, exc.response.text[:1000],
+        )
+        return f"Error communicating with {label}: upstream returned status {exc.response.status_code}."
     except Exception as exc:
-        label = "DeepSeek" if resolved_provider == "deepseek" else "OpenAI"
-        return f"Error communicating with {label}: {exc}"
+        logger.warning("LLM upstream call failed: provider=%s error=%s", label, exc)
+        return f"Error communicating with {label}: upstream request failed."
 
     choices = payload.get("choices") or []
     if not choices:
-        label = "DeepSeek" if resolved_provider == "deepseek" else "OpenAI"
         return f"Error communicating with {label}: No choices returned."
 
     message = choices[0].get("message") or {}
@@ -71,7 +79,6 @@ def call_llm(
     if isinstance(content, str) and content.strip():
         return content.strip()
 
-    label = "DeepSeek" if resolved_provider == "deepseek" else "OpenAI"
     return f"Error communicating with {label}: Empty response content."
 
 def _fallback_analysis(

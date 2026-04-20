@@ -133,14 +133,187 @@ class SplunkAdapter:
         return results
 
 
+_SPLUNK_TYPES = {"splunk", "splunk es", "splunk_es", "splunk-es"}
+_ELASTIC_TYPES = {"elastic", "elasticsearch", "elastic security", "elastic_security", "kibana"}
+_SENTINEL_TYPES = {"sentinel", "microsoft sentinel", "azure sentinel"}
+
+
+class ElasticAdapter:
+    """Synchronous Elastic Security adapter for the scoring pipeline.
+
+    Queries the signals/events index via the Kibana console proxy. Events are
+    normalized so `_time` matches the shape produced by SplunkAdapter, keeping
+    downstream scoring logic SIEM-agnostic.
+    """
+
+    def __init__(
+        self,
+        base_url: Optional[str],
+        credentials: Dict[str, str],
+    ):
+        self.base_url = (base_url or "").rstrip("/")
+        self.credentials = credentials or {}
+        self.verify_ssl = _as_bool(self.credentials.get("verify_ssl"), default=True)
+        self.timeout_seconds = float(self.credentials.get("timeout_seconds", 30))
+        self.events_index = self.credentials.get("events_index") or "logs-*"
+
+    @classmethod
+    def from_connection(cls, connection: models.SIEMConnection) -> "ElasticAdapter":
+        return cls(connection.url, _parse_credentials(connection.credentials))
+
+    def _headers(self) -> Dict[str, str]:
+        headers = {"Content-Type": "application/json", "kbn-xsrf": "purvex"}
+        api_key = self.credentials.get("api_key") or self.credentials.get("token")
+        if api_key:
+            headers["Authorization"] = f"ApiKey {api_key}"
+        return headers
+
+    def _auth(self):
+        if self.credentials.get("api_key") or self.credentials.get("token"):
+            return None
+        username = self.credentials.get("username")
+        password = self.credentials.get("password")
+        if username and password:
+            return (username, password)
+        return None
+
+    def _ensure_configured(self) -> None:
+        if not self.base_url:
+            raise RuntimeError("Elastic/Kibana URL is not configured.")
+        if not (self.credentials.get("api_key") or self.credentials.get("token") or self._auth()):
+            raise RuntimeError("Elastic credentials are not configured.")
+
+    def search_events(self, query: str, earliest: datetime, latest: datetime) -> List[Dict]:
+        self._ensure_configured()
+        body = {
+            "size": 200,
+            "sort": [{"@timestamp": {"order": "desc"}}],
+            "query": {
+                "bool": {
+                    "must": [{"query_string": {"query": query or "*"}}],
+                    "filter": [
+                        {
+                            "range": {
+                                "@timestamp": {
+                                    "gte": _coerce_datetime(earliest).isoformat(),
+                                    "lte": _coerce_datetime(latest).isoformat(),
+                                }
+                            }
+                        }
+                    ],
+                }
+            },
+        }
+        url = f"{self.base_url}/api/console/proxy?path=/{self.events_index}/_search&method=POST"
+        response = requests.post(
+            url,
+            json=body,
+            headers=self._headers(),
+            auth=self._auth(),
+            verify=self.verify_ssl,
+            timeout=self.timeout_seconds,
+        )
+        response.raise_for_status()
+        data = response.json() if response.content else {}
+        hits = (data.get("hits") or {}).get("hits") or []
+        results: List[Dict] = []
+        for hit in hits:
+            src = hit.get("_source") or {}
+            normalized = dict(src)
+            normalized["_time"] = src.get("@timestamp")
+            results.append(normalized)
+        logger.info("Elastic search returned %s events", len(results))
+        return results
+
+
+class SentinelAdapter:
+    """Synchronous Microsoft Sentinel adapter using the Log Analytics query API."""
+
+    def __init__(self, credentials: Dict[str, str]):
+        self.credentials = credentials or {}
+        self.timeout_seconds = float(self.credentials.get("timeout_seconds", 30))
+        self.events_table = self.credentials.get("events_table") or "SecurityEvent"
+
+    @classmethod
+    def from_connection(cls, connection: models.SIEMConnection) -> "SentinelAdapter":
+        return cls(_parse_credentials(connection.credentials))
+
+    def _token(self, scope: str) -> str:
+        tenant_id = self.credentials.get("tenant_id")
+        client_id = self.credentials.get("client_id")
+        client_secret = self.credentials.get("client_secret")
+        if not (tenant_id and client_id and client_secret):
+            raise RuntimeError("Sentinel credentials are not configured.")
+        resp = requests.post(
+            f"https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token",
+            data={
+                "client_id": client_id,
+                "client_secret": client_secret,
+                "scope": scope,
+                "grant_type": "client_credentials",
+            },
+            timeout=self.timeout_seconds,
+        )
+        resp.raise_for_status()
+        return resp.json()["access_token"]
+
+    def _ensure_configured(self) -> None:
+        if not self.credentials.get("workspace_id"):
+            raise RuntimeError("Sentinel workspace_id is not configured.")
+
+    def search_events(self, query: str, earliest: datetime, latest: datetime) -> List[Dict]:
+        self._ensure_configured()
+        workspace_id = self.credentials["workspace_id"]
+        token = self._token("https://api.loganalytics.io/.default")
+
+        start_iso = _coerce_datetime(earliest).isoformat()
+        end_iso = _coerce_datetime(latest).isoformat()
+        timespan = f"{start_iso}/{end_iso}"
+
+        # Treat `query` as a free-text match against the default events table,
+        # unless it's a full KQL statement (starts with a table name).
+        text = (query or "").strip()
+        if text and text.split()[0].isidentifier() and "|" in text:
+            kql = text
+        else:
+            safe = text.replace('"', '\\"') if text else ""
+            kql = f'{self.events_table} | where * contains "{safe}" | sort by TimeGenerated desc | take 200'
+
+        resp = requests.post(
+            f"https://api.loganalytics.io/v1/workspaces/{workspace_id}/query",
+            headers={"Authorization": f"Bearer {token}"},
+            json={"query": kql, "timespan": timespan},
+            timeout=self.timeout_seconds,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        tables = data.get("tables") or []
+        if not tables:
+            return []
+        cols = [c["name"] for c in tables[0].get("columns", [])]
+        rows = tables[0].get("rows", [])
+        results: List[Dict] = []
+        for row in rows:
+            record = dict(zip(cols, row))
+            record["_time"] = record.get("TimeGenerated")
+            results.append(record)
+        logger.info("Sentinel search returned %s events", len(results))
+        return results
+
+
 def get_siem_adapter(connection: Optional[models.SIEMConnection] = None):
     if connection is not None:
-        if (connection.siem_type or "").strip().lower() != "splunk":
-            raise ValueError(f"Unsupported SIEM type: {connection.siem_type}")
-        return SplunkAdapter.from_connection(connection)
+        siem_type = (connection.siem_type or "").strip().lower()
+        if siem_type in _SPLUNK_TYPES:
+            return SplunkAdapter.from_connection(connection)
+        if siem_type in _ELASTIC_TYPES:
+            return ElasticAdapter.from_connection(connection)
+        if siem_type in _SENTINEL_TYPES:
+            return SentinelAdapter.from_connection(connection)
+        raise ValueError(f"Unsupported SIEM type: {connection.siem_type}")
 
-    siem_type = getattr(settings, "SIEM_TYPE", "splunk")
-    if siem_type == "splunk":
+    siem_type = (getattr(settings, "SIEM_TYPE", "splunk") or "").strip().lower()
+    if siem_type in _SPLUNK_TYPES:
         return SplunkAdapter(
             getattr(settings, "SPLUNK_URL", None),
             getattr(settings, "SPLUNK_USERNAME", None),

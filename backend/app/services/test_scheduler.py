@@ -107,6 +107,7 @@ async def execute_scheduled_test(schedule: models.TestSchedule, session: AsyncSe
         detection_id=schedule.detection_id,
         technique_id=schedule.technique_id or "UNKNOWN",
         environment=schedule.environment,
+        mode=schedule.mode or "DETECTION_VALIDATION",
         status="pending",
         marker=marker,
         initiated_by_user_id=schedule.created_by_user_id,

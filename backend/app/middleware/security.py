@@ -97,17 +97,13 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
 
 
 class RateLimitMiddleware(BaseHTTPMiddleware):
-    """
-    Global rate limiting middleware.
-    In production, this should use Redis or similar.
-    """
-    
+    """Global rate limiting middleware backed by Redis when configured."""
+
     def __init__(self, app, max_requests: int = 100, window_seconds: int = 60):
         super().__init__(app)
         self.max_requests = max_requests
         self.window_seconds = window_seconds
-        self._store: dict[str, list[float]] = {}
-    
+
     async def dispatch(self, request: Request, call_next):
         # Disable rate limiting in non-production environments.
         if not IS_PRODUCTION:
@@ -118,24 +114,17 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         # Skip rate limiting for health checks
         if request.url.path in ["/health", "/ready"]:
             return await call_next(request)
-        
-        # Get client identifier
+
+        from ..utils.rate_limit import check_rate_limit, get_rate_limit_info
+
         client_ip = request.client.host if request.client else "unknown"
         user_agent = request.headers.get("user-agent", "unknown")
-        key = f"{client_ip}:{user_agent[:50]}"
-        
-        # Clean old entries
+        key = f"global:{client_ip}:{user_agent[:50]}"
+
         now = time.time()
-        if key in self._store:
-            self._store[key] = [
-                ts for ts in self._store[key]
-                if now - ts < self.window_seconds
-            ]
-        else:
-            self._store[key] = []
-        
-        # Check rate limit
-        if len(self._store[key]) >= self.max_requests:
+        allowed, remaining = check_rate_limit(key, self.max_requests, self.window_seconds)
+
+        if not allowed:
             logger.warning(f"Rate limit exceeded for {client_ip}")
             
             # SECURITY: Log rate limit violation to audit log
@@ -152,7 +141,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
                                 action="RATE_LIMIT_EXCEEDED",
                                 resource_type="api",
                                 resource_id=request.url.path,
-                                details=f"Rate limit exceeded: {client_ip} on {request.url.path} ({len(self._store[key])}/{self.max_requests} requests)",
+                                details=f"Rate limit exceeded: {client_ip} on {request.url.path} (limit {self.max_requests}/{self.window_seconds}s)",
                             )
                         )
                         await session.commit()
@@ -182,21 +171,14 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
                     "X-RateLimit-Reset": str(int(now + self.window_seconds)),
                 }
             )
-        
-        # Add current request
-        self._store[key].append(now)
-        
-        # Process request and get response
+
         response = await call_next(request)
-        
-        # Add rate limit headers (only if response is a Response object)
+
         if hasattr(response, 'headers'):
             response.headers["X-RateLimit-Limit"] = str(self.max_requests)
-            response.headers["X-RateLimit-Remaining"] = str(
-                self.max_requests - len(self._store[key])
-            )
+            response.headers["X-RateLimit-Remaining"] = str(remaining)
             response.headers["X-RateLimit-Reset"] = str(int(now + self.window_seconds))
-        
+
         return response
 
 

@@ -98,7 +98,7 @@ class TestPasswordComplexity:
     
     def test_valid_password(self):
         """Test that valid passwords pass."""
-        is_valid, error = validate_password_complexity("ValidPass123")
+        is_valid, error = validate_password_complexity("ValidPass123!")
         assert is_valid
         assert error == ""
 

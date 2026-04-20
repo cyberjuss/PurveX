@@ -18,20 +18,26 @@ import {
 import {
   type Detection,
   type DetectionAlert,
+  type DetectionLifecycleStage,
   type TestWithDetectionTitle,
+  DETECTION_LIFECYCLE_STAGES,
   apiFetch,
   getDetection,
   getDetectionAlerts,
   getTests,
   getUsers,
+  updateDetection,
 } from "@/lib/api";
 import { Permission } from "@/lib/permissions";
 import { usePermissions } from "@/hooks/usePermissions";
 import { cn } from "@/lib/utils";
 import { PageContainer } from "@/components/layout/page-container";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { Chip, type ChipProps } from "@/components/ui/chip";
+import { PageSkeleton } from "@/components/ui/skeleton";
+import { SourceBadge } from "@/components/detections/source-badge";
+import { ExportYamlButton } from "@/components/detections/export-yaml-button";
 import {
   Dialog,
   DialogContent,
@@ -62,6 +68,23 @@ type UserOption = {
   created_at: string;
 };
 
+type ChipTone = NonNullable<ChipProps["tone"]>;
+
+/**
+ * HEALTH_META is the single source of truth for trust-state copy and colour
+ * on the detection detail page. Each entry resolves to:
+ *
+ *   - `tone`: the semantic Chip tone used for pill badges. All dark-mode /
+ *     hover behaviour lives inside `<Chip>` so this file never needs to
+ *     know about it.
+ *   - `borderLeftClass`: the hero card's left edge. It's split out from
+ *     `tone` because Tailwind's `border-l-<color>` utility can't be inferred
+ *     from a data-driven tone string.
+ *   - `iconWrapperClass`: subtle-tinted background + ring for the circular
+ *     icon badge next to the headline. Same palette as the `subtle` Chip
+ *     appearance so the hero reads as one composed block.
+ *   - `bar`: the thin progress-bar accent used in the coverage legend.
+ */
 const HEALTH_META: Record<
   HealthState,
   {
@@ -69,7 +92,9 @@ const HEALTH_META: Record<
     headline: string;
     nextAction: string;
     icon: typeof CheckCircle2;
-    accent: string;
+    tone: ChipTone;
+    borderLeftClass: string;
+    iconWrapperClass: string;
     bar: string;
   }
 > = {
@@ -78,7 +103,10 @@ const HEALTH_META: Record<
     headline: "Rule fired and telemetry was present in the last validation.",
     nextAction: "Revalidate on schedule before events data becomes stale.",
     icon: CheckCircle2,
-    accent: "border-emerald-200 bg-emerald-50 text-emerald-700",
+    tone: "success",
+    borderLeftClass: "border-l-emerald-500",
+    iconWrapperClass:
+      "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-300",
     bar: "bg-emerald-500",
   },
   FAILED: {
@@ -86,7 +114,10 @@ const HEALTH_META: Record<
     headline: "Telemetry arrived but the rule did not fire.",
     nextAction: "Inspect events, tune the rule, then rerun the validation.",
     icon: XCircle,
-    accent: "border-rose-200 bg-rose-50 text-rose-700",
+    tone: "danger",
+    borderLeftClass: "border-l-rose-500",
+    iconWrapperClass:
+      "border-rose-200 bg-rose-50 text-rose-700 dark:border-rose-500/30 dark:bg-rose-500/10 dark:text-rose-300",
     bar: "bg-rose-500",
   },
   TELEMETRY_GAP: {
@@ -94,7 +125,10 @@ const HEALTH_META: Record<
     headline: "Validation ran without usable telemetry in the SIEM.",
     nextAction: "Fix the telemetry path before retesting the rule.",
     icon: AlertTriangle,
-    accent: "border-amber-200 bg-amber-50 text-amber-700",
+    tone: "warning",
+    borderLeftClass: "border-l-amber-500",
+    iconWrapperClass:
+      "border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-300",
     bar: "bg-amber-500",
   },
   UNTESTED: {
@@ -102,7 +136,10 @@ const HEALTH_META: Record<
     headline: "No validation events exist for this detection yet.",
     nextAction: "Run the first validation to establish a trust baseline.",
     icon: Clock3,
-    accent: "border-slate-200 bg-slate-100 text-slate-700",
+    tone: "neutral",
+    borderLeftClass: "border-l-slate-400 dark:border-l-slate-600",
+    iconWrapperClass:
+      "border-slate-200 bg-slate-100 text-slate-700 dark:border-slate-700 dark:bg-slate-800/60 dark:text-slate-200",
     bar: "bg-slate-400",
   },
 };
@@ -129,16 +166,18 @@ function absolute(value?: string | null) {
   return isNaN(parsed.getTime()) ? "-" : format(parsed, "MMM dd, yyyy");
 }
 
-function resultBadgeClass(result?: string | null) {
+// Validation result → Chip tone mapping. Previously this returned a string
+// of Tailwind classes; callers now let `<Chip>` own the styling.
+function resultTone(result?: string | null): ChipTone {
   const value = (result || "").toUpperCase();
-  if (value === "PASS") return "border-emerald-200 bg-emerald-50 text-emerald-700";
-  if (value === "FAIL") return "border-rose-200 bg-rose-50 text-rose-700";
-  if (value === "INCONCLUSIVE") return "border-amber-200 bg-amber-50 text-amber-700";
-  return "border-slate-200 bg-slate-100 text-slate-700";
+  if (value === "PASS") return "success";
+  if (value === "FAIL") return "danger";
+  if (value === "INCONCLUSIVE") return "warning";
+  return "neutral";
 }
 
 function scoreTone(score?: number | null) {
-  if (typeof score !== "number") return "text-slate-500";
+  if (typeof score !== "number") return "text-slate-500 dark:text-slate-400";
   if (score >= 80) return "text-emerald-600";
   if (score >= 50) return "text-amber-600";
   return "text-rose-600";
@@ -159,8 +198,10 @@ export default function DetectionDetailPage() {
   const [users, setUsers] = useState<UserOption[]>([]);
   const [selectedOwner, setSelectedOwner] = useState("unassigned");
   const [assigningOwner, setAssigningOwner] = useState(false);
+  const [updatingLifecycle, setUpdatingLifecycle] = useState(false);
 
   const canAssignOwner = hasPermission(Permission.DETECTIONS_UPDATE);
+  const canUpdateLifecycle = hasPermission(Permission.DETECTIONS_UPDATE);
 
   useEffect(() => {
     if (!detectionId) return;
@@ -255,6 +296,31 @@ export default function DetectionDetailPage() {
     }
   }
 
+  async function handleLifecycleChange(nextStage: DetectionLifecycleStage) {
+    if (!detectionId || !canUpdateLifecycle) return;
+    if (detection?.lifecycle_stage === nextStage) return;
+    try {
+      setUpdatingLifecycle(true);
+      const updated = await updateDetection(detectionId, {
+        lifecycle_stage: nextStage,
+      });
+      setDetection(updated);
+      toast({
+        type: "success",
+        title: "Lifecycle stage updated",
+        description: `Moved to ${nextStage}.`,
+      });
+    } catch (err: unknown) {
+      toast({
+        type: "error",
+        title: "Error",
+        description: err instanceof Error ? err.message : "Failed to update lifecycle stage.",
+      });
+    } finally {
+      setUpdatingLifecycle(false);
+    }
+  }
+
   if (!detectionId) {
     return (
       <PageContainer>
@@ -268,9 +334,7 @@ export default function DetectionDetailPage() {
   if (loading) {
     return (
       <PageContainer>
-        <Card>
-          <CardContent className="pt-6 text-sm text-slate-600">Loading detection record...</CardContent>
-        </Card>
+        <PageSkeleton variant="detail" withActions />
       </PageContainer>
     );
   }
@@ -291,60 +355,100 @@ export default function DetectionDetailPage() {
   }
 
   const HealthIcon = meta.icon;
-  const lifecycle = (detection.status || detection.lifecycle_stage || "draft").replaceAll("_", " ").toLowerCase();
+  const lifecycleStageRaw = (detection.lifecycle_stage || "").toLowerCase();
+  const activeLifecycleStage: DetectionLifecycleStage | null =
+    DETECTION_LIFECYCLE_STAGES.includes(lifecycleStageRaw as DetectionLifecycleStage)
+      ? (lifecycleStageRaw as DetectionLifecycleStage)
+      : null;
+  const lifecycleFallback = (detection.status || "draft").replaceAll("_", " ").toLowerCase();
 
   return (
     <PageContainer maxWidth="xl" className="space-y-6">
       {/* Header strip Ã¢â‚¬â€ title, identity chips, primary action */}
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="min-w-0 flex-1">
-          <Link href="/detections" className="text-xs font-medium text-slate-500 hover:text-slate-900">
+          <Link href="/detections" className="text-xs font-medium text-slate-500 dark:text-slate-400 hover:text-[var(--foreground)]">
             Back to detections
           </Link>
-          <h1 className="mt-2 truncate text-2xl font-display font-semibold text-slate-900">
+          <h1 className="mt-2 truncate text-2xl font-display font-semibold text-[var(--foreground)]">
             {detection.title}
           </h1>
           <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
-            <span className="rounded-full border border-slate-200 bg-white px-2.5 py-1 font-mono text-slate-700">
+            <span className="rounded-full border border-[var(--stroke-soft)] bg-[var(--surface-card)] px-2.5 py-1 font-mono text-slate-700 dark:text-slate-200">
               {detection.technique_id || "Unmapped"}
             </span>
-            <span className="rounded-full border border-slate-200 bg-white px-2.5 py-1 font-medium uppercase tracking-wide text-slate-600">
+            <span className="rounded-full border border-[var(--stroke-soft)] bg-[var(--surface-card)] px-2.5 py-1 font-medium uppercase tracking-wide text-slate-600 dark:text-slate-300">
               {detection.siem_type}
             </span>
-            <span className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-slate-600">
+            <span className="rounded-full border border-[var(--stroke-soft)] bg-[var(--surface-card)] px-2.5 py-1 text-slate-600 dark:text-slate-300">
               Owner: {detection.owner || "Unassigned"}
             </span>
-            <span className="rounded-full border border-slate-200 bg-white px-2.5 py-1 capitalize text-slate-600">
-              {lifecycle}
-            </span>
+            {canUpdateLifecycle ? (
+              <div className="inline-flex items-center overflow-hidden rounded-full border border-[var(--stroke-soft)] bg-[var(--surface-card)] text-slate-600 dark:text-slate-300">
+                <span className="pl-2.5 pr-1 text-[10px] font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-500">
+                  Stage
+                </span>
+                <Select
+                  value={activeLifecycleStage ?? ""}
+                  onValueChange={(value) =>
+                    void handleLifecycleChange(value as DetectionLifecycleStage)
+                  }
+                  disabled={updatingLifecycle}
+                >
+                  <SelectTrigger
+                    className="h-7 min-h-0 border-0 bg-transparent px-2 py-0 text-xs font-medium capitalize text-slate-700 shadow-none focus:ring-0 focus:ring-offset-0 dark:text-slate-200"
+                  >
+                    <SelectValue placeholder={activeLifecycleStage ?? lifecycleFallback} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {DETECTION_LIFECYCLE_STAGES.map((stage) => (
+                      <SelectItem key={stage} value={stage} className="capitalize">
+                        {stage}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            ) : (
+              <span className="rounded-full border border-[var(--stroke-soft)] bg-[var(--surface-card)] px-2.5 py-1 capitalize text-slate-600 dark:text-slate-300">
+                {activeLifecycleStage ?? lifecycleFallback}
+              </span>
+            )}
+            <SourceBadge source={detection.source} size="md" />
           </div>
         </div>
-        <Link href={`/run-test?detectionId=${detection.id}`}>
-          <Button className="h-10 bg-slate-900 text-white hover:bg-slate-800">
-            <Play className="mr-2 h-4 w-4" />
-            Validate now
-          </Button>
-        </Link>
+        <div className="flex items-center gap-2">
+          <ExportYamlButton
+            detectionId={detection.id}
+            detectionTitle={detection.title}
+          />
+          <Link href={`/run-test?detectionId=${detection.id}`}>
+            <Button className="h-10">
+              <Play className="mr-2 h-4 w-4" />
+              Validate now
+            </Button>
+          </Link>
+        </div>
       </div>
 
       {/* Hero status Ã¢â‚¬â€ replaces 4 KPI cards + trust card + 3 mini cards */}
-      <div className={cn("rounded-2xl border-l-4 border bg-white p-6 shadow-sm", meta.accent.replace("bg-", "border-l-").split(" ").find((c) => c.startsWith("border-l-")))}>
+      <div className={cn("rounded-2xl border-l-4 border border-[var(--stroke-soft)] bg-[var(--surface-card)] p-6 shadow-[var(--shadow-soft)]", meta.borderLeftClass)}>
         <div className="flex flex-wrap items-start justify-between gap-6">
           <div className="flex items-start gap-4">
-            <span className={cn("flex h-12 w-12 items-center justify-center rounded-2xl border", meta.accent)}>
+            <span className={cn("flex h-12 w-12 items-center justify-center rounded-2xl border", meta.iconWrapperClass)}>
               <HealthIcon className="h-6 w-6" />
             </span>
             <div className="space-y-1">
               <div className="flex items-center gap-2">
-                <Badge className={meta.accent}>{meta.label}</Badge>
+                <Chip tone={meta.tone}>{meta.label}</Chip>
                 {detection.last_tested_at && (
-                  <span className="text-xs text-slate-500">
+                  <span className="text-xs text-slate-500 dark:text-slate-400">
                     Last validated {relative(detection.last_tested_at)}
                   </span>
                 )}
               </div>
-              <p className="max-w-xl text-sm font-medium text-slate-900">{meta.headline}</p>
-              <p className="max-w-xl text-xs text-slate-600">Next action: {meta.nextAction}</p>
+              <p className="max-w-xl text-sm font-medium text-[var(--foreground)]">{meta.headline}</p>
+              <p className="max-w-xl text-xs text-slate-600 dark:text-slate-300">Next action: {meta.nextAction}</p>
             </div>
           </div>
           <div className="grid grid-cols-3 gap-6 text-right">
@@ -362,44 +466,44 @@ export default function DetectionDetailPage() {
       <div className="grid gap-6 lg:grid-cols-[2fr_1fr]">
         {/* Left column: history + source */}
         <div className="space-y-6">
-          <section className="rounded-2xl border border-slate-200 bg-white">
-            <header className="flex items-center justify-between border-b border-slate-100 px-5 py-4">
-              <h2 className="text-sm font-semibold text-slate-900">Validation history</h2>
+          <section className="rounded-2xl border border-[var(--stroke-soft)] bg-[var(--surface-card)]">
+            <header className="flex items-center justify-between border-b border-[var(--stroke-soft)]/60 px-5 py-4">
+              <h2 className="text-sm font-semibold text-[var(--foreground)]">Validation history</h2>
               <Link
                 href={`/tests?detectionId=${detection.id}`}
-                className="text-xs font-medium text-slate-500 hover:text-slate-900"
+                className="text-xs font-medium text-slate-500 dark:text-slate-400 hover:text-[var(--foreground)]"
               >
                 View all
               </Link>
             </header>
             {tests.length === 0 ? (
-              <div className="px-5 py-8 text-sm text-slate-600">
+              <div className="px-5 py-8 text-sm text-slate-600 dark:text-slate-300">
                 No validation events exist for this detection yet. Run the first validation to establish trust.
               </div>
             ) : (
               <Table>
                 <TableHeader>
-                  <TableRow className="border-slate-100">
-                    <TableHead className="text-xs uppercase tracking-wider text-slate-500">When</TableHead>
-                    <TableHead className="text-xs uppercase tracking-wider text-slate-500">Result</TableHead>
-                    <TableHead className="text-xs uppercase tracking-wider text-slate-500">Score</TableHead>
-                    <TableHead className="text-xs uppercase tracking-wider text-slate-500">Env</TableHead>
+                  <TableRow className="border-[var(--stroke-soft)]/60">
+                    <TableHead className="text-xs uppercase tracking-wider text-slate-500 dark:text-slate-400">When</TableHead>
+                    <TableHead className="text-xs uppercase tracking-wider text-slate-500 dark:text-slate-400">Result</TableHead>
+                    <TableHead className="text-xs uppercase tracking-wider text-slate-500 dark:text-slate-400">Score</TableHead>
+                    <TableHead className="text-xs uppercase tracking-wider text-slate-500 dark:text-slate-400">Env</TableHead>
                     <TableHead />
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {tests.slice(0, 8).map((test) => (
-                    <TableRow key={test.id} className="border-slate-100">
-                      <TableCell className="text-sm text-slate-700">{relative(test.started_at)}</TableCell>
+                    <TableRow key={test.id} className="border-[var(--stroke-soft)]/60">
+                      <TableCell className="text-sm text-slate-700 dark:text-slate-200">{relative(test.started_at)}</TableCell>
                       <TableCell>
-                        <Badge className={resultBadgeClass(test.result || test.status)}>
+                        <Chip tone={resultTone(test.result || test.status)}>
                           {test.result || test.status || "-"}
-                        </Badge>
+                        </Chip>
                       </TableCell>
                       <TableCell className={cn("text-sm font-medium", scoreTone(test.score))}>
                         {typeof test.score === "number" ? test.score : "-"}
                       </TableCell>
-                      <TableCell className="text-sm text-slate-600">{test.environment || "-"}</TableCell>
+                      <TableCell className="text-sm text-slate-600 dark:text-slate-300">{test.environment || "-"}</TableCell>
                       <TableCell className="text-right">
                         <Link href={`/tests/${test.id}`}>
                           <Button variant="outline" size="sm">
@@ -414,21 +518,21 @@ export default function DetectionDetailPage() {
             )}
           </section>
 
-          <section className="rounded-2xl border border-slate-200 bg-white p-6">
-            <h2 className="text-sm font-semibold text-slate-900">Detection source</h2>
-            <p className="mt-2 text-sm text-slate-600">
+          <section className="rounded-2xl border border-[var(--stroke-soft)] bg-[var(--surface-card)] p-6">
+            <h2 className="text-sm font-semibold text-[var(--foreground)]">Detection source</h2>
+            <p className="mt-2 text-sm text-slate-600 dark:text-slate-300">
               {detection.description || "No description has been added yet."}
             </p>
             <div className="mt-4">
-              <p className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-slate-500">SIEM query</p>
-              <pre className="max-h-64 overflow-auto rounded-xl border border-slate-200 bg-slate-50 p-4 text-xs text-slate-800">
+              <p className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">SIEM query</p>
+              <pre className="max-h-64 overflow-auto rounded-xl border border-[var(--stroke-soft)] bg-[var(--surface-elevated)] p-4 text-xs text-slate-800 dark:text-slate-200">
 {detection.siem_query || "-"}
               </pre>
             </div>
             {detection.sigma_rule && (
               <div className="mt-4">
-                <p className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-slate-500">Sigma rule</p>
-                <pre className="max-h-64 overflow-auto rounded-xl border border-slate-200 bg-slate-50 p-4 text-xs text-slate-800">
+                <p className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">Sigma rule</p>
+                <pre className="max-h-64 overflow-auto rounded-xl border border-[var(--stroke-soft)] bg-[var(--surface-elevated)] p-4 text-xs text-slate-800 dark:text-slate-200">
 {detection.sigma_rule}
                 </pre>
               </div>
@@ -438,22 +542,22 @@ export default function DetectionDetailPage() {
 
         {/* Right column: sidebar Ã¢â‚¬â€ facts, owner, links */}
         <div className="space-y-6">
-          <section className="rounded-2xl border border-slate-200 bg-white p-5">
+          <section className="rounded-2xl border border-[var(--stroke-soft)] bg-[var(--surface-card)] p-5">
             <div className="space-y-5">
               <div>
-                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Trust decision</p>
+                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">Trust decision</p>
                 <div className="mt-3 flex items-center gap-2">
-                  <Badge className={meta.accent}>{meta.label}</Badge>
-                  <span className="text-xs text-slate-500">{meta.headline}</span>
+                  <Chip tone={meta.tone}>{meta.label}</Chip>
+                  <span className="text-xs text-slate-500 dark:text-slate-400">{meta.headline}</span>
                 </div>
-                <p className="mt-3 text-sm font-medium text-slate-900">{meta.nextAction}</p>
-                <p className="mt-1 text-xs text-slate-500">
+                <p className="mt-3 text-sm font-medium text-[var(--foreground)]">{meta.nextAction}</p>
+                <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
                   This is the current recommendation based on the latest validation events and trust state.
                 </p>
               </div>
 
-              <div className="border-t border-slate-200 pt-4">
-                <h2 className="text-sm font-semibold text-slate-900">Ownership and freshness</h2>
+              <div className="border-t border-[var(--stroke-soft)] pt-4">
+                <h2 className="text-sm font-semibold text-[var(--foreground)]">Ownership and freshness</h2>
                 <dl className="mt-3 space-y-2.5 text-sm">
                   <FactRow label="Owner" value={detection.owner || "Unassigned"} />
                   <FactRow label="Last validated" value={absolute(detection.last_tested_at)} />
@@ -508,26 +612,26 @@ export default function DetectionDetailPage() {
           </section>
 
           {events.length > 0 && (
-            <section className="rounded-2xl border border-slate-200 bg-white p-5">
+            <section className="rounded-2xl border border-[var(--stroke-soft)] bg-[var(--surface-card)] p-5">
               <div className="flex items-center justify-between">
-                <h2 className="text-sm font-semibold text-slate-900">Recent events</h2>
+                <h2 className="text-sm font-semibold text-[var(--foreground)]">Recent events</h2>
                 <Link
                   href={`/detections/${detection.id}/events`}
-                  className="text-xs font-medium text-slate-500 hover:text-slate-900"
+                  className="text-xs font-medium text-slate-500 dark:text-slate-400 hover:text-[var(--foreground)]"
                 >
                   Open queue
                 </Link>
               </div>
-              <p className="mt-2 text-xs text-slate-500">
+              <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
                 Review the latest event records that support or challenge this trust state.
               </p>
               <ul className="mt-3 space-y-2.5">
                 {events.map((event) => (
-                  <li key={event.id} className="rounded-xl border border-slate-100 bg-slate-50 px-3 py-2.5">
-                    <p className="truncate text-sm font-medium text-slate-900">
+                  <li key={event.id} className="rounded-xl border border-[var(--stroke-soft)]/60 bg-[var(--surface-elevated)] px-3 py-2.5">
+                    <p className="truncate text-sm font-medium text-[var(--foreground)]">
                       {event.name || event.message || "Detection event"}
                     </p>
-                    <p className="mt-0.5 text-[11px] text-slate-500">
+                    <p className="mt-0.5 text-[11px] text-slate-500 dark:text-slate-400">
                       {relative(event.time || event.created_at)}
                       {event.host ? ` · ${event.host}` : ""}
                     </p>
@@ -537,10 +641,10 @@ export default function DetectionDetailPage() {
             </section>
           )}
 
-          <section className="rounded-2xl border border-slate-200 bg-white p-2">
+          <section className="rounded-2xl border border-[var(--stroke-soft)] bg-[var(--surface-card)] p-2">
             <div className="px-3 pt-3">
-              <h2 className="text-sm font-semibold text-slate-900">Next steps</h2>
-              <p className="mt-1 text-xs text-slate-500">
+              <h2 className="text-sm font-semibold text-[var(--foreground)]">Next steps</h2>
+              <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
                 Use the trust record, events queue, and validation history to resolve the next blocker.
               </p>
             </div>
@@ -571,8 +675,8 @@ function Stat({
 }) {
   return (
     <div>
-      <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">{label}</p>
-      <p className={cn("mt-1 text-2xl font-display font-bold text-slate-900", valueClassName)}>{value}</p>
+      <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">{label}</p>
+      <p className={cn("mt-1 text-2xl font-display font-bold text-[var(--foreground)]", valueClassName)}>{value}</p>
     </div>
   );
 }
@@ -580,8 +684,8 @@ function Stat({
 function FactRow({ label, value }: { label: string; value: string }) {
   return (
     <div className="flex items-center justify-between gap-3">
-      <dt className="text-xs font-medium uppercase tracking-wider text-slate-500">{label}</dt>
-      <dd className="truncate text-sm font-medium text-slate-800">{value}</dd>
+      <dt className="text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400">{label}</dt>
+      <dd className="truncate text-sm font-medium text-slate-800 dark:text-slate-200">{value}</dd>
     </div>
   );
 }
@@ -598,13 +702,13 @@ function SidebarLink({
   return (
     <Link
       href={href}
-      className="flex items-center justify-between rounded-xl px-3 py-2.5 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
+      className="flex items-center justify-between rounded-xl px-3 py-2.5 text-sm font-medium text-slate-700 transition hover:bg-[var(--surface-elevated)] dark:text-slate-200"
     >
       <span className="inline-flex items-center gap-2">
-        <Icon className="h-4 w-4 text-slate-500" />
+        <Icon className="h-4 w-4 text-slate-500 dark:text-slate-400" />
         {children}
       </span>
-      <ArrowRight className="h-4 w-4 text-slate-400" />
+      <ArrowRight className="h-4 w-4 text-slate-400 dark:text-slate-500" />
     </Link>
   );
 }

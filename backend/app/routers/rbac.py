@@ -57,17 +57,17 @@ async def get_my_permissions(
     org_id = require_org_id(current_user)
     rbac = RBACService(db)
     roles = await rbac.get_user_roles(current_user.id, org_id)
-    
-    # Collect all permissions from user's roles
-    all_permissions = set()
+
+    # Resolve permissions directly from the role matrix (local Python) instead
+    # of round-tripping to the DB once per permission. Previously this was
+    # O(roles × permissions) async queries per request.
+    all_permissions: set[str] = set()
     for role in roles:
-        # Check each permission
         for perm in PermissionEnum:
-            has_perm = await rbac.has_permission(current_user, perm)
-            if has_perm:
+            if await rbac._role_has_permission(role, perm, None, None):
                 all_permissions.add(perm.value)
-    
-    return sorted(list(all_permissions))
+
+    return sorted(all_permissions)
 
 
 @router.get("/users", response_model=List[dict])

@@ -3,10 +3,12 @@
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { Card, CardContent } from "@/components/ui/card";
+import { SkeletonCard } from "@/components/ui/skeleton";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Chip } from "@/components/ui/chip";
 import { Switch } from "@/components/ui/switch";
 import { apiFetch } from "@/lib/api";
 import { ShieldCheck } from "lucide-react";
@@ -134,7 +136,10 @@ export default function TestingPolicySettingsPage() {
           subtitle="Configure where validations can run, how production is protected, and how long validation evidence is kept."
           icon={<ShieldCheck className="h-5 w-5" />}
         />
-        <Card><CardContent className="pt-6 text-sm text-muted-foreground">Loading testing policy settings...</CardContent></Card>
+        <div className="space-y-4">
+          <SkeletonCard />
+          <SkeletonCard />
+        </div>
       </PageContainer>
     );
   }
@@ -180,15 +185,15 @@ export default function TestingPolicySettingsPage() {
         subtitle="Configure where validations can run, how production is protected, and how long validation evidence is kept."
         icon={<ShieldCheck className="h-5 w-5" />}
       />
-      <Card className="border border-slate-200 bg-white shadow-sm">
+      <Card className="border border-[var(--stroke-soft)] bg-[var(--surface-card)] shadow-sm">
         <CardContent className="pt-6">
-          <div className="mb-5 rounded-2xl border border-slate-200 bg-slate-50/60 px-4 py-3">
+          <div className="mb-5 rounded-2xl border border-[var(--stroke-soft)] bg-[var(--surface-elevated)] px-4 py-3">
             <p className="text-xs uppercase tracking-[0.24em] text-slate-400">Policy status</p>
             <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
               {riskUnprotectedProd && (
-                <div className="inline-flex items-center gap-2 rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-[11px] font-semibold text-amber-800">
+                <Chip tone="warning" size="md" className="font-semibold">
                   Prod risk: maintenance off
-                </div>
+                </Chip>
               )}
               <div className="flex items-center gap-2 rounded-full bg-slate-100 px-3 py-1 text-slate-700">
                 <span className="font-semibold uppercase tracking-[0.18em] text-[10px]">Prod</span>
@@ -218,10 +223,10 @@ export default function TestingPolicySettingsPage() {
           </div>
           <form onSubmit={handleSubmit} className="space-y-5">
             <div className="grid gap-4 lg:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)]">
-              <div className="rounded-2xl border border-slate-200 bg-slate-50/60 p-5 space-y-4">
+              <div className="rounded-2xl border border-[var(--stroke-soft)] bg-[var(--surface-elevated)] p-5 space-y-4">
                 <div className="space-y-1">
                   <p className="text-xs uppercase tracking-[0.24em] text-slate-400">Scope</p>
-                  <h3 className="text-lg font-display font-semibold text-slate-900">Where tests can run</h3>
+                  <h3 className="text-lg font-display font-semibold text-[var(--foreground)]">Where tests can run</h3>
                   <p className="text-sm text-slate-600">Allow only the environments you want validated.</p>
                 </div>
                 <div className="space-y-2">
@@ -230,10 +235,10 @@ export default function TestingPolicySettingsPage() {
                     {ENVIRONMENT_OPTIONS.map((environment) => (
                       <label
                         key={environment.id}
-                        className="flex items-start justify-between gap-3 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700"
+                        className="flex items-start justify-between gap-3 rounded-xl border border-[var(--stroke-soft)] bg-[var(--surface-card)] px-4 py-3 text-sm text-slate-700"
                       >
                         <div>
-                          <p className="font-medium text-slate-900">{environment.label}</p>
+                          <p className="font-medium text-[var(--foreground)]">{environment.label}</p>
                           <p className="mt-1 text-xs text-slate-500">{environment.detail}</p>
                         </div>
                         <Checkbox
@@ -248,9 +253,9 @@ export default function TestingPolicySettingsPage() {
                 <div className="grid gap-3 md:grid-cols-2">
                   <div className="space-y-2">
                     <Label htmlFor="default_marker_prefix">Marker prefix</Label>
-                    <Input id="default_marker_prefix" value={settings.default_marker_prefix} onChange={handleChange} required className="bg-white text-slate-900 border-slate-200" />
+                    <Input id="default_marker_prefix" value={settings.default_marker_prefix} onChange={handleChange} required className="bg-[var(--surface-card)] text-[var(--foreground)] border-[var(--stroke-soft)]" />
                   </div>
-                  <label className="flex items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700">
+                  <label className="flex items-center justify-between gap-3 rounded-xl border border-[var(--stroke-soft)] bg-[var(--surface-card)] px-4 py-3 text-sm text-slate-700">
                     <span>Include environment + timestamp</span>
                     <Switch
                       checked={settings.include_env_timestamp_in_marker}
@@ -260,26 +265,26 @@ export default function TestingPolicySettingsPage() {
                 </div>
               </div>
 
-              <div className="rounded-2xl border border-slate-200 bg-slate-50/60 p-5 space-y-4">
+              <div className="rounded-2xl border border-[var(--stroke-soft)] bg-[var(--surface-elevated)] p-5 space-y-4">
                 <div className="space-y-1">
                   <p className="text-xs uppercase tracking-[0.24em] text-slate-400">Signal</p>
-                  <h3 className="text-lg font-display font-semibold text-slate-900">SOC visibility</h3>
+                  <h3 className="text-lg font-display font-semibold text-[var(--foreground)]">SOC visibility</h3>
                   <p className="text-sm text-slate-600">Make test activity easy to filter and audit.</p>
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="tag_test_alerts">SOC tag</Label>
-                  <Input id="tag_test_alerts" value={settings.tag_test_alerts} onChange={handleChange} required className="bg-white text-slate-900 border-slate-200" />
+                  <Input id="tag_test_alerts" value={settings.tag_test_alerts} onChange={handleChange} required className="bg-white text-[var(--foreground)] border-slate-200" />
                   <p className="text-xs text-slate-500">Example: Purvex_Test = true</p>
                 </div>
                 <div className="space-y-3">
-                  <label className="flex items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700">
+                  <label className="flex items-center justify-between gap-3 rounded-xl border border-[var(--stroke-soft)] bg-[var(--surface-card)] px-4 py-3 text-sm text-slate-700">
                     <span>Notify before production tests</span>
                     <Switch
                       checked={settings.notify_before_prod_tests}
                       onCheckedChange={(checked: boolean) => handleCheckboxChange("notify_before_prod_tests", checked)}
                     />
                   </label>
-                  <label className="flex items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700">
+                  <label className="flex items-center justify-between gap-3 rounded-xl border border-[var(--stroke-soft)] bg-[var(--surface-card)] px-4 py-3 text-sm text-slate-700">
                     <span>Require maintenance windows for production tests</span>
                     <Switch
                       checked={settings.only_prod_during_maintenance_windows}
@@ -290,13 +295,13 @@ export default function TestingPolicySettingsPage() {
               </div>
             </div>
 
-            <div className="rounded-2xl border border-slate-200 bg-slate-50/60 p-5 space-y-4">
+            <div className="rounded-2xl border border-[var(--stroke-soft)] bg-[var(--surface-elevated)] p-5 space-y-4">
               <div className="space-y-1">
                 <p className="text-xs uppercase tracking-[0.24em] text-slate-400">Schedule</p>
-                <h3 className="text-lg font-display font-semibold text-slate-900">Business hours</h3>
+                <h3 className="text-lg font-display font-semibold text-[var(--foreground)]">Business hours</h3>
                 <p className="text-sm text-slate-600">Prevent tests from running during sensitive hours.</p>
               </div>
-              <label className="flex items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700">
+              <label className="flex items-center justify-between gap-3 rounded-xl border border-[var(--stroke-soft)] bg-[var(--surface-card)] px-4 py-3 text-sm text-slate-700">
                 <span>Block tests during business hours</span>
                 <Switch
                   checked={settings.disallow_tests_during_business_hours}
@@ -307,25 +312,25 @@ export default function TestingPolicySettingsPage() {
                 <div className="grid gap-3 md:grid-cols-2">
                   <div className="space-y-2">
                     <Label htmlFor="business_hours_start">Start time</Label>
-                    <Input id="business_hours_start" type="time" value={settings.business_hours_start} onChange={handleChange} className="bg-white text-slate-900 border-slate-200" />
+                    <Input id="business_hours_start" type="time" value={settings.business_hours_start} onChange={handleChange} className="bg-white text-[var(--foreground)] border-slate-200" />
                   </div>
                   <div className="space-y-2">
                     <Label htmlFor="business_hours_end">End time</Label>
-                    <Input id="business_hours_end" type="time" value={settings.business_hours_end} onChange={handleChange} className="bg-white text-slate-900 border-slate-200" />
+                    <Input id="business_hours_end" type="time" value={settings.business_hours_end} onChange={handleChange} className="bg-white text-[var(--foreground)] border-slate-200" />
                   </div>
                 </div>
               )}
             </div>
 
-            <div className="rounded-2xl border border-slate-200 bg-slate-50/60 p-5 space-y-4">
+            <div className="rounded-2xl border border-[var(--stroke-soft)] bg-[var(--surface-elevated)] p-5 space-y-4">
               <div className="space-y-1">
                 <p className="text-xs uppercase tracking-[0.24em] text-slate-400">Retention</p>
-                <h3 className="text-lg font-display font-semibold text-slate-900">Test data retention</h3>
+                <h3 className="text-lg font-display font-semibold text-[var(--foreground)]">Test data retention</h3>
                 <p className="text-sm text-slate-600">
                   Controls how long validation run data is kept before automatic purging.
                 </p>
               </div>
-              <div className="rounded-xl border border-slate-200 bg-white p-4 space-y-2">
+              <div className="rounded-xl border border-[var(--stroke-soft)] bg-[var(--surface-card)] p-4 space-y-2">
                 <Label htmlFor="test_data_retention_days">Global data retention (days)</Label>
                 <Input
                   id="test_data_retention_days"
@@ -333,7 +338,7 @@ export default function TestingPolicySettingsPage() {
                   min={1}
                   value={settings.test_data_retention_days ?? 90}
                   onChange={handleChange}
-                  className="bg-white text-slate-900 border-slate-200 max-w-xs"
+                  className="bg-white text-[var(--foreground)] border-slate-200 max-w-xs"
                 />
                 <p className="text-xs text-slate-500">Runs older than this are automatically purged. Default: 90 days.</p>
               </div>
@@ -356,7 +361,7 @@ export default function TestingPolicySettingsPage() {
                     failKey: "retention_fail_days_prod" as RetentionKey,
                   },
                 ].map((row) => (
-                  <div key={row.label} className="rounded-xl border border-slate-200 bg-white p-4 space-y-3">
+                  <div key={row.label} className="rounded-xl border border-[var(--stroke-soft)] bg-[var(--surface-card)] p-4 space-y-3">
                     <div className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">
                       {row.label}
                     </div>
@@ -368,7 +373,7 @@ export default function TestingPolicySettingsPage() {
                           min={1}
                           value={getRetentionValue(settings, row.passKey) ?? ""}
                           onChange={handleChange}
-                          className="bg-white text-slate-900 border-slate-200"
+                          className="bg-white text-[var(--foreground)] border-slate-200"
                         />
                     </div>
                     <div className="space-y-2">
@@ -379,7 +384,7 @@ export default function TestingPolicySettingsPage() {
                           min={1}
                           value={getRetentionValue(settings, row.failKey) ?? ""}
                           onChange={handleChange}
-                          className="bg-white text-slate-900 border-slate-200"
+                          className="bg-white text-[var(--foreground)] border-slate-200"
                         />
                     </div>
                   </div>
@@ -394,7 +399,7 @@ export default function TestingPolicySettingsPage() {
               <Button
                 type="submit"
                 disabled={isSaving}
-                className="bg-white hover:bg-slate-50 text-slate-900 border border-slate-200 shadow-sm rounded-full px-5"
+                className="bg-white hover:bg-slate-50 text-[var(--foreground)] border border-[var(--stroke-soft)] shadow-sm rounded-full px-5"
               >
                 {isSaving ? "Saving..." : "Save policy"}
               </Button>

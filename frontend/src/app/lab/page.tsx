@@ -5,16 +5,14 @@ import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
-import { FlaskConical, ServerCog, AlertTriangle, Clock, Activity, Zap, Play, Terminal, Monitor, ChevronDown, ChevronRight, HardDrive, Eye, FileText as LogsIcon, Settings } from "lucide-react";
+import { Chip, type ChipProps } from "@/components/ui/chip";
+import { ServerCog, AlertTriangle, Activity, Zap, Play, Terminal, Monitor, ChevronDown, ChevronRight, HardDrive, Eye, FileText as LogsIcon, Settings } from "lucide-react";
 import { apiFetch, getTest, type TestDetailResponse } from "@/lib/api";
 import { PageContainer } from "@/components/layout/page-container";
 import { PageHeader } from "@/components/layout/page-header";
 import { LoadingState } from "@/components/ui/loading-state";
 import { useToast } from "@/components/ui/toast";
-import { Tooltip } from "@/components/ui/tooltip";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { cn } from "@/lib/utils";
 
 type LabRunner = {
   id: number;
@@ -58,6 +56,48 @@ type LabEndpoint = {
   port?: number | null;
   username?: string | null;
 };
+
+// Endpoint lifecycle state → Chip tone. A broad enum on the backend gets
+// collapsed down to five semantic tones so the status pill stays consistent
+// even as new states are added.
+type EndpointStatus =
+  | "online"
+  | "degraded"
+  | "idle"
+  | "stopping"
+  | "stopped"
+  | "paused"
+  | "pausing"
+  | "resuming"
+  | "unknown";
+
+function endpointTone(status: string): NonNullable<ChipProps["tone"]> {
+  switch (status as EndpointStatus) {
+    case "online":
+      return "success";
+    case "degraded":
+    case "stopping":
+    case "pausing":
+      return "warning";
+    case "idle":
+    case "resuming":
+      return "info";
+    case "stopped":
+    case "paused":
+    case "unknown":
+    default:
+      return "neutral";
+  }
+}
+
+function testStatusTone(status?: string | null): NonNullable<ChipProps["tone"]> {
+  const value = (status || "").toUpperCase();
+  if (value === "PASS" || value === "COMPLETED") return "success";
+  if (value === "FAIL" || value === "ERROR") return "danger";
+  if (value === "INCONCLUSIVE") return "warning";
+  if (value === "RUNNING") return "info";
+  return "neutral";
+}
 
 function LabPageContent() {
   const [currentTest, setCurrentTest] = useState<TestDetailResponse | null>(null);
@@ -263,10 +303,10 @@ function LabPageContent() {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-5">
           <div className="w-full pl-0.5 pr-0 sm:pr-0">
             <PageHeader
-              eyebrow="Controlled lab"
-              title="Lab"
-              subtitle="Practice without fear, iterate faster, and build the repetition that becomes real operating strength."
-              icon={<FlaskConical className="h-5 w-5" />}
+              eyebrow="Endpoint inventory"
+              title="Endpoints"
+              subtitle="Monitor registered agents, runner health, and recent validation activity by endpoint."
+              icon={<HardDrive className="h-5 w-5" />}
             />
           </div>
 
@@ -285,15 +325,15 @@ function LabPageContent() {
           {/* Agent Registration Scripts - Moved to Test Runner Settings */}
 
           {/* Endpoints / Agents Table */}
-          <Card className="border border-slate-200 bg-white shadow-sm">
-            <CardHeader className="border-b border-slate-200 px-6 py-5">
+          <Card className="border border-[var(--stroke-soft)] bg-[var(--surface-card)] shadow-sm">
+            <CardHeader className="border-b border-[var(--stroke-soft)] px-6 py-5">
               <div className="flex flex-wrap items-center justify-between gap-4">
                 <div className="flex items-center gap-3">
                   <div className="h-11 w-11 rounded-lg bg-emerald-50 border border-emerald-200 flex items-center justify-center">
                     <HardDrive className="h-5 w-5 text-emerald-600" />
                   </div>
                   <div>
-                    <CardTitle className="text-lg font-display font-semibold text-slate-900">
+                    <CardTitle className="text-lg font-display font-semibold text-[var(--foreground)]">
                       Endpoints
                     </CardTitle>
                     <CardDescription className="text-xs text-slate-600 mt-1">
@@ -305,7 +345,7 @@ function LabPageContent() {
                   <Button
                     variant="default"
                     size="sm"
-                    className="h-10 px-5 rounded-full bg-white hover:bg-slate-50 text-slate-900 border border-slate-200 shadow-sm text-xs font-semibold tracking-wide"
+                    className="h-10 px-5 rounded-full bg-[var(--surface-card)] hover:bg-[var(--surface-elevated)] text-[var(--foreground)] border border-[var(--stroke-soft)] shadow-sm text-xs font-semibold tracking-wide"
                   >
                     <ServerCog className="h-4 w-4 mr-2" />
                     Install Agent
@@ -318,17 +358,17 @@ function LabPageContent() {
                 <LoadingState message="Loading endpoints..." size="sm" className="py-6" />
               ) : endpoints.length === 0 ? (
                 <div className="text-center py-10">
-                  <div className="inline-flex items-center justify-center h-12 w-12 rounded-full bg-slate-100 border border-slate-200 mb-3">
+                  <div className="inline-flex items-center justify-center h-12 w-12 rounded-full bg-slate-100 border border-[var(--stroke-soft)] mb-3">
                     <HardDrive className="h-6 w-6 text-slate-600" />
                   </div>
-                  <p className="text-sm font-semibold text-slate-900 mb-1">No endpoints registered</p>
+                  <p className="text-sm font-semibold text-[var(--foreground)] mb-1">No endpoints registered</p>
                   <p className="text-xs text-slate-600">Use Install Agent to connect your first endpoint.</p>
                 </div>
               ) : (
                 <div className="overflow-x-auto -mx-2">
                   <table className="w-full">
                     <thead>
-                      <tr className="border-b border-slate-200 text-xs text-slate-500">
+                      <tr className="border-b border-[var(--stroke-soft)] text-xs text-slate-500">
                         <th className="text-left py-3 px-3 w-8"></th>
                         <th className="text-left py-3 px-3 min-w-[140px] font-semibold uppercase tracking-wider">Hostname</th>
                         <th className="text-left py-3 px-3 min-w-[110px] font-semibold uppercase tracking-wider">OS</th>
@@ -341,11 +381,11 @@ function LabPageContent() {
                         <th className="text-right py-3 px-3 min-w-[120px] font-semibold uppercase tracking-wider">Actions</th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-slate-100 text-sm text-slate-700">
+                    <tbody className="divide-y divide-[var(--stroke-soft)]/60 text-sm text-slate-700">
                       {endpoints.map((endpoint) => (
                         <React.Fragment key={`endpoint-${endpoint.id}`}>
                           <tr
-                            className="hover:bg-slate-50 transition-colors cursor-pointer group focus-within:bg-slate-50"
+                            className="hover:bg-[var(--surface-elevated)] transition-colors cursor-pointer group focus-within:bg-[var(--surface-elevated)]"
                             onClick={() => {
                               const newExpanded = new Set(expandedRows);
                               if (newExpanded.has(endpoint.id)) {
@@ -382,7 +422,7 @@ function LabPageContent() {
                             <td className="py-3 px-3">
                               <div className="flex items-center gap-2">
                                 <HardDrive className="h-4 w-4 text-slate-500 flex-shrink-0" />
-                                <span className="font-medium text-slate-900 truncate">{endpoint.hostname}</span>
+                                <span className="font-medium text-[var(--foreground)] truncate">{endpoint.hostname}</span>
                               </div>
                             </td>
                             <td className="py-3 px-3">
@@ -392,73 +432,34 @@ function LabPageContent() {
                                 ) : (
                                   <Terminal className="h-4 w-4 text-emerald-600 flex-shrink-0" />
                                 )}
-                                <span className="text-slate-900 truncate">{endpoint.os}</span>
+                                <span className="text-[var(--foreground)] truncate">{endpoint.os}</span>
                               </div>
                             </td>
                             <td className="py-3 px-3">
-                              <code className="text-xs font-mono text-slate-900">{endpoint.ipAddress}</code>
+                              <code className="text-xs font-mono text-[var(--foreground)]">{endpoint.ipAddress}</code>
                             </td>
                             <td className="py-3 px-3">
-                              <Badge
-                                className={cn(
-                                  endpoint.status === "online" && "bg-emerald-50 text-emerald-700 border-emerald-200",
-                                  endpoint.status === "degraded" && "bg-amber-50 text-amber-700 border-amber-200",
-                                  endpoint.status === "idle" && "bg-blue-50 text-blue-700 border-blue-200",
-                                  endpoint.status === "stopping" && "bg-amber-50 text-amber-700 border-amber-200",
-                                  endpoint.status === "stopped" && "bg-slate-100 text-slate-700 border-slate-200",
-                                  endpoint.status === "paused" && "bg-slate-100 text-slate-700 border-slate-200",
-                                  endpoint.status === "pausing" && "bg-amber-50 text-amber-700 border-amber-200",
-                                  endpoint.status === "resuming" && "bg-blue-50 text-blue-700 border-blue-200",
-                                  endpoint.status === "unknown" && "bg-slate-100 text-slate-600 border-slate-200",
-                                  "inline-flex items-center gap-2 border text-xs px-2.5 py-1 rounded-full"
-                                )}
-                              >
-                                <span
-                                  className={cn(
-                                    "h-2 w-2 rounded-full",
-                                    endpoint.status === "online" && "bg-emerald-500",
-                                    endpoint.status === "degraded" && "bg-amber-500",
-                                    endpoint.status === "idle" && "bg-blue-500",
-                                    endpoint.status === "stopping" && "bg-amber-500",
-                                    endpoint.status === "stopped" && "bg-slate-500",
-                                    endpoint.status === "paused" && "bg-slate-500",
-                                    endpoint.status === "pausing" && "bg-amber-500",
-                                    endpoint.status === "resuming" && "bg-blue-500",
-                                    endpoint.status === "unknown" && "bg-slate-400",
-                                    endpoint.status !== "online" &&
-                                      endpoint.status !== "degraded" &&
-                                      endpoint.status !== "idle" &&
-                                      endpoint.status !== "stopping" &&
-                                      endpoint.status !== "stopped" &&
-                                      endpoint.status !== "paused" &&
-                                      endpoint.status !== "pausing" &&
-                                      endpoint.status !== "resuming" &&
-                                      "bg-slate-400"
-                                  )}
-                                />
-                                <span className="font-semibold capitalize">{endpoint.status === "unknown" ? "Unknown" : endpoint.status}</span>
-                              </Badge>
+                              <Chip tone={endpointTone(endpoint.status)} size="md" dot className="font-semibold capitalize">
+                                {endpoint.status === "unknown" ? "Unknown" : endpoint.status}
+                              </Chip>
                             </td>
                             <td className="py-3 px-3">
-                              <span className="text-slate-900">{endpoint.lastCheckIn || "—"}</span>
+                              <span className="text-[var(--foreground)]">{endpoint.lastCheckIn || "—"}</span>
                             </td>
                             <td className="py-3 px-3">
-                              <span className="text-slate-900 truncate block">{endpoint.lastTestRun || "—"}</span>
+                              <span className="text-[var(--foreground)] truncate block">{endpoint.lastTestRun || "—"}</span>
                             </td>
                             <td className="py-3 px-3">
-                              <Badge className="bg-slate-100 text-slate-800 border border-slate-200 text-xs px-2.5 py-1 rounded-full font-semibold">
+                              <Chip tone="muted" size="md" className="font-semibold">
                                 {endpoint.agentVersion || "—"}
-                              </Badge>
+                              </Chip>
                             </td>
                             <td className="py-3 px-3">
                               <div className="flex items-center gap-2 flex-wrap">
                                 {endpoint.tags.slice(0, 2).map((tag: string, idx: number) => (
-                                  <Badge
-                                    key={idx}
-                                    className="bg-sky-50 text-sky-700 border border-sky-200 text-xs px-2.5 py-1 rounded-full font-semibold"
-                                  >
+                                  <Chip key={idx} tone="info" size="md" className="font-semibold">
                                     {tag}
-                                  </Badge>
+                                  </Chip>
                                 ))}
                                 {endpoint.tags.length > 2 && (
                                   <span className="text-xs text-slate-500 font-semibold">+{endpoint.tags.length - 2}</span>
@@ -479,7 +480,7 @@ function LabPageContent() {
                                       e.stopPropagation();
                                       setResumeEndpoint({ id: endpoint.id, name: endpoint.hostname });
                                     }}
-                                    className="h-8 w-8 inline-flex items-center justify-center rounded-full border border-slate-200 text-slate-500 hover:text-emerald-600 hover:border-emerald-200 hover:bg-emerald-50 transition-colors"
+                                    className="h-8 w-8 inline-flex items-center justify-center rounded-full border border-[var(--stroke-soft)] text-slate-500 hover:text-emerald-600 hover:border-emerald-200 hover:bg-emerald-50 transition-colors"
                                   >
                                     ▶
                                   </button>
@@ -492,7 +493,7 @@ function LabPageContent() {
                                       e.stopPropagation();
                                       setPauseEndpoint({ id: endpoint.id, name: endpoint.hostname });
                                     }}
-                                    className="h-8 w-8 inline-flex items-center justify-center rounded-full border border-slate-200 text-slate-500 hover:text-slate-800 hover:border-slate-300 hover:bg-slate-100 transition-colors"
+                                    className="h-8 w-8 inline-flex items-center justify-center rounded-full border border-[var(--stroke-soft)] text-slate-500 hover:text-slate-800 hover:border-slate-300 hover:bg-slate-100 transition-colors"
                                   >
                                     ❚❚
                                   </button>
@@ -505,7 +506,7 @@ function LabPageContent() {
                                   e.stopPropagation();
                                   setDeleteEndpoint({ id: endpoint.id, name: endpoint.hostname });
                                 }}
-                                className="h-8 w-8 inline-flex items-center justify-center rounded-full border border-slate-200 text-slate-500 hover:text-red-600 hover:border-red-200 hover:bg-red-50 transition-colors"
+                                className="h-8 w-8 inline-flex items-center justify-center rounded-full border border-[var(--stroke-soft)] text-slate-500 hover:text-red-600 hover:border-red-200 hover:bg-red-50 transition-colors"
                               >
                                 ×
                               </button>
@@ -513,92 +514,78 @@ function LabPageContent() {
                             </td>
                           </tr>
                           {expandedRows.has(endpoint.id) && (
-                            <tr className="bg-slate-50 animate-in fade-in slide-in-from-top-2 duration-300">
+                            <tr className="bg-[var(--surface-elevated)] animate-in fade-in slide-in-from-top-2 duration-300">
                               <td colSpan={10} className="py-4 px-4">
                                 <div className="grid md:grid-cols-2 gap-5">
                                   {/* Telemetry Health */}
-                                  <div className="p-4 rounded-lg bg-white border border-slate-200">
-                                    <div className="flex items-center gap-2 mb-3 pb-2 border-b border-slate-200">
+                                  <div className="p-4 rounded-lg bg-[var(--surface-card)] border border-[var(--stroke-soft)]">
+                                    <div className="flex items-center gap-2 mb-3 pb-2 border-b border-[var(--stroke-soft)]">
                                       <Activity className="h-4 w-4 text-emerald-600" />
-                                      <h4 className="text-sm font-semibold text-slate-900">Telemetry Health</h4>
+                                      <h4 className="text-sm font-semibold text-[var(--foreground)]">Telemetry Health</h4>
                                     </div>
                                     <div className="space-y-2">
                                       <div className="flex items-center justify-between py-1.5">
                                         <span className="text-xs text-slate-600">SIEM Connectivity</span>
-                                        <Badge className="bg-slate-100 text-slate-600 border-slate-200 text-xs px-2 py-1 h-5">
-                                          —
-                                        </Badge>
+                                        <Chip tone="muted">—</Chip>
                                       </div>
                                       <div className="flex items-center justify-between py-1.5">
                                         <span className="text-xs text-slate-600">Event Collection</span>
-                                        <Badge className="bg-slate-100 text-slate-600 border-slate-200 text-xs px-2 py-1 h-5">
-                                          —
-                                        </Badge>
+                                        <Chip tone="muted">—</Chip>
                                       </div>
                                       <div className="flex items-center justify-between py-1.5">
                                         <span className="text-xs text-slate-600">Last Event</span>
-                                        <span className="text-xs text-slate-900 font-mono">—</span>
+                                        <span className="text-xs text-[var(--foreground)] font-mono">—</span>
                                       </div>
                                     </div>
                                   </div>
 
                                   {/* Detection Visibility */}
-                                  <div className="p-4 rounded-lg bg-white border border-slate-200">
-                                    <div className="flex items-center gap-2 mb-3 pb-2 border-b border-slate-200">
+                                  <div className="p-4 rounded-lg bg-[var(--surface-card)] border border-[var(--stroke-soft)]">
+                                    <div className="flex items-center gap-2 mb-3 pb-2 border-b border-[var(--stroke-soft)]">
                                       <Eye className="h-4 w-4 text-sky-600" />
-                                      <h4 className="text-sm font-semibold text-slate-900">Detection Visibility</h4>
+                                      <h4 className="text-sm font-semibold text-[var(--foreground)]">Detection Visibility</h4>
                                     </div>
                                     <div className="space-y-2">
                                       <div className="flex items-center justify-between py-1.5">
                                         <span className="text-xs text-slate-600">Detections Active</span>
-                                        <span className="text-xs text-slate-900 font-semibold">—</span>
+                                        <span className="text-xs text-[var(--foreground)] font-semibold">—</span>
                                       </div>
                                       <div className="flex items-center justify-between py-1.5">
                                         <span className="text-xs text-slate-600">Last Detection</span>
-                                        <span className="text-xs text-slate-900 font-mono">—</span>
+                                        <span className="text-xs text-[var(--foreground)] font-mono">—</span>
                                       </div>
                                       <div className="flex items-center justify-between py-1.5">
                                         <span className="text-xs text-slate-600">Coverage Score</span>
-                                        <Badge className="bg-slate-100 text-slate-600 border-slate-200 text-xs px-2 py-1 h-5">
-                                          —
-                                        </Badge>
+                                        <Chip tone="muted">—</Chip>
                                       </div>
                                     </div>
                                   </div>
 
                                   {/* Test Run Logs */}
-                                  <div className="p-4 rounded-lg bg-white border border-slate-200">
-                                    <div className="flex items-center gap-2 mb-3 pb-2 border-b border-slate-200">
+                                  <div className="p-4 rounded-lg bg-[var(--surface-card)] border border-[var(--stroke-soft)]">
+                                    <div className="flex items-center gap-2 mb-3 pb-2 border-b border-[var(--stroke-soft)]">
                                       <LogsIcon className="h-4 w-4 text-blue-600" />
-                                      <h4 className="text-sm font-semibold text-slate-900">Recent Test Runs</h4>
+                                      <h4 className="text-sm font-semibold text-[var(--foreground)]">Recent Test Runs</h4>
                                     </div>
                                     <div className="space-y-2">
                                       {(endpoint.recentTests || []).length === 0 ? (
-                                        <div className="p-2 rounded bg-slate-50 border border-slate-200">
+                                        <div className="p-2 rounded bg-[var(--surface-elevated)] border border-[var(--stroke-soft)]">
                                           <div className="flex items-center justify-between mb-1.5">
-                                            <span className="text-xs font-medium text-slate-900 truncate">No recent test data</span>
-                                            <Badge className="bg-slate-100 text-slate-600 border-slate-200 text-xs px-2 py-1 h-5">
-                                              —
-                                            </Badge>
+                                            <span className="text-xs font-medium text-[var(--foreground)] truncate">No recent test data</span>
+                                            <Chip tone="muted">—</Chip>
                                           </div>
                                           <p className="text-[10px] text-slate-600">—</p>
                                         </div>
                                       ) : (
                                         (endpoint.recentTests || []).map((test: LabTestSummary) => (
-                                          <div key={test.id} className="p-2 rounded bg-slate-50 border border-slate-200">
+                                          <div key={test.id} className="p-2 rounded bg-[var(--surface-elevated)] border border-[var(--stroke-soft)]">
                                             <div className="flex items-center justify-between mb-1.5">
-                                              <span className="text-xs font-medium text-slate-900 truncate">
+                                              <span className="text-xs font-medium text-[var(--foreground)] truncate">
                                                 {test.detection_title || test.technique_id || `Test #${test.id}`}
                                               </span>
-                                              <Badge className={cn(
-                                                "text-xs px-2 py-1 h-5 border",
-                                                test.status === "PASS" && "bg-emerald-100 text-emerald-700 border-emerald-200",
-                                                test.status === "FAIL" && "bg-red-100 text-red-700 border-red-200",
-                                                test.status === "INCONCLUSIVE" && "bg-amber-100 text-amber-700 border-amber-200",
-                                                !test.status && "bg-slate-100 text-slate-600 border-slate-200"
-                                              )}>
+                                              <Chip tone={testStatusTone(test.status)}>
                                                 {test.status || "—"}
-                                              </Badge>
+                                              </Chip>
                                             </div>
                                             <p className="text-[10px] text-slate-600">
                                               {test.started_at ? new Date(test.started_at).toLocaleString() : "—"}
@@ -610,21 +597,21 @@ function LabPageContent() {
                                   </div>
 
                                   {/* Configuration & Drift */}
-                                  <div className="p-4 rounded-lg bg-white border border-slate-200">
-                                    <div className="flex items-center gap-2 mb-3 pb-2 border-b border-slate-200">
+                                  <div className="p-4 rounded-lg bg-[var(--surface-card)] border border-[var(--stroke-soft)]">
+                                    <div className="flex items-center gap-2 mb-3 pb-2 border-b border-[var(--stroke-soft)]">
                                       <Settings className="h-4 w-4 text-purple-600" />
-                                      <h4 className="text-sm font-semibold text-slate-900">Configuration</h4>
+                                      <h4 className="text-sm font-semibold text-[var(--foreground)]">Configuration</h4>
                                     </div>
                                     <div className="space-y-2">
                                       <div className="flex items-center justify-between py-1.5">
                                         <span className="text-xs text-slate-600">Environment</span>
-                                        <Badge className="bg-purple-100 text-purple-700 border-purple-300 text-xs px-2 py-1 h-5">
+                                        <Chip tone="accent">
                                           {endpoint.environment || "—"}
-                                        </Badge>
+                                        </Chip>
                                       </div>
                                       <div className="flex items-center justify-between py-1.5">
                                         <span className="text-xs text-slate-600">Runner Type</span>
-                                        <span className="text-xs text-slate-900 font-mono">{endpoint.runnerType || "—"}</span>
+                                        <span className="text-xs text-[var(--foreground)] font-mono">{endpoint.runnerType || "—"}</span>
                                       </div>
                                       <div className="flex items-center justify-between py-1.5">
                                         <span className="text-xs text-slate-600">Drift Status</span>
@@ -650,11 +637,11 @@ function LabPageContent() {
           <Dialog open={!!deleteEndpoint} onOpenChange={(open) => !open && setDeleteEndpoint(null)}>
             <DialogContent className="sm:max-w-[420px]">
               <DialogHeader>
-                <DialogTitle className="text-lg font-semibold text-slate-900">
+                <DialogTitle className="text-lg font-semibold text-[var(--foreground)]">
                   Remove endpoint
                 </DialogTitle>
                 <DialogDescription className="text-sm text-slate-600 mt-2">
-                  This will remove <span className="font-semibold text-slate-900">{deleteEndpoint?.name}</span> from your lab. This cannot be undone.
+                  This will remove <span className="font-semibold text-[var(--foreground)]">{deleteEndpoint?.name}</span> from your lab. This cannot be undone.
                 </DialogDescription>
               </DialogHeader>
               <div className="flex items-center justify-end gap-2 pt-2">
@@ -681,11 +668,11 @@ function LabPageContent() {
           <Dialog open={!!pauseEndpoint} onOpenChange={(open) => !open && setPauseEndpoint(null)}>
             <DialogContent className="sm:max-w-[420px]">
               <DialogHeader>
-                <DialogTitle className="text-lg font-semibold text-slate-900">
+                <DialogTitle className="text-lg font-semibold text-[var(--foreground)]">
                   Pause agent
                 </DialogTitle>
                 <DialogDescription className="text-sm text-slate-600 mt-2">
-                  This will pause <span className="font-semibold text-slate-900">{pauseEndpoint?.name}</span>. The agent will stop running new tests until resumed.
+                  This will pause <span className="font-semibold text-[var(--foreground)]">{pauseEndpoint?.name}</span>. The agent will stop running new tests until resumed.
                 </DialogDescription>
               </DialogHeader>
               <div className="flex items-center justify-end gap-2 pt-2">
@@ -712,11 +699,11 @@ function LabPageContent() {
           <Dialog open={!!resumeEndpoint} onOpenChange={(open) => !open && setResumeEndpoint(null)}>
             <DialogContent className="sm:max-w-[420px]">
               <DialogHeader>
-                <DialogTitle className="text-lg font-semibold text-slate-900">
+                <DialogTitle className="text-lg font-semibold text-[var(--foreground)]">
                   Resume agent
                 </DialogTitle>
                 <DialogDescription className="text-sm text-slate-600 mt-2">
-                  This will resume <span className="font-semibold text-slate-900">{resumeEndpoint?.name}</span> and allow tests to run again.
+                  This will resume <span className="font-semibold text-[var(--foreground)]">{resumeEndpoint?.name}</span> and allow tests to run again.
                 </DialogDescription>
               </DialogHeader>
               <div className="flex items-center justify-end gap-2 pt-2">
@@ -742,7 +729,7 @@ function LabPageContent() {
 
           {currentTest && (
             <Card className="transition-all duration-300 hover:border-slate-600/50">
-              <CardHeader className="border-b border-slate-200 pb-3">
+              <CardHeader className="border-b border-[var(--stroke-soft)] pb-3">
                 <div className="flex items-center justify-between">
                   <div>
                     <CardTitle className="text-lg font-display font-bold text-white flex items-center gap-2">
@@ -753,14 +740,9 @@ function LabPageContent() {
                       View-only status of this lab execution and SIEM validation
                     </CardDescription>
                   </div>
-                  <Badge className={cn(
-                    currentTest.status === "completed" && "bg-emerald-500/20 text-emerald-300 border-emerald-500/40",
-                    currentTest.status === "running" && "bg-sky-500/20 text-sky-300 border-sky-500/40",
-                    currentTest.status === "error" && "bg-red-500/20 text-red-300 border-red-500/40",
-                    "bg-slate-500/20 text-slate-300 border-slate-500/40 transition-all duration-300 hover:scale-105"
-                  )}>
+                  <Chip tone={testStatusTone(currentTest.status)} size="md" className="transition-all duration-300 hover:scale-105">
                     {currentTest.status}
-                  </Badge>
+                  </Chip>
                 </div>
               </CardHeader>
               <CardContent className="pt-4 space-y-4 text-xs font-body text-slate-700">
@@ -774,7 +756,7 @@ function LabPageContent() {
                       {labStatus !== "pending" && labStatus !== "running" && "Run completed."}
                     </span>
                   </div>
-                  <div className="h-1.5 w-full rounded-full bg-slate-200 overflow-hidden border border-slate-200 transition-all duration-300">
+                  <div className="h-1.5 w-full rounded-full bg-slate-200 overflow-hidden border border-[var(--stroke-soft)] transition-all duration-300">
                     <div
                       className="h-full bg-gradient-to-r from-sky-400 via-emerald-400 to-sky-500 transition-all duration-700 ease-out"
                       style={{ width: `${Math.round(labProgress * 100)}%` }}

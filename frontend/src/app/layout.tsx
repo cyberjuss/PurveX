@@ -23,7 +23,7 @@ export default async function RootLayout({
     >
       <head>
         <link rel="icon" href="/purvex-favicon.svg" />
-        <link rel="apple-touch-icon" sizes="180x180" href="/logo.png?v=6" />
+        <link rel="apple-touch-icon" sizes="180x180" href="/logo.png?v=7" />
         <link rel="shortcut icon" href="/purvex-favicon.svg" />
         {nonce ? <meta name="csp-nonce" content={nonce} /> : null}
       </head>

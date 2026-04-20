@@ -19,7 +19,12 @@ from app.db import async_sessionmaker, async_engine
 from app.models import (
     Role, Permission, RolePermission, UserRole, User, Detection
 )
-from app.services.rbac import Role as RoleEnum, Permission as PermissionEnum
+from app.services.rbac import (
+    PERMISSION_METADATA,
+    ROLE_DESCRIPTIONS,
+    ROLE_PERMISSION_MATRIX,
+    Role as RoleEnum,
+)
 
 
 async def create_tables():
@@ -94,25 +99,11 @@ async def seed_roles():
     async with async_sessionmaker() as session:
         roles_data = [
             {
-                "name": RoleEnum.ADMINISTRATOR.value,
-                "description": "Full platform access including user management and organization settings",
+                "name": role.value,
+                "description": ROLE_DESCRIPTIONS[role],
                 "is_system": True,
-            },
-            {
-                "name": RoleEnum.DETECTION_ENGINEER.value,
-                "description": "Build and deploy detections to non-production environments",
-                "is_system": True,
-            },
-            {
-                "name": RoleEnum.SECURITY_ANALYST.value,
-                "description": "Test and validate detections, view results from all environments",
-                "is_system": True,
-            },
-            {
-                "name": RoleEnum.VIEWER.value,
-                "description": "Read-only access for auditing and reporting",
-                "is_system": True,
-            },
+            }
+            for role in RoleEnum
         ]
         
         for role_data in roles_data:
@@ -138,61 +129,10 @@ async def seed_roles():
 async def seed_permissions():
     """Seed all permissions."""
     async with async_sessionmaker() as session:
-        # Get permission categories
-        permissions_data = []
-        
-        # Detection permissions
-        detection_perms = [
-            ("detections:create", "detections", "Create new detections"),
-            ("detections:read", "detections", "View detections"),
-            ("detections:update", "detections", "Edit detections"),
-            ("detections:delete", "detections", "Delete detections"),
-            ("detections:deploy", "detections", "Deploy detections to SIEM"),
-            ("detections:approve", "detections", "Approve detections for production"),
-            ("detections:criticality:update", "detections", "Update detection criticality"),
+        all_perms = [
+            (permission.value, category, description)
+            for permission, (category, description) in PERMISSION_METADATA.items()
         ]
-        
-        # Test permissions
-        test_perms = [
-            ("tests:create", "tests", "Create test runs"),
-            ("tests:read", "tests", "View test results"),
-            ("tests:schedule", "tests", "Schedule recurring tests"),
-            ("tests:schedule:prod", "tests", "Schedule tests in production"),
-            ("tests:run:lab", "tests", "Run tests in LAB environment"),
-            ("tests:run:dev", "tests", "Run tests in DEV environment"),
-            ("tests:run:prod", "tests", "Run tests in PROD environment"),
-        ]
-        
-        # Settings permissions
-        settings_perms = [
-            ("settings:read", "settings", "View settings"),
-            ("settings:update", "settings", "Modify settings"),
-            ("settings:siem:manage", "settings", "Manage SIEM connections"),
-            ("settings:users:manage", "settings", "Manage users and roles"),
-            ("settings:organization:manage", "settings", "Manage organization settings"),
-            ("settings:runners:manage", "settings", "Manage environment runners"),
-        ]
-        
-        # AI permissions
-        ai_perms = [
-            ("assistant:use", "assistant", "Use Watchtower AI assistant"),
-            ("assistant:configure", "assistant", "Configure AI settings"),
-        ]
-        
-        # Lifecycle permissions
-        lifecycle_perms = [
-            ("lifecycle:advance", "lifecycle", "Advance detection lifecycle stages"),
-            ("lifecycle:approve", "lifecycle", "Approve lifecycle transitions"),
-            ("lifecycle:rollback", "lifecycle", "Rollback lifecycle stages"),
-        ]
-        
-        # Reporting permissions
-        report_perms = [
-            ("reports:view", "reports", "View reports"),
-            ("reports:export", "reports", "Export reports"),
-        ]
-        
-        all_perms = detection_perms + test_perms + settings_perms + ai_perms + lifecycle_perms + report_perms
         
         for perm_name, category, description in all_perms:
             result = await session.execute(
@@ -217,26 +157,13 @@ async def seed_permissions():
 async def map_role_permissions():
     """Map permissions to roles based on RBAC service logic."""
     async with async_sessionmaker() as session:
-        # Get role IDs
-        admin_result = await session.execute(
-            text("SELECT id FROM roles WHERE name = 'ADMINISTRATOR'")
-        )
-        admin_id = admin_result.scalar_one()
-        
-        engineer_result = await session.execute(
-            text("SELECT id FROM roles WHERE name = 'DETECTION_ENGINEER'")
-        )
-        engineer_id = engineer_result.scalar_one()
-        
-        analyst_result = await session.execute(
-            text("SELECT id FROM roles WHERE name = 'SECURITY_ANALYST'")
-        )
-        analyst_id = analyst_result.scalar_one()
-        
-        viewer_result = await session.execute(
-            text("SELECT id FROM roles WHERE name = 'VIEWER'")
-        )
-        viewer_id = viewer_result.scalar_one()
+        role_ids: dict[RoleEnum, int] = {}
+        for role in RoleEnum:
+            result = await session.execute(
+                text("SELECT id FROM roles WHERE name = :name"),
+                {"name": role.value},
+            )
+            role_ids[role] = result.scalar_one()
         
         # Get all permission IDs
         perm_result = await session.execute(
@@ -244,61 +171,26 @@ async def map_role_permissions():
         )
         all_perms = {name: id for id, name in perm_result.all()}
         
-        # Administrator: All permissions
-        for perm_name in all_perms.keys():
-            await session.execute(
-                text("""
-                    INSERT OR IGNORE INTO role_permissions (role_id, permission_id)
-                    VALUES (:role_id, :perm_id)
-                """),
-                {"role_id": admin_id, "perm_id": all_perms[perm_name]}
-            )
-        
-        # Detection Engineer permissions
-        engineer_perms = [
-            "detections:create", "detections:read", "detections:update", "detections:deploy",
-            "tests:create", "tests:read", "tests:schedule", "tests:run:lab", "tests:run:dev",
-            "assistant:use", "lifecycle:advance", "reports:view", "reports:export",
-        ]
-        for perm_name in engineer_perms:
-            if perm_name in all_perms:
-                await session.execute(
-                    text("""
-                        INSERT OR IGNORE INTO role_permissions (role_id, permission_id)
-                        VALUES (:role_id, :perm_id)
-                    """),
-                    {"role_id": engineer_id, "perm_id": all_perms[perm_name]}
-                )
-        
-        # Security Analyst permissions
-        analyst_perms = [
-            "detections:read",
-            "tests:create", "tests:read", "tests:run:lab",
-            "assistant:use", "reports:view",
-        ]
-        for perm_name in analyst_perms:
-            if perm_name in all_perms:
-                await session.execute(
-                    text("""
-                        INSERT OR IGNORE INTO role_permissions (role_id, permission_id)
-                        VALUES (:role_id, :perm_id)
-                    """),
-                    {"role_id": analyst_id, "perm_id": all_perms[perm_name]}
-                )
-        
-        # Viewer permissions
-        viewer_perms = [
-            "detections:read", "tests:read", "reports:view",
-        ]
-        for perm_name in viewer_perms:
-            if perm_name in all_perms:
-                await session.execute(
-                    text("""
-                        INSERT OR IGNORE INTO role_permissions (role_id, permission_id)
-                        VALUES (:role_id, :perm_id)
-                    """),
-                    {"role_id": viewer_id, "perm_id": all_perms[perm_name]}
-                )
+        for role, permissions in ROLE_PERMISSION_MATRIX.items():
+            allowed_names = {permission.value for permission in permissions}
+            role_id = role_ids[role]
+            for perm_name, perm_id in all_perms.items():
+                if perm_name in allowed_names:
+                    await session.execute(
+                        text("""
+                            INSERT OR IGNORE INTO role_permissions (role_id, permission_id)
+                            VALUES (:role_id, :perm_id)
+                        """),
+                        {"role_id": role_id, "perm_id": perm_id}
+                    )
+                else:
+                    await session.execute(
+                        text("""
+                            DELETE FROM role_permissions
+                            WHERE role_id = :role_id AND permission_id = :perm_id
+                        """),
+                        {"role_id": role_id, "perm_id": perm_id}
+                    )
         
         await session.commit()
     print("✅ Role-permission mappings created")

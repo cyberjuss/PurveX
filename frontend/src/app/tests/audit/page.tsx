@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Clock, Search, Eye } from "lucide-react";
-import { Badge } from "@/components/ui/badge";
+import { Chip, type ChipProps } from "@/components/ui/chip";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -14,7 +14,6 @@ import { PageHeader } from "@/components/layout/page-header";
 import { LoadingState } from "@/components/ui/loading-state";
 import { ErrorState } from "@/components/ui/error-state";
 import { getTests, type TestWithDetectionTitle } from "@/lib/api";
-import { cn } from "@/lib/utils";
 
 type ResultFilter = "all" | "PASS" | "FAIL" | "INCONCLUSIVE" | "PENDING" | "RUNNING" | "ERROR";
 type EnvFilter = "all" | "lab" | "dev" | "prod";
@@ -33,22 +32,23 @@ function formatDuration(start?: string | null, end?: string | null) {
   return `${mm}:${ss}`;
 }
 
-function getResultBadgeClass(result?: string) {
+// Test run result → Chip tone. ERROR maps to danger alongside FAIL because
+// the audit table only has room for a single chip per row and users care
+// about "did it pass / did it fail" more than "did it crash or report FAIL".
+function getResultTone(result?: string): NonNullable<ChipProps["tone"]> {
   switch ((result || "").toUpperCase()) {
     case "PASS":
-      return "bg-emerald-100 text-emerald-700 border border-emerald-200";
+      return "success";
     case "FAIL":
-      return "bg-red-100 text-red-700 border border-red-200";
-    case "INCONCLUSIVE":
-      return "bg-amber-100 text-amber-700 border border-amber-200";
-    case "PENDING":
-      return "bg-blue-100 text-blue-700 border border-blue-200";
-    case "RUNNING":
-      return "bg-yellow-100 text-yellow-700 border border-yellow-200";
     case "ERROR":
-      return "bg-red-200 text-red-800 border border-red-300";
+      return "danger";
+    case "INCONCLUSIVE":
+    case "RUNNING":
+      return "warning";
+    case "PENDING":
+      return "info";
     default:
-      return "bg-slate-100 text-slate-700 border border-slate-200";
+      return "neutral";
   }
 }
 
@@ -144,7 +144,7 @@ export default function TestsAuditPage() {
         />
       </div>
 
-      <Card className="border-2 border-slate-200 bg-white shadow-md">
+      <Card className="border-2 border-[var(--stroke-soft)] bg-[var(--surface-card)] shadow-md">
         <CardContent className="pt-4 pb-4">
           <div className="flex flex-col lg:flex-row gap-3">
             <div className="flex-1 relative">
@@ -153,15 +153,15 @@ export default function TestsAuditPage() {
                 placeholder="Search by detection, technique, or test id..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="pl-9 bg-white border-slate-300 text-slate-900 placeholder:text-slate-500"
+                className="pl-9 bg-[var(--surface-card)] border-[var(--stroke-soft)] text-[var(--foreground)] placeholder:text-slate-500 dark:placeholder:text-slate-400"
               />
             </div>
             <div className="flex flex-wrap gap-2">
               <Select value={resultFilter} onValueChange={(v: ResultFilter) => setResultFilter(v)}>
-                <SelectTrigger className="h-10 w-[150px] border-slate-300 bg-white text-slate-900">
+                <SelectTrigger className="h-10 w-[150px] border-slate-300 bg-white text-[var(--foreground)]">
                   <SelectValue placeholder="Result" />
                 </SelectTrigger>
-                <SelectContent className="bg-white border border-slate-200">
+                <SelectContent className="bg-white border border-[var(--stroke-soft)]">
                   <SelectItem value="all">All results</SelectItem>
                   <SelectItem value="PASS">Pass</SelectItem>
                   <SelectItem value="FAIL">Fail</SelectItem>
@@ -172,10 +172,10 @@ export default function TestsAuditPage() {
                 </SelectContent>
               </Select>
               <Select value={envFilter} onValueChange={(v: EnvFilter) => setEnvFilter(v)}>
-                <SelectTrigger className="h-10 w-[150px] border-slate-300 bg-white text-slate-900">
+                <SelectTrigger className="h-10 w-[150px] border-slate-300 bg-white text-[var(--foreground)]">
                   <SelectValue placeholder="Environment" />
                 </SelectTrigger>
-                <SelectContent className="bg-white border border-slate-200">
+                <SelectContent className="bg-white border border-[var(--stroke-soft)]">
                   <SelectItem value="all">All environments</SelectItem>
                   <SelectItem value="lab">Lab</SelectItem>
                   <SelectItem value="dev">Dev</SelectItem>
@@ -183,10 +183,10 @@ export default function TestsAuditPage() {
                 </SelectContent>
               </Select>
               <Select value={timeFilter} onValueChange={(v: TimeFilter) => setTimeFilter(v)}>
-                <SelectTrigger className="h-10 w-[140px] border-slate-300 bg-white text-slate-900">
+                <SelectTrigger className="h-10 w-[140px] border-slate-300 bg-white text-[var(--foreground)]">
                   <SelectValue placeholder="Time range" />
                 </SelectTrigger>
-                <SelectContent className="bg-white border border-slate-200">
+                <SelectContent className="bg-white border border-[var(--stroke-soft)]">
                   <SelectItem value="all">All time</SelectItem>
                   <SelectItem value="24h">Last 24h</SelectItem>
                   <SelectItem value="7d">Last 7 days</SelectItem>
@@ -199,18 +199,18 @@ export default function TestsAuditPage() {
       </Card>
 
       {filteredTests.length === 0 ? (
-        <Card className="border-2 border-slate-200 bg-white shadow-md">
+        <Card className="border-2 border-[var(--stroke-soft)] bg-[var(--surface-card)] shadow-md">
           <CardContent className="pt-12 pb-12 text-center">
-            <p className="text-lg font-semibold text-slate-900 mb-2">No test executions found</p>
+            <p className="text-lg font-semibold text-[var(--foreground)] mb-2">No test executions found</p>
             <p className="text-sm text-slate-600">Try adjusting your filters or run a new test.</p>
           </CardContent>
         </Card>
       ) : (
-        <Card className="border-2 border-slate-200 bg-white shadow-md">
+        <Card className="border-2 border-[var(--stroke-soft)] bg-[var(--surface-card)] shadow-md">
           <CardContent className="pt-4 pb-4">
             <div className="overflow-x-auto">
               <table className="min-w-full text-left text-[12px] text-slate-700">
-                <thead className="border-b border-slate-200 text-[10px] uppercase tracking-wider text-slate-500">
+                <thead className="border-b border-[var(--stroke-soft)] text-[10px] uppercase tracking-wider text-slate-500">
                   <tr>
                     <th className="py-2.5 pr-4">Time</th>
                     <th className="py-2.5 pr-4">Finished</th>
@@ -233,7 +233,7 @@ export default function TestsAuditPage() {
                     return (
                       <tr
                         key={test.id}
-                        className="hover:bg-slate-50 cursor-pointer"
+                        className="hover:bg-[var(--surface-elevated)] cursor-pointer"
                         onClick={(e) => {
                           if ((e.target as HTMLElement).closest("a")) {
                             return;
@@ -262,7 +262,7 @@ export default function TestsAuditPage() {
                           {formatDuration(test.started_at, test.finished_at)}
                         </td>
                         <td className="py-3 pr-4 max-w-[200px]">
-                          <div className="text-slate-900 truncate">
+                          <div className="text-[var(--foreground)] truncate">
                             {test.initiated_by_username || "Unknown user"}
                           </div>
                           <div className="text-[11px] text-slate-500 truncate">
@@ -270,7 +270,7 @@ export default function TestsAuditPage() {
                           </div>
                         </td>
                         <td className="py-3 pr-4 max-w-[260px]">
-                          <div className="text-slate-900 font-medium truncate">
+                          <div className="text-[var(--foreground)] font-medium truncate">
                             {test.detection_title || "No detection"}
                           </div>
                           {test.detection_id && (
@@ -289,9 +289,7 @@ export default function TestsAuditPage() {
                           {test.environment || "—"}
                         </td>
                         <td className="py-3 pr-4">
-                          <Badge className={cn("text-[10px] px-2 py-0.5", getResultBadgeClass(result))}>
-                            {result}
-                          </Badge>
+                          <Chip tone={getResultTone(result)}>{result}</Chip>
                         </td>
                         <td className="py-3 pr-4 text-slate-600">{test.status || "—"}</td>
                         <td className="py-3 pr-4 text-slate-600">

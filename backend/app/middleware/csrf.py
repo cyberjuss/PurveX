@@ -28,13 +28,11 @@ class CSRFProtectionMiddleware(BaseHTTPMiddleware):
         "/health",
         "/ready",
         "/auth/login",
-        "/auth/register",
         "/auth/bootstrap",
         "/auth/password-reset/request",
         "/auth/password-reset/confirm",
         "/auth/2fa/verify",
         "/api/v1/auth/login",
-        "/api/v1/auth/register",
         "/api/v1/auth/bootstrap",
         "/api/v1/auth/password-reset/request",
         "/api/v1/auth/password-reset/confirm",
@@ -84,4 +82,3 @@ class CSRFProtectionMiddleware(BaseHTTPMiddleware):
         
         response = await call_next(request)
         return response
-

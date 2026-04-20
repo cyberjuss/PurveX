@@ -24,6 +24,11 @@ logger = logging.getLogger(__name__)
 _KEY_ENV = "PURVEX_ENCRYPTION_KEY"
 
 
+def has_configured_encryption_key() -> bool:
+    """Return True only when an operator supplied a durable encryption key."""
+    return bool(os.getenv(_KEY_ENV))
+
+
 def _load_key() -> bytes:
     raw = os.getenv(_KEY_ENV)
     if raw:
@@ -60,7 +65,20 @@ def encrypt_value(plaintext: str | None) -> str | None:
     """Encrypt a plaintext string.  Returns a URL-safe base64 token or *None*."""
     if not plaintext:
         return plaintext
+    if is_encrypted_value(plaintext):
+        return plaintext
     return _fernet().encrypt(plaintext.encode()).decode()
+
+
+def is_encrypted_value(value: str | None) -> bool:
+    """Return True when *value* is decryptable with the configured key."""
+    if not value:
+        return False
+    try:
+        _fernet().decrypt(value.encode())
+        return True
+    except (InvalidToken, Exception):
+        return False
 
 
 def decrypt_value(ciphertext: str | None) -> str | None:

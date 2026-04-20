@@ -5,6 +5,7 @@ import { usePermissions } from "@/hooks/usePermissions";
 import { Permission } from "@/lib/permissions";
 import { useRouter } from "next/navigation";
 import { Card, CardContent } from "@/components/ui/card";
+import { SkeletonCard } from "@/components/ui/skeleton";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -109,9 +110,10 @@ export default function OrganizationSettingsPage() {
           subtitle="Configure the organization identity and workspace defaults that shape reports, schedules, and environments."
           icon={<Building2 className="h-5 w-5" />}
         />
-        <Card>
-          <CardContent className="pt-6 text-sm text-muted-foreground">Loading organization settings...</CardContent>
-        </Card>
+        <div className="space-y-4">
+          <SkeletonCard />
+          <SkeletonCard />
+        </div>
       </PageContainer>
     );
   }

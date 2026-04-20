@@ -54,6 +54,58 @@ export enum Role {
   VIEWER = "VIEWER",
 }
 
+export const ROLE_GUIDANCE: Record<Role, { label: string; can: string[]; cannot: string[] }> = {
+  [Role.ADMINISTRATOR]: {
+    label: "Administrator",
+    can: [
+      "Manage users, roles, organization settings, SIEM connections, and endpoints",
+      "Run and schedule production validations",
+      "Approve high-criticality and production changes",
+    ],
+    cannot: [
+      "Bypass audit logging or tenant isolation",
+      "Remove the last protected administrator through normal role removal",
+    ],
+  },
+  [Role.DETECTION_ENGINEER]: {
+    label: "Detection Engineer",
+    can: [
+      "Create and edit detections",
+      "Run lab/dev validations and schedule lab/dev tests",
+      "View endpoint status and export reports",
+    ],
+    cannot: [
+      "Manage users, SIEM connections, endpoints, or organization settings",
+      "Run or schedule production validations",
+      "Change criticality or approve high-criticality/production promotion",
+    ],
+  },
+  [Role.SECURITY_ANALYST]: {
+    label: "Security Analyst",
+    can: [
+      "Read detections, tests, endpoint status, and reports",
+      "Create test records and run lab validations",
+      "Use Watchtower for analysis",
+    ],
+    cannot: [
+      "Edit detections or change lifecycle/criticality",
+      "Run dev or production validations",
+      "Manage settings, SIEM connections, endpoints, users, or roles",
+    ],
+  },
+  [Role.VIEWER]: {
+    label: "Viewer",
+    can: [
+      "Read detections, validation evidence, endpoint status, settings summaries, and reports",
+    ],
+    cannot: [
+      "Create, update, delete, deploy, approve, or run anything",
+      "Use Watchtower",
+      "Manage settings, users, SIEM connections, or endpoints",
+    ],
+  },
+};
+
 export enum Criticality {
   LOW = "LOW",
   MEDIUM = "MEDIUM",

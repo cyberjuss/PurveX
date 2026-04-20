@@ -14,6 +14,7 @@ from ..routers.auth import get_current_user
 from ..utils.tenant import require_org_id
 from ..utils.authz import (
     require_detection_create,
+    require_detection_read,
     require_detection_update,
     require_detection_delete,
     require_criticality_update,
@@ -118,6 +119,7 @@ async def list_detections(
     List all detections with their latest test results.
     Returns empty list if no detections exist (production-ready).
     """
+    await require_detection_read(current_user, db)
     try:
         # Get all detections first - handle empty database gracefully
         try:
@@ -152,73 +154,53 @@ async def list_detections(
                 )
             raise
 
-        # If no detections, return empty list (valid state)
         if not detections:
             return []
 
-        # For each detection, get the latest test result
+        # Fetch all tests for this batch of detections in ONE query, then pick the
+        # latest per detection in Python. Previously this issued N+1 queries.
+        # Telemetry-readiness runs are intentionally excluded: they do not
+        # evaluate the rule, so they must not flip a detection's last_result /
+        # last_score / last_tested_at indicators.
+        detection_ids = [d.id for d in detections]
+        latest_by_detection: dict[str, models.Test] = {}
+        try:
+            tests_result = await db.execute(
+                select(models.Test).where(
+                    models.Test.detection_id.in_(detection_ids),
+                    models.Test.mode != "TELEMETRY_CHECK",
+                )
+            )
+            epoch = datetime(1970, 1, 1)
+            for test in tests_result.scalars().all():
+                current = latest_by_detection.get(test.detection_id)
+                key_new = (test.finished_at or epoch, test.started_at or epoch)
+                if current is None:
+                    latest_by_detection[test.detection_id] = test
+                else:
+                    key_current = (current.finished_at or epoch, current.started_at or epoch)
+                    if key_new > key_current:
+                        latest_by_detection[test.detection_id] = test
+        except Exception as test_error:
+            logger.warning(f"Error batch-fetching tests: {test_error}")
+
         detections_with_last_test = []
         for detection in detections:
             try:
-                # Get all tests for this detection and find the latest one in Python
-                # This is simpler and more reliable than complex SQL
-                try:
-                    tests_result = await db.execute(
-                        select(models.Test)
-                        .filter(models.Test.detection_id == detection.id)
-                    )
-                    all_tests = tests_result.scalars().all()
-                except Exception as test_error:
-                    logger.warning(f"Error fetching tests for detection {detection.id}: {test_error}")
-                    all_tests = []
-                
-                # Find the latest test (prefer finished_at, fallback to started_at)
-                latest_test = None
-                if all_tests:
-                    try:
-                        # Sort by finished_at DESC, then started_at DESC, handling None values
-                        latest_test = max(
-                            all_tests,
-                            key=lambda t: (
-                                t.finished_at if t.finished_at else (datetime(1970, 1, 1)),
-                                t.started_at if t.started_at else (datetime(1970, 1, 1))
-                            )
-                        )
-                    except Exception as max_error:
-                        logger.warning(f"Error finding latest test for detection {detection.id}: {max_error}")
-                        latest_test = None
-                
-                # Validate and build response
-                try:
-                    detection_data = schemas.Detection.model_validate(detection)
-                    if latest_test:
-                        detection_data.last_result = latest_test.result
-                        detection_data.last_score = latest_test.score
-                        detection_data.last_tested_at = latest_test.finished_at
-                    else:
-                        detection_data.last_result = None
-                        detection_data.last_score = None
-                        detection_data.last_tested_at = None
-                    
-                    detections_with_last_test.append(detection_data)
-                except Exception as validation_error:
-                    logger.error(f"Error validating detection {detection.id}: {validation_error}", exc_info=True)
-                    # Skip invalid detections but continue processing others
-                    continue
-                    
-            except Exception as e:
-                logger.error(f"Error processing detection {detection.id}: {e}", exc_info=True)
-                # Try to include the detection even if test lookup fails
-                try:
-                    detection_data = schemas.Detection.model_validate(detection)
+                detection_data = schemas.Detection.model_validate(detection)
+                latest_test = latest_by_detection.get(detection.id)
+                if latest_test:
+                    detection_data.last_result = latest_test.result
+                    detection_data.last_score = latest_test.score
+                    detection_data.last_tested_at = latest_test.finished_at
+                else:
                     detection_data.last_result = None
                     detection_data.last_score = None
                     detection_data.last_tested_at = None
-                    detections_with_last_test.append(detection_data)
-                except Exception as e2:
-                    logger.error(f"Error validating detection {detection.id}: {e2}", exc_info=True)
-                    # Skip this detection if we can't even validate it
-                    continue
+                detections_with_last_test.append(detection_data)
+            except Exception as validation_error:
+                logger.error(f"Error validating detection {detection.id}: {validation_error}", exc_info=True)
+                continue
 
         return detections_with_last_test
     except HTTPException:
@@ -238,6 +220,7 @@ async def get_detection(
     db: DBSession,
     current_user: CurrentUser,
 ):
+    await require_detection_read(current_user, db)
     # SECURITY: Validate detection_id format (UUID)
     import uuid
     try:
@@ -261,59 +244,163 @@ async def get_detection(
     return det
 
 
+@router.get("/{detection_id}/export", response_model=schemas.DetectionExport)
+async def export_detection(
+    detection_id: str,
+    db: DBSession,
+    current_user: CurrentUser,
+    format: str = Query("yaml", description="Only 'yaml' is supported today."),
+):
+    """Export a detection as YAML for seeding a Detection-as-Code repo.
+
+    Stable schema: ``id``, ``title``, ``description``, ``sigma_rule``,
+    ``siem_type``, ``siem_query``, ``technique_id``, ``status``,
+    ``criticality``, ``owner``, ``notes``, ``lifecycle_stage``. Anything
+    runtime-only (scores, last-run timestamps, …) is intentionally
+    omitted so round-tripping through git doesn't fight with PurveX's
+    own bookkeeping.
+    """
+    await require_detection_read(current_user, db)
+    try:
+        uuid.UUID(detection_id)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid detection ID format",
+        )
+    if format != "yaml":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Only format='yaml' is supported",
+        )
+    org_id = require_org_id(current_user)
+    result = await db.execute(
+        select(models.Detection).where(
+            models.Detection.id == detection_id,
+            models.Detection.organization_id == org_id,
+        )
+    )
+    det = result.scalar_one_or_none()
+    if not det:
+        raise HTTPException(status_code=404, detail="Detection not found")
+
+    # Local import to avoid pulling the git-sync module at app startup when
+    # it's not needed; it imports ``yaml`` + ``subprocess`` which we don't
+    # want hot on the import path for the rest of the detections router.
+    from ..services.git_sync import detection_to_yaml
+
+    return schemas.DetectionExport(id=det.id, yaml=detection_to_yaml(det))
+
+
 @router.get("/{detection_id}/alerts", response_model=List[schemas.DetectionAlert])
 async def get_detection_alerts(
     detection_id: str,
     db: DBSession,
     current_user: CurrentUser,
+    hours: int = Query(24, ge=1, le=168),
+    limit: int = Query(50, ge=1, le=500),
 ):
-    # SECURITY: Validate detection_id format (UUID)
-    import uuid
+    """Return recent SIEM events that match the detection's query.
+
+    Queries the org's SIEM connection for the given detection's `siem_type`
+    over the last `hours` window. Returns `[]` if no matching SIEM connection
+    is configured or the upstream query fails (the failure is logged).
+    """
+    await require_detection_read(current_user, db)
     try:
         uuid.UUID(detection_id)
     except ValueError:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid detection ID format")
-    
-    """Return recent SIEM alerts for a given detection (stubbed for MVP).
 
-    For now this does NOT call a real Splunk API – it just returns a few
-    synthetic alerts that are shaped like what the UI expects. This lets us
-    design the workflow and detail views before wiring real credentials.
-    """
     org_id = require_org_id(current_user)
-    stmt = select(models.Detection).where(
-        models.Detection.id == detection_id,
-        models.Detection.organization_id == org_id,
-    )
-
-    result = await db.execute(stmt)
-    det = result.scalar_one_or_none()
+    det = (
+        await db.execute(
+            select(models.Detection).where(
+                models.Detection.id == detection_id,
+                models.Detection.organization_id == org_id,
+            )
+        )
+    ).scalar_one_or_none()
     if not det:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Detection not found")
 
+    connection = (
+        await db.execute(
+            select(models.SIEMConnection)
+            .where(
+                models.SIEMConnection.organization_id == org_id,
+                func.lower(models.SIEMConnection.siem_type) == (det.siem_type or "").strip().lower(),
+            )
+            .order_by(models.SIEMConnection.id.asc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if connection is None:
+        return []
+
+    from ..services.siem_adapter import get_siem_adapter
+    import asyncio
+    import json
+
     now = datetime.utcnow()
-    alerts: List[schemas.DetectionAlert] = [
-        schemas.DetectionAlert(
-            id=1,
-            name=f"{det.title} – sample alert 1",
-            time=now - timedelta(minutes=5),
-            severity="medium",
-            host="lab-endpoint-1",
-            query=det.siem_query,
-            raw_event=f'Stub Splunk event for detection {det.id} at {now.isoformat()} (PurveX demo)',
-            test_id=1,
-        ),
-        schemas.DetectionAlert(
-            id=2,
-            name=f"{det.title} – sample alert 2",
-            time=now - timedelta(minutes=20),
-            severity="high",
-            host="lab-endpoint-2",
-            query=det.siem_query,
-            raw_event=f'Stub Splunk event (high severity) for detection {det.id}',
-            test_id=2,
-        ),
-    ]
+    earliest = now - timedelta(hours=hours)
+
+    try:
+        adapter = get_siem_adapter(connection)
+        events = await asyncio.to_thread(adapter.search_events, det.siem_query, earliest, now)
+    except Exception as exc:
+        logger.warning(
+            "SIEM alert lookup failed for detection %s on connection %s: %s",
+            det.id, connection.id, exc,
+        )
+        return []
+
+    alerts: List[schemas.DetectionAlert] = []
+    for idx, event in enumerate(events[:limit], start=1):
+        time_value = (
+            event.get("_time")
+            or event.get("@timestamp")
+            or event.get("TimeGenerated")
+        )
+        try:
+            event_time = datetime.fromisoformat(str(time_value).replace("Z", "+00:00")) if time_value else now
+        except ValueError:
+            event_time = now
+
+        severity = (
+            event.get("severity")
+            or event.get("Severity")
+            or (event.get("event") or {}).get("severity")
+            or (event.get("rule") or {}).get("severity")
+            or "info"
+        )
+
+        host = (
+            event.get("host")
+            or event.get("Computer")
+            or event.get("dest")
+            or event.get("dest_host")
+            or (event.get("host") if isinstance(event.get("host"), str) else None)
+            or ((event.get("host") or {}).get("name") if isinstance(event.get("host"), dict) else None)
+        )
+
+        try:
+            raw_event = json.dumps(event, default=str)[:8000]
+        except (TypeError, ValueError):
+            raw_event = str(event)[:8000]
+
+        alerts.append(
+            schemas.DetectionAlert(
+                id=idx,
+                name=det.title,
+                time=event_time,
+                severity=str(severity).lower(),
+                host=str(host) if host else None,
+                query=det.siem_query,
+                raw_event=raw_event,
+                test_id=None,
+            )
+        )
 
     return alerts
 
@@ -366,6 +453,11 @@ async def update_detection(
         "notes",  # Can update review notes
         "status",  # Can update lifecycle status (if user has permission)
         "criticality",  # Can update criticality (if user has permission)
+        # Detection-engineering lifecycle stage (identify -> maintain). Safe
+        # to update via the same PATCH because DetectionUpdate validates the
+        # value against the enum, and DaC-managed rules are protected by the
+        # proposal flow rather than this endpoint.
+        "lifecycle_stage",
     }
     
     # Filter to only allowed fields that are actually set
@@ -384,6 +476,9 @@ async def update_detection(
                     detail="Owner must be a valid email address"
                 )
             update_data["owner"] = owner_value
+
+    if "criticality" in update_data:
+        await require_criticality_update(current_user, db)
     
     # Apply updates
     for key, value in update_data.items():

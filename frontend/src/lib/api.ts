@@ -27,6 +27,10 @@ export interface Detection {
   last_result?: string | null;
   last_score?: number | null;
   lifecycle_stage?: string | null;
+  source?: string | null;
+  detection_source_id?: number | null;
+  source_path?: string | null;
+  source_commit_sha?: string | null;
 }
 
 export interface DetectionAlert {
@@ -50,12 +54,18 @@ export interface Test {
   technique_id?: string | null;
   marker?: string | null;
   environment?: string;
+  // Run intent persisted by the backend.
+  // DETECTION_VALIDATION | ALERT_CHECK | TELEMETRY_CHECK
+  mode?: TestRunMode | string | null;
   started_at: string;
   finished_at?: string | null;
   result?: string | null;
   status?: string;
   score?: number | null;
   endpoint?: string | null;
+  atomic_test_id?: string | null;
+  atomic_test_name?: string | null;
+  atomic_test_number?: number | null;
   initiated_by_username?: string | null;
   initiated_by_role?: string | null;
 }
@@ -114,6 +124,46 @@ export interface MitreTechnique {
   name: string;
   tactics: string[];
   is_subtechnique?: boolean;
+  platforms?: string[];
+  data_sources?: string[];
+}
+
+export interface CoverageTotals {
+  total_techniques: number;
+  validated: number;
+  at_risk: number;
+  mapped: number;
+  unmapped: number;
+}
+
+export interface CoverageTechniqueGap {
+  technique_id: string;
+  technique_name: string;
+  tactics: string[];
+  detection_count: number;
+  max_criticality: "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
+  last_score?: number | null;
+  last_result?: string | null;
+}
+
+export interface CoverageSummary {
+  totals: CoverageTotals;
+  simple_coverage_percent: number;
+  weighted_coverage_percent: number;
+  top_untested_high_value: CoverageTechniqueGap[];
+  top_failing_high_value: CoverageTechniqueGap[];
+  captured_at: string;
+}
+
+export interface CoverageTrendPoint {
+  day: string; // YYYY-MM-DD
+  validated: number;
+  tested: number;
+}
+
+export interface CoverageTrend {
+  days: number;
+  points: CoverageTrendPoint[];
 }
 
 export type TwoFactorSetupResponse = {
@@ -214,7 +264,6 @@ function clearSessionAndRedirect(reason: "expired" | "unauthorized") {
     localStorage.removeItem("purvex_username");
     localStorage.removeItem("purvex_user_role");
     localStorage.removeItem("purvex_logged_in");
-    localStorage.removeItem("purvex_access_token");
     localStorage.removeItem("purvex_csrf_token");
     localStorage.removeItem("purvex_csrf_token_time");
   } catch (err) {
@@ -314,6 +363,7 @@ export async function apiFetch(path: string, options: RequestInit = {}) {
 
   const apiBases = getApiBaseCandidates();
   let lastNetworkError: unknown = null;
+  const timeoutMs = path.startsWith("/atomic/") ? 90000 : 12000;
 
   const attemptedBases: string[] = [];
 
@@ -324,7 +374,7 @@ export async function apiFetch(path: string, options: RequestInit = {}) {
     while (true) {
       try {
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 12000);
+        const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
         if (options.signal) {
           if (options.signal.aborted) {
             controller.abort();
@@ -460,6 +510,14 @@ export async function apiFetch(path: string, options: RequestInit = {}) {
 
         return res.json();
       } catch (err) {
+        const isFetchFailure =
+          err instanceof TypeError ||
+          (typeof DOMException !== "undefined" && err instanceof DOMException && err.name === "AbortError");
+
+        if (!isFetchFailure) {
+          throw err;
+        }
+
         lastNetworkError = err;
         break;
       }
@@ -524,6 +582,41 @@ export async function createDetection(payload: Omit<Detection, "id">): Promise<D
   });
 }
 
+export type DetectionLifecycleStage =
+  | "identify"
+  | "design"
+  | "develop"
+  | "test"
+  | "deploy"
+  | "maintain";
+
+export const DETECTION_LIFECYCLE_STAGES: DetectionLifecycleStage[] = [
+  "identify",
+  "design",
+  "develop",
+  "test",
+  "deploy",
+  "maintain",
+];
+
+export interface DetectionUpdatePayload {
+  owner?: string | null;
+  notes?: string | null;
+  status?: string | null;
+  criticality?: string | null;
+  lifecycle_stage?: DetectionLifecycleStage | null;
+}
+
+export async function updateDetection(
+  detectionId: string,
+  patch: DetectionUpdatePayload
+): Promise<Detection> {
+  return apiFetch(`/detections/${detectionId}`, {
+    method: "PATCH",
+    body: JSON.stringify(patch),
+  });
+}
+
 export type TestRunMode = "DETECTION_VALIDATION" | "ALERT_CHECK" | "TELEMETRY_CHECK";
 
 export async function runTest(
@@ -532,7 +625,12 @@ export async function runTest(
     techniqueId?: string | null;
     environment: "lab" | "dev" | "prod";
     mode?: TestRunMode;
-    atomic?: { atomic_test_id: string; atomic_args?: Record<string, any> };
+    atomic?: {
+      atomic_test_id?: string;
+      atomic_test_name?: string;
+      atomic_test_number?: number;
+      atomic_args?: Record<string, unknown>;
+    };
     labOs?: "windows" | "linux" | "both";
     endpoint?: string | null;
   }
@@ -644,14 +742,402 @@ export async function createTestSchedule(params: {
   });
 }
 
+export async function updateTestSchedule(
+  scheduleId: number,
+  updates: { enabled?: boolean; intervalSeconds?: number | null; cronExpression?: string | null; runAt?: string | null }
+): Promise<TestSchedule> {
+  const body: Record<string, unknown> = {};
+  if (updates.enabled !== undefined) body.enabled = updates.enabled;
+  if (updates.intervalSeconds !== undefined) body.interval_seconds = updates.intervalSeconds;
+  if (updates.cronExpression !== undefined) body.cron_expression = updates.cronExpression;
+  if (updates.runAt !== undefined) body.run_at = updates.runAt;
+  return apiFetch(`/tests/schedules/${scheduleId}`, {
+    method: "PATCH",
+    body: JSON.stringify(body),
+  });
+}
+
 export async function deleteTestSchedule(scheduleId: number): Promise<void> {
   return apiFetch(`/tests/schedules/${scheduleId}`, {
     method: "DELETE",
   });
 }
 
+export interface OnboardingStep {
+  id: string;
+  title: string;
+  description: string;
+  completed: boolean;
+  href: string;
+  status?: "complete" | "action_required" | "blocked";
+  recovery_hint?: string | null;
+}
+
+export interface OnboardingStatus {
+  completed: boolean;
+  progress: number;
+  steps: OnboardingStep[];
+}
+
+export async function getOnboardingStatus(): Promise<OnboardingStatus> {
+  return apiFetch("/onboarding/status", { cache: "no-store" });
+}
+
 export async function getMitreTechniques(): Promise<MitreTechnique[]> {
   return apiFetch("/mitre/techniques", { cache: "no-store" });
+}
+
+export async function getCoverageSummary(): Promise<CoverageSummary> {
+  return apiFetch("/mitre/coverage/summary", { cache: "no-store" });
+}
+
+export async function getCoverageTrend(days = 30): Promise<CoverageTrend> {
+  return apiFetch(`/mitre/coverage/trend?days=${days}`, { cache: "no-store" });
+}
+
+// ---------------------------------------------------------------------------
+// Detection proposals (AI remediation guardrails)
+// ---------------------------------------------------------------------------
+
+export type ProposalStatus =
+  | "pending"
+  | "approved"
+  | "rejected"
+  | "applied"
+  | "superseded";
+
+export type ProposalAction = "create" | "update" | "delete";
+export type ProposalProposerKind = "ai" | "user" | "git";
+
+export interface DetectionProposalDiffEntry {
+  field: string;
+  before: unknown;
+  after: unknown;
+  changed: boolean;
+}
+
+export interface DetectionProposal {
+  id: string;
+  organization_id: number;
+  detection_id: string | null;
+  detection_title: string | null;
+  proposed_by_kind: ProposalProposerKind;
+  proposed_by_user_id: number | null;
+  proposed_by_label: string;
+  action: ProposalAction;
+  status: ProposalStatus;
+  reason: string | null;
+  target_fields: Record<string, unknown>;
+  current_snapshot: Record<string, unknown> | null;
+  diff: DetectionProposalDiffEntry[];
+  stale: boolean;
+  created_at: string;
+  reviewed_at: string | null;
+  reviewed_by_user_id: number | null;
+  reviewed_by_label: string | null;
+  review_note: string | null;
+}
+
+export interface DetectionProposalStats {
+  pending: number;
+  approved: number;
+  applied: number;
+  rejected: number;
+  superseded: number;
+}
+
+export interface DetectionProposalCreate {
+  detection_id?: string | null;
+  action: ProposalAction;
+  proposed_by_kind?: ProposalProposerKind;
+  proposed_by_label?: string;
+  reason?: string | null;
+  target_fields?: Record<string, unknown>;
+}
+
+export async function listProposals(params: {
+  status?: ProposalStatus;
+  detectionId?: string;
+  skip?: number;
+  limit?: number;
+} = {}): Promise<DetectionProposal[]> {
+  const qs = new URLSearchParams();
+  if (params.status) qs.set("status", params.status);
+  if (params.detectionId) qs.set("detection_id", params.detectionId);
+  if (params.skip != null) qs.set("skip", String(params.skip));
+  if (params.limit != null) qs.set("limit", String(params.limit));
+  const query = qs.toString();
+  const path = query ? `/proposals?${query}` : "/proposals";
+  return apiFetch(path, { cache: "no-store" });
+}
+
+export async function getProposalStats(): Promise<DetectionProposalStats> {
+  return apiFetch("/proposals/stats", { cache: "no-store" });
+}
+
+export async function getProposal(id: string): Promise<DetectionProposal> {
+  return apiFetch(`/proposals/${id}`, { cache: "no-store" });
+}
+
+export async function createProposal(
+  body: DetectionProposalCreate,
+): Promise<DetectionProposal> {
+  return apiFetch("/proposals", {
+    method: "POST",
+    body: JSON.stringify({
+      proposed_by_kind: "ai",
+      proposed_by_label: "PurveX Assistant",
+      ...body,
+    }),
+  });
+}
+
+export async function approveProposal(
+  id: string,
+  note?: string,
+): Promise<DetectionProposal> {
+  return apiFetch(`/proposals/${id}/approve`, {
+    method: "POST",
+    body: JSON.stringify({ note: note ?? null }),
+  });
+}
+
+export async function rejectProposal(
+  id: string,
+  note?: string,
+): Promise<DetectionProposal> {
+  return apiFetch(`/proposals/${id}/reject`, {
+    method: "POST",
+    body: JSON.stringify({ note: note ?? null }),
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Detection-as-Code (Sprint 3)
+// ---------------------------------------------------------------------------
+
+export type DetectionSourceAuthType = "none" | "token";
+export type DetectionSourceSyncStatus = "success" | "error" | null;
+
+export interface DetectionSource {
+  id: number;
+  organization_id: number;
+  name: string;
+  provider: string;
+  repo_url: string;
+  branch: string;
+  path_glob: string;
+  auth_type: DetectionSourceAuthType;
+  enabled: boolean;
+  has_auth_secret: boolean;
+  last_synced_at?: string | null;
+  last_sync_status?: DetectionSourceSyncStatus;
+  last_sync_error?: string | null;
+  last_commit_sha?: string | null;
+  last_created_count: number;
+  last_updated_count: number;
+  last_proposals_count: number;
+  last_skipped_count: number;
+  created_at: string;
+}
+
+export interface DetectionSourceCreate {
+  name: string;
+  repo_url: string;
+  branch?: string;
+  path_glob?: string;
+  auth_type?: DetectionSourceAuthType;
+  auth_secret?: string | null;
+  enabled?: boolean;
+  provider?: string;
+}
+
+export interface DetectionSourceUpdate {
+  name?: string;
+  repo_url?: string;
+  branch?: string;
+  path_glob?: string;
+  auth_type?: DetectionSourceAuthType;
+  // Pass "" to clear the stored token; undefined leaves it unchanged.
+  auth_secret?: string | null;
+  enabled?: boolean;
+}
+
+export interface DetectionSourceSyncResult {
+  source_id: number;
+  commit_sha: string | null;
+  created: number;
+  updated: number;
+  proposals: number;
+  skipped: number;
+  errors: string[];
+}
+
+export interface DetectionExportPayload {
+  id: string;
+  yaml: string;
+}
+
+export async function listDetectionSources(): Promise<DetectionSource[]> {
+  return apiFetch("/detection-sources", { cache: "no-store" });
+}
+
+export async function createDetectionSource(
+  body: DetectionSourceCreate,
+): Promise<DetectionSource> {
+  return apiFetch("/detection-sources", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export async function updateDetectionSource(
+  id: number,
+  body: DetectionSourceUpdate,
+): Promise<DetectionSource> {
+  return apiFetch(`/detection-sources/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify(body),
+  });
+}
+
+export async function deleteDetectionSource(id: number): Promise<void> {
+  await apiFetch(`/detection-sources/${id}`, { method: "DELETE" });
+}
+
+export async function syncDetectionSource(
+  id: number,
+): Promise<DetectionSourceSyncResult> {
+  return apiFetch(`/detection-sources/${id}/sync`, { method: "POST" });
+}
+
+export async function exportDetectionYaml(
+  detectionId: string,
+): Promise<DetectionExportPayload> {
+  return apiFetch(`/detections/${detectionId}/export?format=yaml`, {
+    cache: "no-store",
+  });
+}
+
+// ---------------------------------------------------------------------------
+// SIEM → Git audit mirror (Sprint 4)
+// ---------------------------------------------------------------------------
+
+export type DetectionMirrorAuthType = "none" | "token";
+export type DetectionMirrorWriteMode = "direct" | "branch" | "pr";
+export type DetectionMirrorStatus = "success" | "error" | null;
+
+export interface DetectionGitMirror {
+  id: number;
+  organization_id: number;
+  name: string;
+  repo_url: string;
+  branch: string;
+  path_template: string;
+  commit_author_name: string;
+  commit_author_email: string;
+  write_mode: DetectionMirrorWriteMode;
+  auth_type: DetectionMirrorAuthType;
+  enabled: boolean;
+  has_auth_secret: boolean;
+  last_mirrored_at?: string | null;
+  last_mirror_status?: DetectionMirrorStatus;
+  last_mirror_error?: string | null;
+  last_commit_sha?: string | null;
+  last_commits_count: number;
+  last_files_written: number;
+  created_at: string;
+}
+
+export interface DetectionGitMirrorCreate {
+  name: string;
+  repo_url: string;
+  branch?: string;
+  path_template?: string;
+  commit_author_name?: string;
+  commit_author_email?: string;
+  write_mode?: DetectionMirrorWriteMode;
+  auth_type?: DetectionMirrorAuthType;
+  auth_secret?: string | null;
+  enabled?: boolean;
+}
+
+export interface DetectionGitMirrorUpdate {
+  name?: string;
+  repo_url?: string;
+  branch?: string;
+  path_template?: string;
+  commit_author_name?: string;
+  commit_author_email?: string;
+  write_mode?: DetectionMirrorWriteMode;
+  auth_type?: DetectionMirrorAuthType;
+  // Pass "" to clear the stored token; undefined leaves it unchanged.
+  auth_secret?: string | null;
+  enabled?: boolean;
+}
+
+export interface DetectionMirrorPublishResult {
+  mirror_id: number;
+  commit_sha: string | null;
+  files_written: number;
+  commits: number;
+  skipped: number;
+  errors: string[];
+}
+
+export async function listDetectionMirrors(): Promise<DetectionGitMirror[]> {
+  return apiFetch("/detection-mirrors", { cache: "no-store" });
+}
+
+export async function createDetectionMirror(
+  body: DetectionGitMirrorCreate,
+): Promise<DetectionGitMirror> {
+  return apiFetch("/detection-mirrors", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export async function updateDetectionMirror(
+  id: number,
+  body: DetectionGitMirrorUpdate,
+): Promise<DetectionGitMirror> {
+  return apiFetch(`/detection-mirrors/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify(body),
+  });
+}
+
+export async function deleteDetectionMirror(id: number): Promise<void> {
+  await apiFetch(`/detection-mirrors/${id}`, { method: "DELETE" });
+}
+
+export async function linkMirrorToSiem(
+  mirrorId: number,
+  siemId: number,
+): Promise<DetectionGitMirror> {
+  return apiFetch(`/detection-mirrors/${mirrorId}/link-siem/${siemId}`, {
+    method: "POST",
+  });
+}
+
+export async function unlinkMirrorFromSiem(
+  mirrorId: number,
+  siemId: number,
+): Promise<DetectionGitMirror> {
+  return apiFetch(`/detection-mirrors/${mirrorId}/unlink-siem/${siemId}`, {
+    method: "POST",
+  });
+}
+
+export async function bootstrapMirror(
+  mirrorId: number,
+  siemId: number,
+): Promise<DetectionMirrorPublishResult> {
+  return apiFetch(
+    `/detection-mirrors/${mirrorId}/bootstrap?siem_id=${siemId}`,
+    { method: "POST" },
+  );
 }
 
 export interface Report {

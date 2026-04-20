@@ -13,7 +13,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status, Request
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import desc, select
 from typing_extensions import Annotated
 from pydantic import BaseModel
 
@@ -83,6 +83,19 @@ async def request_password_reset(payload: PasswordResetRequest, request: Request
         },
         expires_minutes=30,
     )
+    token_claims = decode_access_token(reset_token)
+    if token_claims and token_claims.get("jti") and token_claims.get("exp"):
+        db.add(
+            models.PasswordResetToken(
+                user_id=user.id,
+                jti=str(token_claims["jti"]),
+                expires_at=datetime.fromtimestamp(
+                    float(token_claims["exp"]),
+                    tz=timezone.utc,
+                ),
+            )
+        )
+        await db.commit()
 
     # In a production deployment this token should be delivered via email.
     # For now we log it to the server log so it can be used during manual testing.
@@ -112,12 +125,30 @@ async def confirm_password_reset(payload: PasswordResetConfirm, db: DBSession):
 
     user_id = claims.get("uid")
     email = claims.get("sub")
-    if not user_id or not email:
+    jti = claims.get("jti")
+    if not user_id or not email or not jti:
         raise HTTPException(status_code=400, detail="Invalid reset token payload")
 
     user = await db.get(models.User, user_id)
     if not user or user.email != email:
         raise HTTPException(status_code=400, detail="Invalid reset token payload")
+
+    token_result = await db.execute(
+        select(models.PasswordResetToken).where(
+            models.PasswordResetToken.user_id == user.id,
+            models.PasswordResetToken.jti == str(jti),
+        )
+    )
+    reset_token_record = token_result.scalars().first()
+    now = datetime.now(timezone.utc)
+    if not reset_token_record or reset_token_record.used_at:
+        raise HTTPException(status_code=400, detail="Invalid or expired reset token")
+
+    expires_at = reset_token_record.expires_at
+    if expires_at and expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
+    if expires_at and expires_at < now:
+        raise HTTPException(status_code=400, detail="Invalid or expired reset token")
 
     # Validate password complexity
     is_valid, error_msg = validate_password_complexity(new_password)
@@ -128,18 +159,13 @@ async def confirm_password_reset(payload: PasswordResetConfirm, db: DBSession):
     history_length = getattr(app_settings, "PASSWORD_HISTORY_LENGTH", 5)
 
     # Check against current password
-    try:
-        if user.hashed_password and verify_password(new_password, user.hashed_password):
-            raise HTTPException(
-                status_code=400,
-                detail="New password cannot be the same as the current password",
-            )
-    except Exception:
-        pass
+    if user.hashed_password and verify_password(new_password, user.hashed_password):
+        raise HTTPException(
+            status_code=400,
+            detail="New password cannot be the same as the current password",
+        )
 
     if history_length and history_length > 0:
-        from sqlalchemy import select, desc
-
         history_stmt = (
             select(models.PasswordHistory)
             .where(models.PasswordHistory.user_id == user.id)
@@ -150,18 +176,16 @@ async def confirm_password_reset(payload: PasswordResetConfirm, db: DBSession):
         previous_passwords = history_result.scalars().all()
 
         for entry in previous_passwords:
-            try:
-                if verify_password(new_password, entry.hashed_password):
-                    raise HTTPException(
-                        status_code=400,
-                        detail="New password cannot match any of your recent passwords",
-                    )
-            except Exception:
-                continue
+            if verify_password(new_password, entry.hashed_password):
+                raise HTTPException(
+                    status_code=400,
+                    detail="New password cannot match any of your recent passwords",
+                )
 
     # All checks passed – update the password and history.
     new_hash = hash_password(new_password)
     user.hashed_password = new_hash
+    reset_token_record.used_at = now
     db.add(
         models.PasswordHistory(
             user_id=user.id,

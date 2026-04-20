@@ -2,11 +2,21 @@
 
 import { useEffect, useState, useTransition } from "react";
 import { cn } from "@/lib/utils";
-import { Shield, Activity, Settings, Bot, LogOut, FileText } from "lucide-react";
+import {
+  Shield,
+  Activity,
+  Settings,
+  Bot,
+  LogOut,
+  FileText,
+  HardDrive,
+  Inbox,
+} from "lucide-react";
 import Link from "next/link";
 import Image from "next/image";
 import { usePathname, useRouter } from "next/navigation";
 import { apiFetch } from "@/lib/api";
+import { Chip } from "@/components/ui/chip";
 
 type SidebarProps = {
   open: boolean;
@@ -18,8 +28,12 @@ const links = [
   { href: "/dashboard", label: "Dashboard", icon: Activity },
   { href: "/detections", label: "Detections", icon: Shield },
   { href: "/tests", label: "Tests", icon: Activity },
+  { href: "/lab", label: "Endpoints", icon: HardDrive },
   { href: "/reports", label: "Reports", icon: FileText },
   { href: "/agent", label: "Watchtower", icon: Bot },
+  // Guardrail inbox: shows a live count of AI/user proposals awaiting
+  // human approval so the badge acts as a gentle nudge toward review.
+  { href: "/proposals", label: "Proposals", icon: Inbox },
   { href: "/settings", label: "Settings", icon: Settings },
 ];
 
@@ -30,6 +44,9 @@ export function Sidebar({ open, onClose, onToggle }: SidebarProps) {
   const [isLoggingOut, setIsLoggingOut] = useState(false);
   const [userName, setUserName] = useState("User");
   const [userRole, setUserRole] = useState("Member");
+  // Pending-proposal count powers the sidebar badge. We refetch on path
+  // changes so approving a proposal immediately drops the badge.
+  const [proposalPending, setProposalPending] = useState<number>(0);
   void onToggle;
 
   const userInitials = userName
@@ -65,6 +82,25 @@ export function Sidebar({ open, onClose, onToggle }: SidebarProps) {
       cancelled = true;
     };
   }, []);
+
+  // Poll pending-proposal count on path change. Cheap GET, one row per
+  // status bucket. Failures are swallowed — the badge just stays at 0.
+  useEffect(() => {
+    let cancelled = false;
+    async function loadPending() {
+      try {
+        const stats = await apiFetch("/proposals/stats", { cache: "no-store" });
+        if (cancelled) return;
+        setProposalPending(Number(stats?.pending ?? 0));
+      } catch {
+        if (!cancelled) setProposalPending(0);
+      }
+    }
+    void loadPending();
+    return () => {
+      cancelled = true;
+    };
+  }, [pathname]);
 
   async function handleSignOut() {
     if (isLoggingOut) return;
@@ -151,7 +187,8 @@ export function Sidebar({ open, onClose, onToggle }: SidebarProps) {
               pathname === href ||
               (href === "/settings" && pathname.startsWith("/settings")) ||
               (href === "/tests" && pathname.startsWith("/tests")) ||
-              (href === "/detections" && pathname.startsWith("/detections"));
+              (href === "/detections" && pathname.startsWith("/detections")) ||
+              (href === "/lab" && pathname.startsWith("/lab"));
 
             return (
               <Link
@@ -180,6 +217,11 @@ export function Sidebar({ open, onClose, onToggle }: SidebarProps) {
                   strokeWidth={2}
                 />
                 <span className="tracking-tight">{label}</span>
+                {href === "/proposals" && proposalPending > 0 ? (
+                  <Chip tone="warning" className="ml-auto font-semibold">
+                    {proposalPending > 99 ? "99+" : proposalPending}
+                  </Chip>
+                ) : null}
               </Link>
             );
           })}

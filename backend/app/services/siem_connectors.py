@@ -1,8 +1,12 @@
+import asyncio
 import json
 from datetime import datetime, timezone, timedelta
 from typing import Any, Dict, List, Optional, Tuple
 
 import httpx
+
+_TRANSIENT_STATUS_CODES = {408, 429, 500, 502, 503, 504}
+_CIRCUIT_STATE: Dict[str, Dict[str, Any]] = {}
 
 
 def _now_utc() -> datetime:
@@ -32,6 +36,20 @@ def _as_bool(value: Any, default: bool = True) -> bool:
     return default
 
 
+def _as_int(value: Any, default: int) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _as_float(value: Any, default: float) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
 def _limit(value: int, min_value: int, max_value: int) -> int:
     return max(min_value, min(max_value, value))
 
@@ -56,11 +74,27 @@ class SplunkConnector:
         self.notable_index = credentials.get("notable_index") or "notable"
         self.alerts_mode = (credentials.get("alerts_mode") or "alerts_fired").strip().lower()
         self.alerts_index = credentials.get("alerts_index") or ""
+        self.retry_attempts = _limit(_as_int(credentials.get("retry_attempts"), 2), 0, 5)
+        self.retry_base_delay_seconds = max(
+            0.05,
+            min(_as_float(credentials.get("retry_base_delay_seconds"), 0.25), 5.0),
+        )
+        self.circuit_failure_threshold = _limit(
+            _as_int(credentials.get("circuit_failure_threshold"), 3),
+            1,
+            20,
+        )
+        self.circuit_cooldown_seconds = _limit(
+            _as_int(credentials.get("circuit_cooldown_seconds"), 60),
+            5,
+            3600,
+        )
         self.host_field = credentials.get("host_field") or "host"
         self.user_field = credentials.get("user_field") or "user"
         self.dest_field = credentials.get("dest_field") or "dest"
         self.src_field = credentials.get("src_field") or "src"
         self.signature_field = credentials.get("signature_field") or "signature"
+        self._circuit_key = f"splunk:{self.base_url}"
 
     def _headers(self) -> Dict[str, str]:
         token = self.credentials.get("token") or self.credentials.get("splunk_token")
@@ -75,20 +109,86 @@ class SplunkConnector:
             return (username, password)
         return None
 
+    def _circuit(self) -> Dict[str, Any]:
+        return _CIRCUIT_STATE.setdefault(
+            self._circuit_key,
+            {"failures": 0, "opened_until": None},
+        )
+
+    def _raise_if_circuit_open(self) -> None:
+        state = self._circuit()
+        opened_until = state.get("opened_until")
+        if not isinstance(opened_until, datetime):
+            return
+        if _now_utc() < opened_until:
+            raise RuntimeError("Splunk connector circuit is open after repeated failures; retry later.")
+        state["failures"] = 0
+        state["opened_until"] = None
+
+    def _record_success(self) -> None:
+        state = self._circuit()
+        state["failures"] = 0
+        state["opened_until"] = None
+
+    def _record_failure(self, exc: Exception) -> None:
+        if isinstance(exc, httpx.HTTPStatusError):
+            status_code = exc.response.status_code
+            if status_code not in _TRANSIENT_STATUS_CODES:
+                return
+
+        state = self._circuit()
+        failures = int(state.get("failures") or 0) + 1
+        state["failures"] = failures
+        if failures >= self.circuit_failure_threshold:
+            state["opened_until"] = _now_utc() + timedelta(seconds=self.circuit_cooldown_seconds)
+
+    def _is_retryable(self, exc: Exception) -> bool:
+        if isinstance(exc, httpx.HTTPStatusError):
+            return exc.response.status_code in _TRANSIENT_STATUS_CODES
+        return isinstance(
+            exc,
+            (
+                httpx.ConnectError,
+                httpx.ConnectTimeout,
+                httpx.NetworkError,
+                httpx.PoolTimeout,
+                httpx.ReadTimeout,
+                httpx.RemoteProtocolError,
+                httpx.WriteTimeout,
+            ),
+        )
+
+    async def _retry_delay(self, attempt: int) -> None:
+        await asyncio.sleep(self.retry_base_delay_seconds * (2**attempt))
+
     async def _request(self, method: str, path: str, params: Optional[Dict[str, Any]] = None, data: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         url = f"{self.base_url}{path}"
-        async with httpx.AsyncClient(verify=self.verify_ssl, timeout=self.timeout) as client:
-            response = await client.request(
-                method,
-                url,
-                params=params,
-                data=data,
-                headers=self._headers(),
-                auth=self._auth(),
-            )
-            response.raise_for_status()
-            if response.text:
-                return response.json()
+        last_exc: Exception | None = None
+        for attempt in range(self.retry_attempts + 1):
+            self._raise_if_circuit_open()
+            try:
+                async with httpx.AsyncClient(verify=self.verify_ssl, timeout=self.timeout) as client:
+                    response = await client.request(
+                        method,
+                        url,
+                        params=params,
+                        data=data,
+                        headers=self._headers(),
+                        auth=self._auth(),
+                    )
+                    response.raise_for_status()
+                    self._record_success()
+                    if response.text:
+                        return response.json()
+                    return {}
+            except Exception as exc:
+                last_exc = exc
+                if attempt >= self.retry_attempts or not self._is_retryable(exc):
+                    self._record_failure(exc)
+                    raise
+                await self._retry_delay(attempt)
+        if last_exc:
+            raise last_exc
         return {}
 
     async def _export_search(self, search: str, earliest: str, latest: str, limit: int) -> List[Dict[str, Any]]:
@@ -100,20 +200,34 @@ class SplunkConnector:
             "latest_time": latest,
         }
         results: List[Dict[str, Any]] = []
-        async with httpx.AsyncClient(verify=self.verify_ssl, timeout=self.timeout) as client:
-            headers = self._headers()
-            headers.setdefault("Content-Type", "application/x-www-form-urlencoded")
-            response = await client.post(url, data=payload, headers=headers, auth=self._auth())
-            response.raise_for_status()
-            for line in response.text.splitlines():
-                try:
-                    payload = json.loads(line)
-                except Exception:
-                    continue
-                if "result" in payload and isinstance(payload["result"], dict):
-                    results.append(payload["result"])
-                    if len(results) >= limit:
-                        break
+        last_exc: Exception | None = None
+        for attempt in range(self.retry_attempts + 1):
+            self._raise_if_circuit_open()
+            try:
+                async with httpx.AsyncClient(verify=self.verify_ssl, timeout=self.timeout) as client:
+                    headers = self._headers()
+                    headers.setdefault("Content-Type", "application/x-www-form-urlencoded")
+                    response = await client.post(url, data=payload, headers=headers, auth=self._auth())
+                    response.raise_for_status()
+                    self._record_success()
+                    for line in response.text.splitlines():
+                        try:
+                            line_payload = json.loads(line)
+                        except Exception:
+                            continue
+                        if "result" in line_payload and isinstance(line_payload["result"], dict):
+                            results.append(line_payload["result"])
+                            if len(results) >= limit:
+                                break
+                    return results
+            except Exception as exc:
+                last_exc = exc
+                if attempt >= self.retry_attempts or not self._is_retryable(exc):
+                    self._record_failure(exc)
+                    raise
+                await self._retry_delay(attempt)
+        if last_exc:
+            raise last_exc
         return results
 
     def _build_search_link(self, search: str, earliest: Optional[str] = None, latest: Optional[str] = None) -> str:

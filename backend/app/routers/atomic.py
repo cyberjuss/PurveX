@@ -121,6 +121,7 @@ def _load_atomic_tests() -> List[AtomicTestDefinition]:
                     AtomicTestDefinition(
                         id=test_id,
                         technique_id=technique_id,
+                        test_number=idx,
                         name=name,
                         description=description,
                         platforms=platforms,
@@ -175,6 +176,28 @@ def _ensure_atomic_catalog_loaded() -> None:
             f"{_atomic_data_dir()} and try again."
         ),
     )
+
+
+async def preload_atomic_catalog() -> int:
+    """Warm the Atomic Red Team catalog in a background thread at startup.
+
+    Returns the number of tests loaded. Silently no-ops if the catalog isn't
+    installed on disk — the first UI request will still 503 with install
+    guidance, which is the right UX.
+    """
+    global ATOMIC_TESTS
+    if ATOMIC_TESTS:
+        return len(ATOMIC_TESTS)
+    if not _atomic_root().exists():
+        logger.info("Atomic catalog dir missing; skipping preload")
+        return 0
+    try:
+        refreshed = await anyio.to_thread.run_sync(_refresh_atomic_tests)
+    except Exception:  # pragma: no cover - defensive
+        logger.exception("Atomic catalog preload failed")
+        return 0
+    ATOMIC_TESTS = refreshed
+    return len(ATOMIC_TESTS)
 
 
 def _download_atomic_catalog() -> int:

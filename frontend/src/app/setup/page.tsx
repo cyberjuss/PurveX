@@ -2,21 +2,38 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import { z } from "zod";
 import { bootstrapAdmin, getBootstrapStatus } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { PageContainer } from "@/components/layout/page-container";
+import { FieldError, FormError } from "@/components/ui/form-error";
+import { useZodForm } from "@/lib/forms";
+import {
+  optionalEmailSchema,
+  passwordSchema,
+  usernameSchema,
+} from "@/lib/validators";
+
+const setupSchema = z.object({
+  username: usernameSchema,
+  email: optionalEmailSchema,
+  password: passwordSchema,
+});
 
 export default function SetupPage() {
   const router = useRouter();
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [username, setUsername] = useState("admin");
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
+  const [serverError, setServerError] = useState<string | null>(null);
+
+  const form = useZodForm(setupSchema, {
+    username: "admin",
+    email: "",
+    password: "",
+  });
 
   useEffect(() => {
     let cancelled = false;
@@ -28,9 +45,11 @@ export default function SetupPage() {
           router.replace("/login");
           return;
         }
-      } catch (err: any) {
+      } catch (err: unknown) {
         if (!cancelled) {
-          setError(err?.message || "Unable to check setup status.");
+          const message =
+            err instanceof Error ? err.message : "Unable to check setup status.";
+          setServerError(message);
         }
       } finally {
         if (!cancelled) setLoading(false);
@@ -44,21 +63,22 @@ export default function SetupPage() {
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    setError(null);
-    if (!username.trim() || !password.trim()) {
-      setError("Username and password are required.");
-      return;
-    }
+    setServerError(null);
+    const parsed = form.validate();
+    if (!parsed.success) return;
+
     setSubmitting(true);
     try {
       await bootstrapAdmin({
-        username: username.trim(),
-        password,
-        email: email.trim() || undefined,
+        username: parsed.data.username,
+        password: parsed.data.password,
+        email: parsed.data.email || undefined,
       });
       router.replace("/login");
-    } catch (err: any) {
-      setError(err?.message || "Failed to create admin user.");
+    } catch (err: unknown) {
+      const message =
+        err instanceof Error ? err.message : "Failed to create admin user.";
+      setServerError(message);
     } finally {
       setSubmitting(false);
     }
@@ -76,41 +96,56 @@ export default function SetupPage() {
             {loading ? (
               <div className="text-sm text-slate-500">Checking setup status…</div>
             ) : (
-              <form onSubmit={handleSubmit} className="space-y-4">
-                {error && (
-                  <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
-                    {error}
-                  </div>
-                )}
+              <form onSubmit={handleSubmit} className="space-y-4" noValidate>
+                <FormError message={serverError} />
+
                 <div className="space-y-2">
                   <Label htmlFor="username">Admin username</Label>
                   <Input
                     id="username"
-                    value={username}
-                    onChange={(e) => setUsername(e.target.value)}
+                    value={form.values.username}
+                    onChange={(e) => form.setField("username", e.target.value)}
+                    onBlur={() => form.touch("username")}
                     autoComplete="username"
+                    aria-invalid={!!form.errors.username}
+                    aria-describedby="username-error"
                   />
+                  <FieldError id="username-error" message={form.errors.username} />
                 </div>
+
                 <div className="space-y-2">
                   <Label htmlFor="email">Email (optional)</Label>
                   <Input
                     id="email"
                     type="email"
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
+                    value={form.values.email ?? ""}
+                    onChange={(e) => form.setField("email", e.target.value)}
+                    onBlur={() => form.touch("email")}
                     autoComplete="email"
+                    aria-invalid={!!form.errors.email}
+                    aria-describedby="email-error"
                   />
+                  <FieldError id="email-error" message={form.errors.email} />
                 </div>
+
                 <div className="space-y-2">
                   <Label htmlFor="password">Password</Label>
                   <Input
                     id="password"
                     type="password"
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
+                    value={form.values.password}
+                    onChange={(e) => form.setField("password", e.target.value)}
+                    onBlur={() => form.touch("password")}
                     autoComplete="new-password"
+                    aria-invalid={!!form.errors.password}
+                    aria-describedby="password-error"
                   />
+                  <FieldError id="password-error" message={form.errors.password} />
+                  <p className="text-xs text-slate-500">
+                    At least 12 characters, including upper, lower, and a number.
+                  </p>
                 </div>
+
                 <Button type="submit" disabled={submitting}>
                   {submitting ? "Creating…" : "Create admin"}
                 </Button>

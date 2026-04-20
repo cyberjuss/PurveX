@@ -15,10 +15,11 @@ from .. import models, schemas
 from ..db import get_db, async_sessionmaker
 from ..services.atomic_runner import generate_marker, execute_test_pipeline
 from ..services.scoring import score_test_run
+from ..jobs import enqueue_test_execution
 from ..schemas import TestDetailResponse
 from ..routers.auth import get_current_user
 from ..utils.tenant import require_org_id
-from ..utils.authz import require_admin, require_test_run
+from ..utils.authz import require_permission, require_test_run, Permission
 
 router = APIRouter(
     prefix="/tests",
@@ -47,6 +48,8 @@ async def create_test(
     db: DBSession,
     current_user: CurrentUser,
 ):
+    await require_permission(current_user, Permission.TESTS_CREATE, db)
+
     # SECURITY: Sanitize all input fields
     from ..utils.sanitize_inputs import sanitize_model_inputs
     sanitized_data = sanitize_model_inputs(test)
@@ -189,9 +192,13 @@ async def run_test(
             detection_id=test_run.detection_id,
             technique_id=technique_id,
             environment=test_run.environment,
+            mode=test_run.mode or "DETECTION_VALIDATION",
             status="pending",  # Will be set to "running" in pipeline
             marker=marker,
             endpoint=test_run.endpoint,
+            atomic_test_id=test_run.atomic_test_id,
+            atomic_test_name=test_run.atomic_test_name,
+            atomic_test_number=test_run.atomic_test_number,
             initiated_by_user_id=safe_user_id,
             initiated_by_email=safe_user_email,
             initiated_by_username=initiated_by_username,
@@ -214,14 +221,23 @@ async def run_test(
                     details=(
                         f"detection_id={db_test.detection_id}, "
                         f"env={db_test.environment}, "
-                        f"mode={getattr(test_run, 'mode', 'DETECTION_VALIDATION')}"
+                        f"mode={getattr(test_run, 'mode', 'DETECTION_VALIDATION')}, "
+                        f"atomic_test_number={db_test.atomic_test_number or 'default'}"
                     ),
                 )
             )
             await session.commit()
 
-        # 4. Schedule background execute_test_pipeline with org_id for tenant isolation.
-        background_tasks.add_task(execute_test_pipeline, db_test.id, org_id)
+        # 4. Enqueue the test for the worker (arq when REDIS_URL is set,
+        # in-process BackgroundTasks otherwise). A Job row is created so the
+        # UI can show status, attempts, and last error independently of the
+        # underlying queue driver.
+        await enqueue_test_execution(
+            db=db,
+            background_tasks=background_tasks,
+            test_id=db_test.id,
+            org_id=org_id,
+        )
 
         # 5. Return `{ id, status, environment }`
         return db_test
@@ -244,6 +260,8 @@ async def get_all_tests(
     skip: int = Query(0, ge=0, le=10_000),
     limit: int = Query(20, ge=1, le=100),
 ):
+    await require_permission(current_user, Permission.TESTS_READ, db)
+
     org_id = require_org_id(current_user)
     try:
         # If there are no tests, return empty list immediately
@@ -308,7 +326,7 @@ async def list_test_schedules(
 
     Restricted to admin users to keep scheduling under explicit control.
     """
-    require_admin(current_user)
+    await require_permission(current_user, Permission.TESTS_SCHEDULE_PROD, db)
     org_id = require_org_id(current_user)
 
     stmt = (
@@ -438,6 +456,8 @@ async def get_test_detail(
     db: DBSession,
     current_user: CurrentUser,
 ):
+    await require_permission(current_user, Permission.TESTS_READ, db)
+
     # SECURITY: Validate test_id is positive
     if test_id <= 0:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid test ID")
@@ -501,6 +521,8 @@ async def create_test_artifact(
     db: DBSession,
     current_user: CurrentUser,
 ):
+    await require_permission(current_user, Permission.TESTS_CREATE, db)
+
     # SECURITY: Validate test_id is positive
     if test_id <= 0:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid test ID")
@@ -547,6 +569,8 @@ async def read_test_artifacts(
     skip: int = Query(0, ge=0, le=10_000),
     limit: int = Query(100, ge=1, le=200),
 ):
+    await require_permission(current_user, Permission.TESTS_READ, db)
+
     # SECURITY: Validate test_id is positive
     if test_id <= 0:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid test ID")
@@ -583,6 +607,8 @@ async def read_test_artifact(
     db: DBSession,
     current_user: CurrentUser,
 ):
+    await require_permission(current_user, Permission.TESTS_READ, db)
+
     # SECURITY: Validate IDs are positive
     if test_id <= 0 or artifact_id <= 0:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid test or artifact ID")
@@ -625,6 +651,8 @@ async def score_test_results(
     This keeps Watchtower and the PurveX API in sync by funnelling all scoring
     through a single backend implementation.
     """
+    await require_permission(current_user, Permission.TESTS_CREATE, db)
+
     org_id = require_org_id(current_user)
 
     # Ensure the test exists and belongs to the caller's organisation.
@@ -665,7 +693,9 @@ async def score_test_results(
 @router.post("/debug_post")
 async def debug_post(current_user: CurrentUser):
     # Keep this endpoint for local diagnostics only; restrict to admin users.
-    require_admin(current_user)
+    # This route has no DB dependency, so keep the legacy admin flag check.
+    if not current_user.is_admin:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Administrator access required")
     return {"message": "Debug POST successful!"}
 
 
@@ -681,7 +711,7 @@ async def reset_active_tests(
     This is primarily a UX escape hatch so the Active Tests card can be
     reset during demos and lab work.
     """
-    require_admin(current_user)
+    await require_permission(current_user, Permission.SETTINGS_UPDATE, db)
     org_id = require_org_id(current_user)
 
     try:
@@ -715,6 +745,63 @@ async def reset_active_tests(
         ) from exc
 
 
+@router.patch("/schedules/{schedule_id}", response_model=schemas.TestSchedule)
+async def update_test_schedule(
+    schedule_id: int,
+    payload: schemas.TestScheduleUpdate,
+    db: DBSession,
+    current_user: CurrentUser,
+):
+    """Enable, disable, or re-parameterize a schedule."""
+    if schedule_id <= 0:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid schedule ID")
+    await require_permission(current_user, Permission.TESTS_SCHEDULE_PROD, db)
+    org_id = require_org_id(current_user)
+
+    stmt = select(models.TestSchedule).where(
+        models.TestSchedule.id == schedule_id,
+        models.TestSchedule.organization_id == org_id,
+    )
+    result = await db.execute(stmt)
+    schedule = result.scalar_one_or_none()
+    if schedule is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Schedule not found")
+
+    updates = payload.model_dump(exclude_unset=True)
+    was_disabled = not schedule.enabled
+    for field, value in updates.items():
+        setattr(schedule, field, value)
+
+    # If re-enabling a schedule that has no scheduled next run, compute one.
+    if updates.get("enabled") is True and was_disabled and schedule.next_run_at is None:
+        now = datetime.utcnow()
+        if schedule.schedule_type == "interval" and schedule.interval_seconds:
+            schedule.next_run_at = now + timedelta(seconds=schedule.interval_seconds)
+        elif schedule.schedule_type == "cron" and schedule.cron_expression:
+            try:
+                from croniter import croniter
+                schedule.next_run_at = croniter(schedule.cron_expression, now).get_next(datetime)
+            except Exception:
+                pass
+
+    await db.commit()
+    await db.refresh(schedule)
+
+    from ..db import async_sessionmaker
+    async with async_sessionmaker() as session:
+        session.add(models.AuditEvent(
+            user_id=current_user.id,
+            user_email=current_user.email,
+            action="UPDATE_TEST_SCHEDULE",
+            resource_type="test_schedule",
+            resource_id=str(schedule_id),
+            details=f"Updated: {', '.join(updates.keys())}",
+        ))
+        await session.commit()
+
+    return schedule
+
+
 @router.delete("/schedules/{schedule_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_test_schedule(
     schedule_id: int,
@@ -730,7 +817,7 @@ async def delete_test_schedule(
     
     Restricted to admin users. Ensures the schedule belongs to the caller's organization.
     """
-    require_admin(current_user)
+    await require_permission(current_user, Permission.TESTS_SCHEDULE_PROD, db)
     org_id = require_org_id(current_user)
     
     # CRITICAL: Verify schedule exists and belongs to this org before deletion.
@@ -779,5 +866,54 @@ async def delete_test_schedule(
             )
         )
         await session.commit()
-    
+
     return None
+
+
+@router.get("/{test_id}/job")
+async def get_test_job(
+    test_id: int,
+    db: DBSession,
+    current_user: CurrentUser,
+):
+    """Return the most recent background job row for a test.
+
+    The UI polls this to show worker state (queued/running/failed/timeout) in
+    addition to the test's own status field.
+    """
+    await require_permission(current_user, Permission.TESTS_READ, db)
+
+    org_id = require_org_id(current_user)
+    # Confirm the test belongs to the caller's org before leaking job metadata.
+    test_result = await db.execute(
+        select(models.Test).where(
+            models.Test.id == test_id,
+            models.Test.organization_id == org_id,
+        )
+    )
+    if not test_result.scalar_one_or_none():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Test not found")
+
+    job_result = await db.execute(
+        select(models.Job)
+        .where(
+            models.Job.resource_type == "test",
+            models.Job.resource_id == str(test_id),
+            models.Job.organization_id == org_id,
+        )
+        .order_by(desc(models.Job.enqueued_at))
+        .limit(1)
+    )
+    job = job_result.scalar_one_or_none()
+    if not job:
+        return {"status": "none"}
+    return {
+        "id": job.id,
+        "status": job.status,
+        "attempts": job.attempts,
+        "max_attempts": job.max_attempts,
+        "last_error": job.last_error,
+        "enqueued_at": job.enqueued_at,
+        "started_at": job.started_at,
+        "finished_at": job.finished_at,
+    }

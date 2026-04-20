@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { Card, CardContent } from "@/components/ui/card";
+import { PageSkeleton } from "@/components/ui/skeleton";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -1005,9 +1006,9 @@ export default function TestRunnerSettingsPage() {
 
   if (loading) {
     return (
-      <div className="text-sm text-muted-foreground">
-        Loading test runner settings…
-      </div>
+      <PageContainer maxWidth="xl" className="space-y-8">
+        <PageSkeleton withEyebrow withActions variant="list" rows={4} />
+      </PageContainer>
     );
   }
   if (error) {
@@ -1032,12 +1033,12 @@ export default function TestRunnerSettingsPage() {
           You have read-only access. Contact an administrator to configure agents.
         </div>
       )}
-      <Card className="border border-slate-200 bg-white shadow-sm rounded-2xl">
+      <Card className="border border-[var(--stroke-soft)] bg-[var(--surface-card)] shadow-sm rounded-2xl">
         <CardContent className="p-6">
           <div className="grid gap-4 lg:grid-cols-[1.3fr_0.7fr]">
             <div className="space-y-4">
               <div>
-                <h2 className="text-lg font-semibold text-slate-900">Agent onboarding checklist</h2>
+                <h2 className="text-lg font-semibold text-[var(--foreground)]">Agent onboarding checklist</h2>
                 <p className="text-sm text-slate-600">
                   Set a reachable API endpoint, generate a registration token, install the agent, and confirm the environment can run validations.
                 </p>
@@ -1049,13 +1050,13 @@ export default function TestRunnerSettingsPage() {
                   { label: "Agent registered", done: configs.length > 0, detail: configs.length > 0 ? `${configs.length} agent configuration${configs.length === 1 ? "" : "s"} found.` : "No agent configuration has been registered yet." },
                   { label: "Execution path", done: connectionType === "agent" || Boolean(formData.hostname), detail: connectionType === "agent" ? "The installer will register the environment automatically." : formData.hostname ? `SSH target ${formData.hostname}:${formData.port || 22}` : "Enter the SSH host that will execute validations." },
                 ].map((item) => (
-                  <div key={item.label} className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                  <div key={item.label} className="rounded-xl border border-[var(--stroke-soft)] bg-[var(--surface-elevated)] p-4">
                     <div className="flex items-start gap-3">
                       <div className={cn("mt-0.5 h-5 w-5 rounded-full border flex items-center justify-center", item.done ? "border-emerald-200 bg-emerald-50 text-emerald-600" : "border-amber-200 bg-amber-50 text-amber-600")}>
                         {item.done ? <CheckCircle2 className="h-3.5 w-3.5" /> : <Info className="h-3.5 w-3.5" />}
                       </div>
                       <div>
-                        <p className="text-sm font-semibold text-slate-900">{item.label}</p>
+                        <p className="text-sm font-semibold text-[var(--foreground)]">{item.label}</p>
                         <p className="text-xs text-slate-600 mt-1">{item.detail}</p>
                       </div>
                     </div>
@@ -1063,8 +1064,8 @@ export default function TestRunnerSettingsPage() {
                 ))}
               </div>
             </div>
-            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-              <Label htmlFor="public_api_url" className="text-sm font-semibold text-slate-900">Agent API endpoint</Label>
+            <div className="rounded-2xl border border-[var(--stroke-soft)] bg-[var(--surface-elevated)] p-4">
+              <Label htmlFor="public_api_url" className="text-sm font-semibold text-[var(--foreground)]">Agent API endpoint</Label>
               <p className="text-xs text-slate-600 mt-1 mb-3">
                 This is the address remote agents will call. Override it if you are using a tunnel, reverse proxy, VPN hostname, or public domain.
               </p>
@@ -1073,7 +1074,7 @@ export default function TestRunnerSettingsPage() {
                 value={publicApiUrl}
                 onChange={(e) => setPublicApiUrl(e.target.value)}
                 placeholder="https://purvex.company.com/api"
-                className="bg-white border-slate-200 text-slate-900"
+                className="bg-[var(--surface-card)] border-[var(--stroke-soft)] text-[var(--foreground)]"
               />
             </div>
           </div>
@@ -1121,7 +1122,7 @@ export default function TestRunnerSettingsPage() {
                           isCompleted
                             ? "border-emerald-400 text-emerald-500 bg-emerald-50"
                             : isActive
-                            ? "border-slate-900 text-slate-900 shadow-[0_0_0_4px_rgba(15,23,42,0.1)]"
+                            ? "border-slate-900 text-[var(--foreground)] shadow-[0_0_0_4px_rgba(15,23,42,0.1)]"
                             : "border-slate-200 text-slate-400"
                         )}
                       >
@@ -1134,7 +1135,7 @@ export default function TestRunnerSettingsPage() {
                       <span
                         className={cn(
                           "text-base font-medium",
-                          isActive ? "text-slate-900" : "text-slate-500"
+                          isActive ? "text-[var(--foreground)]" : "text-slate-500"
                         )}
                       >
                         {item.label}
@@ -1148,15 +1149,15 @@ export default function TestRunnerSettingsPage() {
         })()}
       </div>
       {/* Unified Connection Card - Agent or SSH */}
-      <Card className="border border-slate-200 shadow-lg shadow-slate-200/50 rounded-2xl bg-white overflow-hidden">
+      <Card className="border border-[var(--stroke-soft)] shadow-lg shadow-slate-200/50 rounded-2xl bg-white overflow-hidden">
         <CardContent className="pt-6">
           <div className="space-y-8">
           {/* Step 1 - Choose Connection Type - Always visible */}
           <div className="space-y-4">
             <div className="flex items-start justify-between">
               <div className="space-y-1">
-                <h2 className="text-xl font-display font-semibold text-slate-900 flex items-center gap-2">
-                  <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-slate-100 text-slate-700 border border-slate-200 text-sm font-bold">
+                <h2 className="text-xl font-display font-semibold text-[var(--foreground)] flex items-center gap-2">
+                  <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-slate-100 text-slate-700 border border-[var(--stroke-soft)] text-sm font-bold">
                     1
                   </span>
                   Choose connection method
@@ -1179,15 +1180,15 @@ export default function TestRunnerSettingsPage() {
                 className={cn(
                   "group relative px-4 py-3 text-sm font-medium transition-all duration-200 rounded-xl flex items-center gap-3 border-2",
                   connectionType === "agent"
-                    ? "bg-white text-slate-900 border-slate-900 shadow-sm"
+                    ? "bg-white text-[var(--foreground)] border-slate-900 shadow-sm"
                     : "bg-white text-slate-700 border-slate-200 hover:border-slate-300 hover:shadow-sm"
                 )}
               >
                 <div className={cn(
                   "h-10 w-10 rounded-lg flex items-center justify-center transition-all duration-200 shadow-sm",
                   connectionType === "agent" 
-                    ? "bg-white text-slate-700 border border-slate-200" 
-                    : "bg-white text-slate-600 border border-slate-200"
+                    ? "bg-white text-slate-700 border border-[var(--stroke-soft)]" 
+                    : "bg-white text-slate-600 border border-[var(--stroke-soft)]"
                 )}>
                   <ServerCog className="h-5 w-5" />
                 </div>
@@ -1221,15 +1222,15 @@ export default function TestRunnerSettingsPage() {
                 className={cn(
                   "group relative px-4 py-3 text-sm font-medium transition-all duration-200 rounded-xl flex items-center gap-3 border-2",
                   connectionType === "ssh"
-                    ? "bg-white text-slate-900 border-slate-900 shadow-sm"
+                    ? "bg-white text-[var(--foreground)] border-slate-900 shadow-sm"
                     : "bg-white text-slate-700 border-slate-200 hover:border-slate-300 hover:shadow-sm"
                 )}
               >
                 <div className={cn(
                   "h-10 w-10 rounded-lg flex items-center justify-center transition-all duration-200 shadow-sm",
                   connectionType === "ssh" 
-                    ? "bg-white text-slate-700 border border-slate-200" 
-                    : "bg-white text-slate-600 border border-slate-200"
+                    ? "bg-white text-slate-700 border border-[var(--stroke-soft)]" 
+                    : "bg-white text-slate-600 border border-[var(--stroke-soft)]"
                 )}>
                   <Terminal className="h-5 w-5" />
                 </div>
@@ -1246,13 +1247,13 @@ export default function TestRunnerSettingsPage() {
 
           {/* Agent Registration Flow - Step 2: Choose Platform */}
           {connectionType === "agent" && currentStep >= 2 && (
-            <div className="space-y-8 pt-4 border-t border-slate-200 animate-fade-in-scale">
+            <div className="space-y-8 pt-4 border-t border-[var(--stroke-soft)] animate-fade-in-scale">
               {/* Step 2 - Choose Platform */}
               <div className="space-y-4">
                 <div className="flex items-start justify-between">
                   <div className="space-y-1">
-                    <h2 className="text-xl font-display font-semibold text-slate-900 flex items-center gap-2">
-                      <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-slate-100 text-slate-700 border border-slate-200 text-sm font-bold">
+                    <h2 className="text-xl font-display font-semibold text-[var(--foreground)] flex items-center gap-2">
+                      <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-slate-100 text-slate-700 border border-[var(--stroke-soft)] text-sm font-bold">
                         2
                       </span>
                       Choose platform
@@ -1279,7 +1280,7 @@ export default function TestRunnerSettingsPage() {
                         "group relative px-4 py-3 text-sm font-medium transition-all duration-200 rounded-xl flex items-center gap-3",
                         "border-2",
                         selectedScript === "bash"
-                          ? "bg-slate-50 text-slate-900 border-slate-900 shadow-md ring-2 ring-slate-200"
+                          ? "bg-slate-50 text-[var(--foreground)] border-slate-900 shadow-md ring-2 ring-slate-200"
                           : "bg-white text-slate-600 border-slate-200 hover:bg-slate-50 hover:border-slate-300 hover:text-slate-700 hover:shadow-sm"
                       )}
                     >
@@ -1306,7 +1307,7 @@ export default function TestRunnerSettingsPage() {
                         "group relative px-4 py-3 text-sm font-medium transition-all duration-200 rounded-xl flex items-center gap-3",
                         "border-2",
                         selectedScript === "powershell"
-                          ? "bg-slate-50 text-slate-900 border-slate-900 shadow-md ring-2 ring-slate-200"
+                          ? "bg-slate-50 text-[var(--foreground)] border-slate-900 shadow-md ring-2 ring-slate-200"
                           : "bg-white text-slate-600 border-slate-200 hover:bg-slate-50 hover:border-slate-300 hover:text-slate-700 hover:shadow-sm"
                       )}
                     >
@@ -1327,7 +1328,7 @@ export default function TestRunnerSettingsPage() {
             </div>
 
             {/* Python Runtime Option */}
-            <div className="space-y-2 ml-9 pt-2 border-t border-slate-200">
+            <div className="space-y-2 ml-9 pt-2 border-t border-[var(--stroke-soft)]">
               <div className="flex items-center gap-0.5 mb-0.5">
                 <div className="h-px flex-1 bg-gradient-to-r from-transparent via-slate-300 to-transparent"></div>
                 <span className="text-[8px] text-slate-500 font-semibold uppercase tracking-wider px-0.5">Runtime</span>
@@ -1344,7 +1345,7 @@ export default function TestRunnerSettingsPage() {
                     "group relative px-4 py-3 text-sm font-medium transition-all duration-300 rounded-xl flex items-center gap-3 justify-start border-2",
                     "border",
                     selectedScript === "python"
-                      ? "bg-slate-50 text-slate-900 border-slate-900 shadow-lg ring-2 ring-slate-200"
+                      ? "bg-slate-50 text-[var(--foreground)] border-slate-900 shadow-lg ring-2 ring-slate-200"
                       : "bg-white text-slate-600 border-slate-200 hover:bg-slate-50 hover:border-slate-300 hover:text-slate-700 hover:shadow-md"
                   )}
                 >
@@ -1372,11 +1373,11 @@ export default function TestRunnerSettingsPage() {
 
           {/* Step 3 - Download Script */}
           {connectionType === "agent" && currentStep >= 3 && (
-                <div className="space-y-4 pt-4 border-t border-slate-200 animate-fade-in-scale">
+                <div className="space-y-4 pt-4 border-t border-[var(--stroke-soft)] animate-fade-in-scale">
                   <div className="flex items-start justify-between">
                     <div className="space-y-1">
-                      <h2 className="text-xl font-display font-semibold text-slate-900 flex items-center gap-2">
-                        <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-slate-100 text-slate-700 border border-slate-200 text-sm font-bold">
+                      <h2 className="text-xl font-display font-semibold text-[var(--foreground)] flex items-center gap-2">
+                        <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-slate-100 text-slate-700 border border-[var(--stroke-soft)] text-sm font-bold">
                           3
                         </span>
                         Download Script
@@ -1392,7 +1393,7 @@ export default function TestRunnerSettingsPage() {
                         </div>
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-3 mb-1">
-                            <p className="text-base font-semibold text-slate-900 font-mono">
+                            <p className="text-base font-semibold text-[var(--foreground)] font-mono">
                               {selectedScript === "bash" && "register_agent.sh"}
                               {selectedScript === "powershell" && "register_agent.ps1"}
                               {selectedScript === "python" && "register_agent.py"}
@@ -1458,7 +1459,7 @@ export default function TestRunnerSettingsPage() {
                               });
                             }
                           }}
-                          className="h-10 w-10 rounded-lg bg-slate-100 border border-slate-200 text-slate-600 hover:bg-sky-50 hover:border-sky-200 hover:text-sky-600 cursor-pointer transition-all duration-300 shadow-sm hover:scale-105 flex items-center justify-center flex-shrink-0 focus:outline-none focus:ring-2 focus:ring-sky-500/50"
+                          className="h-10 w-10 rounded-lg bg-slate-100 border border-[var(--stroke-soft)] text-slate-600 hover:bg-sky-50 hover:border-sky-200 hover:text-sky-600 cursor-pointer transition-all duration-300 shadow-sm hover:scale-105 flex items-center justify-center flex-shrink-0 focus:outline-none focus:ring-2 focus:ring-sky-500/50"
                           title={
                             !canManageAgents
                               ? "Administrator access required"
@@ -1471,12 +1472,12 @@ export default function TestRunnerSettingsPage() {
                         </button>
                       </div>
                     </div>
-                    <div className="mt-4 p-4 rounded-xl border border-slate-200 bg-white shadow-sm">
+                    <div className="mt-4 p-4 rounded-xl border border-[var(--stroke-soft)] bg-[var(--surface-card)] shadow-sm">
                       <div className="flex items-center justify-between gap-4">
                         <div className="space-y-1 min-w-0">
                           <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">Registration Token</p>
                           <div className="flex items-center gap-2">
-                            <code className="text-sm font-mono text-slate-900 break-all">
+                            <code className="text-sm font-mono text-[var(--foreground)] break-all">
                               {tokenLoading && !userToken && "Generating token..."}
                               {!tokenLoading && !userToken && "No active token. Generate one when ready to register."}
                               {userToken &&
@@ -1506,7 +1507,7 @@ export default function TestRunnerSettingsPage() {
                             type="button"
                             aria-label={showToken ? "Hide registration token" : "Reveal registration token"}
                             title={showToken ? "Hide token" : "Reveal token"}
-                            className="inline-flex h-9 px-3 items-center justify-center rounded-lg bg-slate-100 border border-slate-200 text-slate-600 hover:bg-slate-200 cursor-pointer transition-all duration-200 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                            className="inline-flex h-9 px-3 items-center justify-center rounded-lg bg-slate-100 border border-[var(--stroke-soft)] text-slate-600 hover:bg-slate-200 cursor-pointer transition-all duration-200 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
                             onClick={() => {
                               if (!userToken || tokenLoading) return;
                               setShowToken((prev) => !prev);
@@ -1519,7 +1520,7 @@ export default function TestRunnerSettingsPage() {
                             type="button"
                             aria-label="Copy registration token"
                             title="Copy registration token"
-                            className="inline-flex h-9 w-9 items-center justify-center rounded-lg bg-slate-100 border border-slate-200 text-slate-600 hover:bg-slate-900 hover:border-slate-800 hover:text-white cursor-pointer transition-all duration-200 shadow-sm hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed"
+                            className="inline-flex h-9 w-9 items-center justify-center rounded-lg bg-slate-100 border border-[var(--stroke-soft)] text-slate-600 hover:bg-slate-900 hover:border-slate-800 hover:text-white cursor-pointer transition-all duration-200 shadow-sm hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed"
                             onClick={() => {
                               if (!userToken || typeof navigator === "undefined" || !navigator.clipboard) {
                                 return;
@@ -1546,11 +1547,11 @@ export default function TestRunnerSettingsPage() {
 
           {/* Step 4 - Run Command */}
           {connectionType === "agent" && currentStep >= 4 && (
-            <div className="space-y-4 pt-4 border-t border-slate-200 animate-fade-in-scale">
+            <div className="space-y-4 pt-4 border-t border-[var(--stroke-soft)] animate-fade-in-scale">
                 <div className="flex items-start justify-between">
                   <div className="space-y-1">
-                    <h2 className="text-xl font-display font-semibold text-slate-900 flex items-center gap-2">
-                      <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-slate-100 text-slate-700 border border-slate-200 text-sm font-bold">
+                    <h2 className="text-xl font-display font-semibold text-[var(--foreground)] flex items-center gap-2">
+                      <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-slate-100 text-slate-700 border border-[var(--stroke-soft)] text-sm font-bold">
                         4
                       </span>
                       Run installer
@@ -1561,14 +1562,14 @@ export default function TestRunnerSettingsPage() {
                   <div className="ml-9">
                     <div className="flex items-center justify-between gap-4 bg-white border-2 border-slate-200 rounded-xl p-4 shadow-sm">
                       <div className="space-y-1">
-                        <p className="text-sm font-medium text-slate-900">Installer command ready</p>
+                        <p className="text-sm font-medium text-[var(--foreground)]">Installer command ready</p>
                         <p className="text-xs text-slate-600">Copy and run it on the target environment.</p>
                       </div>
                       <Button
                         type="button"
                         variant="default"
                         size="sm"
-                        className="shrink-0 rounded-full bg-white px-4 text-slate-900 border border-slate-200 shadow-[0_12px_24px_rgba(15,23,42,0.12)] hover:bg-slate-50"
+                        className="shrink-0 rounded-full bg-white px-4 text-[var(--foreground)] border border-[var(--stroke-soft)] shadow-[0_12px_24px_rgba(15,23,42,0.12)] hover:bg-slate-50"
                         onClick={() => {
                           const apiUrl = publicApiUrl.trim() || getDefaultRunnerApiUrl();
                           let command = "";
@@ -1603,7 +1604,7 @@ export default function TestRunnerSettingsPage() {
                   </div>
 
                 {/* Advanced Section */}
-                <div className="pt-4 border-t border-slate-200">
+                <div className="pt-4 border-t border-[var(--stroke-soft)]">
                   <details className="group">
                     <summary className="cursor-pointer list-none">
                       <div className="flex items-center gap-2 text-sm text-slate-600 hover:text-slate-700 transition-all duration-200 py-2">
@@ -1611,11 +1612,11 @@ export default function TestRunnerSettingsPage() {
                         <span className="text-xs text-slate-400 group-open:text-slate-600 transition-transform duration-200 group-open:rotate-180">▼</span>
                       </div>
                     </summary>
-                    <div className="mt-3 ml-0 p-4 rounded-xl bg-slate-50 border border-slate-200 transition-all duration-200">
+                    <div className="mt-3 ml-0 p-4 rounded-xl bg-slate-50 border border-[var(--stroke-soft)] transition-all duration-200">
                       <div className="flex items-center gap-2 mb-3">
                         <span className="text-xs font-semibold text-slate-700 uppercase tracking-wider">API Endpoint</span>
                       </div>
-                      <code className="text-sm font-mono text-slate-900 break-all bg-white px-4 py-2.5 rounded-lg border border-slate-200 block shadow-sm">{publicApiUrl.trim() || getDefaultRunnerApiUrl()}</code>
+                      <code className="text-sm font-mono text-[var(--foreground)] break-all bg-white px-4 py-2.5 rounded-lg border border-[var(--stroke-soft)] block shadow-sm">{publicApiUrl.trim() || getDefaultRunnerApiUrl()}</code>
                     </div>
                   </details>
                 </div>
@@ -1624,9 +1625,9 @@ export default function TestRunnerSettingsPage() {
 
           {/* SSH Configuration Flow - Step 2 */}
           {connectionType === "ssh" && currentStep === 2 && (
-            <div className="space-y-4 pt-4 border-t border-slate-200 animate-fade-in-scale">
-              <div className="p-4 rounded-lg bg-slate-50 border border-slate-200">
-                <h4 className="text-sm font-semibold text-slate-900 mb-2">SSH environment configuration</h4>
+            <div className="space-y-4 pt-4 border-t border-[var(--stroke-soft)] animate-fade-in-scale">
+              <div className="p-4 rounded-lg bg-slate-50 border border-[var(--stroke-soft)]">
+                <h4 className="text-sm font-semibold text-[var(--foreground)] mb-2">SSH environment configuration</h4>
                 <p className="text-xs text-slate-600 mb-4">Configure the host PurveX should use for remote validation execution.</p>
           {showAddForm && (
                 <form onSubmit={handleFormSubmit} className="space-y-6">

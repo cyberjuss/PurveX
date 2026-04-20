@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
-import { Badge } from "@/components/ui/badge";
+import { Chip } from "@/components/ui/chip";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
   getDetections,
@@ -42,6 +42,43 @@ import {
 } from "lucide-react";
 import { PageContainer } from "@/components/layout/page-container";
 import { cn } from "@/lib/utils";
+import { z } from "zod";
+import { FieldError } from "@/components/ui/form-error";
+
+// Validates the few free-form text inputs on /run-test. Precondition checks for
+// button-driven fields (test type, detection, environment) remain in
+// `handleRunTest` because Zod adds no value for "did the user click yet?".
+const targetHostSchema = z
+  .string()
+  .trim()
+  .min(1, "Enter the host where the scenario will run.")
+  .max(255, "Host name is too long.")
+  .regex(
+    /^[A-Za-z0-9]([A-Za-z0-9.\-:_]*[A-Za-z0-9])?$/,
+    "Use a hostname, FQDN, or IPv4/IPv6 address (no spaces).",
+  );
+
+const scheduleTimeSchema = z
+  .string()
+  .min(1, "Choose a date and time for the scheduled run.")
+  .refine(
+    (v) => !Number.isNaN(new Date(v).getTime()),
+    "Pick a valid date and time.",
+  )
+  .refine(
+    (v) => new Date(v).getTime() > Date.now() - 60_000,
+    "Scheduled time must be in the future.",
+  );
+
+const scheduleIntervalSchema = z
+  .string()
+  .trim()
+  .min(1, "Enter an interval in minutes.")
+  .regex(/^\d+$/, "Interval must be a whole number of minutes.")
+  .refine((v) => Number(v) >= 1, "Interval must be at least 1 minute.")
+  .refine((v) => Number(v) <= 10_080, "Interval cannot exceed 10,080 minutes (7 days).");
+
+type RunTestFieldErrors = Partial<Record<"targetHost" | "scheduleTime" | "scheduleInterval", string>>;
 
 type UiTestType = "detection_validation" | "find_detection_coverage" | "telemetry_check";
 
@@ -119,6 +156,11 @@ function buildHighLevelResult(test: TestDetailResponse): RunTestResult {
   const sampleEvents = parseSampleEvents(test.artifact);
   const hasLogs = sampleEvents.length > 0;
   const hasDetection = !!test.detection;
+  // The backend now persists the run intent on the row. Treat anything other
+  // than DETECTION_VALIDATION as a "telemetry-only" interpretation so the
+  // banner copy matches what the runner actually evaluated.
+  const runMode = (test.mode || "DETECTION_VALIDATION").toUpperCase();
+  const isTelemetryOnly = runMode === "TELEMETRY_CHECK" || !hasDetection;
 
   let result_type: HighLevelResultType = "SYSTEM_ERROR";
   let message =
@@ -128,18 +170,21 @@ function buildHighLevelResult(test: TestDetailResponse): RunTestResult {
     result_type = "SYSTEM_ERROR";
   } else if (!hasLogs) {
     result_type = "NO_LOGS";
-    message =
-      "We could not find the expected evidence from this validation. This points to a telemetry or ingestion issue.";
-  } else if (hasDetection && (test.result || "").toUpperCase() === "PASS") {
+    message = isTelemetryOnly
+      ? "No matching telemetry arrived in the SIEM for this scenario. This is an ingestion or log-source issue, not a rule problem."
+      : "We could not find the expected evidence from this validation. This points to a telemetry or ingestion issue.";
+  } else if (isTelemetryOnly) {
+    // Telemetry‑mode run: rule logic was intentionally not evaluated.
+    result_type = "PASS";
+    message = hasDetection
+      ? "Telemetry arrived in the SIEM for this scenario. The linked rule was not evaluated because this was a telemetry-readiness run."
+      : "Evidence was ingested for this scenario. No specific detection was evaluated for this run.";
+  } else if ((test.result || "").toUpperCase() === "PASS") {
     result_type = "PASS";
     message = "Evidence was ingested and the linked detection fired as expected.";
-  } else if (hasDetection && (test.result || "").toUpperCase() === "FAIL") {
+  } else if ((test.result || "").toUpperCase() === "FAIL") {
     result_type = "FAIL_RULE_VISIBILITY";
     message = "Evidence was ingested, but the detection did not fire. Check deployment, scope, and status.";
-  } else if (!hasDetection && hasLogs) {
-    // Telemetry‑only run – we saw logs, but no specific rule was evaluated.
-    result_type = "PASS";
-    message = "Evidence was ingested for this scenario. No specific detection was evaluated for this run.";
   }
 
   return {
@@ -149,7 +194,8 @@ function buildHighLevelResult(test: TestDetailResponse): RunTestResult {
       has_logs: hasLogs,
       events_found: sampleEvents.length,
     },
-    detection_summary: hasDetection
+    // Only surface a detection summary when the rule was actually evaluated.
+    detection_summary: hasDetection && !isTelemetryOnly
       ? {
           rule_fired: (test.result || "").toUpperCase() === "PASS",
           alerts_found: 0,
@@ -224,6 +270,11 @@ function useRunTest() {
         environment: "lab" | "dev" | "prod";
         mode: TestRunMode;
         endpoint?: string | null;
+        atomic?: {
+          atomic_test_id?: string;
+          atomic_test_name?: string;
+          atomic_test_number?: number;
+        };
       },
       callbacks?: RunCallbacks
     ) => {
@@ -238,6 +289,7 @@ function useRunTest() {
           environment: params.environment,
           mode: params.mode,
           endpoint: params.endpoint,
+          atomic: params.atomic,
         });
 
         callbacks?.onStart?.(created);
@@ -373,7 +425,7 @@ function LiveExecutionPanel({
   })();
 
   return (
-    <div className="rounded-2xl border border-slate-200 bg-white shadow-sm p-4 sm:p-5 space-y-4">
+    <div className="rounded-2xl border border-[var(--stroke-soft)] bg-[var(--surface-card)] shadow-sm p-4 sm:p-5 space-y-4">
       <div className="flex items-start justify-between gap-3">
         <div className="flex items-center gap-2">
           <span
@@ -420,29 +472,29 @@ function LiveExecutionPanel({
       </div>
 
       <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
-        <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+        <div className="rounded-lg border border-[var(--stroke-soft)] bg-[var(--surface-elevated)] px-3 py-2">
           <div className="text-[11px] uppercase tracking-[0.18em] text-slate-500">Validation ID</div>
-          <div className="text-sm font-mono text-slate-900 break-all">{execution.id}</div>
+          <div className="text-sm font-mono text-[var(--foreground)] break-all">{execution.id}</div>
         </div>
-        <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+        <div className="rounded-lg border border-[var(--stroke-soft)] bg-[var(--surface-elevated)] px-3 py-2">
           <div className="text-[11px] uppercase tracking-[0.18em] text-slate-500">Technique</div>
-          <div className="text-sm font-semibold text-slate-900">{execution.technique_id}</div>
+          <div className="text-sm font-semibold text-[var(--foreground)]">{execution.technique_id}</div>
         </div>
-        <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+        <div className="rounded-lg border border-[var(--stroke-soft)] bg-[var(--surface-elevated)] px-3 py-2">
           <div className="text-[11px] uppercase tracking-[0.18em] text-slate-500">Environment</div>
-          <div className="text-sm font-semibold text-slate-900">{execution.environment}</div>
+          <div className="text-sm font-semibold text-[var(--foreground)]">{execution.environment}</div>
         </div>
-        <div className="md:col-span-2 lg:col-span-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+        <div className="md:col-span-2 lg:col-span-3 rounded-lg border border-[var(--stroke-soft)] bg-[var(--surface-elevated)] px-3 py-2">
           <div className="text-[11px] uppercase tracking-[0.18em] text-slate-500">Runner command</div>
-          <div className="text-sm font-mono text-slate-900 whitespace-pre-wrap break-words">
+          <div className="text-sm font-mono text-[var(--foreground)] whitespace-pre-wrap break-words">
             {execution.atomic_command}
           </div>
         </div>
       </div>
 
-      <div className="border-t border-slate-200 pt-3">
+      <div className="border-t border-[var(--stroke-soft)] pt-3">
         <div className="flex items-center justify-between">
-          <div className="text-sm font-semibold text-slate-900">Run log</div>
+          <div className="text-sm font-semibold text-[var(--foreground)]">Run log</div>
           <Button
             type="button"
             size="sm"
@@ -454,19 +506,19 @@ function LiveExecutionPanel({
           </Button>
         </div>
         {logsExpanded && (
-          <div className="mt-3 max-h-64 overflow-y-auto rounded-lg border border-slate-200 bg-slate-50">
+          <div className="mt-3 max-h-64 overflow-y-auto rounded-lg border border-[var(--stroke-soft)] bg-[var(--surface-elevated)]">
             {execution.logs.length === 0 && (
               <div className="px-3 py-2 text-xs text-slate-500">Waiting for run updates...</div>
             )}
             {execution.logs.map((log) => (
               <div
                 key={log.id}
-                className="flex items-start gap-3 border-b border-slate-200 last:border-0 px-3 py-2 text-xs font-mono text-slate-800"
+                className="flex items-start gap-3 border-b border-[var(--stroke-soft)] last:border-0 px-3 py-2 text-xs font-mono text-slate-800 dark:text-slate-200"
               >
                 <div className="text-slate-500 whitespace-nowrap">{log.timestamp}</div>
                 <div className="flex items-center gap-2">
                   <LogStatusIcon status={log.status} />
-                  <span className="text-slate-900">{log.step}</span>
+                  <span className="text-[var(--foreground)]">{log.step}</span>
                 </div>
               </div>
             ))}
@@ -518,7 +570,9 @@ function RunTestPageContent() {
   const preselectedDetectionId = searchParams.get("detectionId");
   const focus = searchParams.get("focus");
   const techniqueFromExplore = searchParams.get("technique_id");
+  const atomicIdFromExplore = searchParams.get("atomic_id");
   const atomicNameFromExplore = searchParams.get("atomic_name");
+  const atomicNumberFromExplore = searchParams.get("atomic_number");
   const desiredStepRaw = searchParams.get("step");
   const preselectedEnvironment = searchParams.get("environment");
   const preselectedTargetHost = searchParams.get("targetHost");
@@ -529,6 +583,7 @@ function RunTestPageContent() {
   const [environment, setEnvironment] = useState<"lab" | "dev" | "prod">("lab");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [fieldErrors, setFieldErrors] = useState<RunTestFieldErrors>({});
   const [testType, setTestType] = useState<UiTestType | null>(null);
   const [targetHost, setTargetHost] = useState<string>("");
   const [runnerTargets, setRunnerTargets] = useState<string[]>([]);
@@ -747,6 +802,21 @@ function RunTestPageContent() {
     }
   }, [runError]);
 
+  const selectedAtomic = useMemo(() => {
+    const parsedNumber = atomicNumberFromExplore ? Number.parseInt(atomicNumberFromExplore, 10) : undefined;
+    const atomic: {
+      atomic_test_id?: string;
+      atomic_test_name?: string;
+      atomic_test_number?: number;
+    } = {};
+    if (atomicIdFromExplore) atomic.atomic_test_id = atomicIdFromExplore;
+    if (atomicNameFromExplore) atomic.atomic_test_name = atomicNameFromExplore;
+    if (Number.isInteger(parsedNumber) && parsedNumber && parsedNumber > 0) {
+      atomic.atomic_test_number = parsedNumber;
+    }
+    return Object.keys(atomic).length > 0 ? atomic : undefined;
+  }, [atomicIdFromExplore, atomicNameFromExplore, atomicNumberFromExplore]);
+
   async function handleRunTest() {
     if (!testType) {
       setError("Choose what you want to test first.");
@@ -781,10 +851,15 @@ function RunTestPageContent() {
       }
       return;
     }
-    if (!targetHost.trim()) {
-      setError("Enter the host you plan to run this scenario on.");
+    const targetHostCheck = targetHostSchema.safeParse(targetHost);
+    if (!targetHostCheck.success) {
+      const msg = targetHostCheck.error.issues[0]?.message || "Invalid host.";
+      setFieldErrors((prev) => ({ ...prev, targetHost: msg }));
+      setError(msg);
       return;
     }
+    setFieldErrors((prev) => ({ ...prev, targetHost: undefined }));
+
     if (!environment) {
       setError("Select an environment for this run.");
       return;
@@ -805,16 +880,23 @@ function RunTestPageContent() {
         const mode = uiToBackendMode[testType];
 
         if (scheduleType === "once") {
-          if (!scheduleTime) {
-            setError("Choose a date and time for the scheduled run.");
+          const scheduleCheck = scheduleTimeSchema.safeParse(scheduleTime);
+          if (!scheduleCheck.success) {
+            const msg = scheduleCheck.error.issues[0]?.message || "Pick a valid date and time.";
+            setFieldErrors((prev) => ({ ...prev, scheduleTime: msg }));
+            setError(msg);
             return;
           }
+          setFieldErrors((prev) => ({ ...prev, scheduleTime: undefined }));
         } else if (scheduleType === "interval") {
-          const minutes = parseInt(scheduleIntervalMinutes, 10);
-          if (!minutes || minutes <= 0) {
-            setError("Enter a valid interval in minutes for the schedule.");
+          const intervalCheck = scheduleIntervalSchema.safeParse(scheduleIntervalMinutes);
+          if (!intervalCheck.success) {
+            const msg = intervalCheck.error.issues[0]?.message || "Enter a valid interval.";
+            setFieldErrors((prev) => ({ ...prev, scheduleInterval: msg }));
+            setError(msg);
             return;
           }
+          setFieldErrors((prev) => ({ ...prev, scheduleInterval: undefined }));
         }
 
         await createTestSchedule({
@@ -848,6 +930,7 @@ function RunTestPageContent() {
           mode: uiToBackendMode[testType],
           labOs,
           endpoint: targetHost.trim() || null,
+          atomic: selectedAtomic,
         });
         router.push(`/tests/${created.id}`);
       } catch (err: unknown) {
@@ -859,7 +942,12 @@ function RunTestPageContent() {
     const executionId = crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}`;
     const startTs = new Date().toISOString();
     const techniqueIdDisplay = techniqueIdToUse || techniqueFromExplore || selectedSubtechniqueId || "Unknown";
-    const atomicCommand = `Invoke-AtomicTest -TestId ${techniqueIdDisplay} -ComputerName ${targetHost || "target-host"}`;
+    const atomicSelector = selectedAtomic?.atomic_test_number
+      ? ` -TestNumbers ${selectedAtomic.atomic_test_number}`
+      : selectedAtomic?.atomic_test_name
+        ? ` -TestNames "${selectedAtomic.atomic_test_name}"`
+        : "";
+    const atomicCommand = `Invoke-AtomicTest ${techniqueIdDisplay}${atomicSelector} -ComputerName ${targetHost || "target-host"}`;
 
     setExecution({
       id: executionId,
@@ -886,6 +974,7 @@ function RunTestPageContent() {
         environment,
         mode: uiToBackendMode[testType],
         endpoint: targetHost.trim() || null,
+        atomic: selectedAtomic,
       },
       {
         onStart: (created) => {
@@ -1141,14 +1230,14 @@ function RunTestPageContent() {
       </div>
 
       {/* Main Configuration Card */}
-      <Card className="border border-slate-200 shadow-lg shadow-slate-200/50 rounded-2xl">
+      <Card className="border border-[var(--stroke-soft)] shadow-[var(--shadow-soft)] rounded-2xl">
         <CardContent className="pt-6">
           <div className="space-y-8">
             {/* Step 1: Validation Mode Selection */}
             <div className={cn("space-y-4", currentStep < 1 && "opacity-50")}>
               <div className="flex items-start justify-between">
                 <div className="space-y-1">
-                  <h2 className="text-xl font-display font-semibold text-slate-900 flex items-center gap-2">
+                  <h2 className="text-xl font-display font-semibold text-[var(--foreground)] flex items-center gap-2">
                     <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-indigo-100 text-indigo-700 border border-indigo-200 text-[18px] font-bold">
                       1
                     </span>
@@ -1160,7 +1249,7 @@ function RunTestPageContent() {
                     </div>
                   </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 ml-9 pt-3 border-t border-slate-200">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 ml-9 pt-3 border-t border-[var(--stroke-soft)]">
                 {TEST_MODES.map((mode) => {
                   const Icon = mode.icon;
                   const isActive = testType === mode.id;
@@ -1200,7 +1289,7 @@ function RunTestPageContent() {
                           <Icon className="h-5 w-5" />
                         </div>
                         <div className="flex-1 space-y-1">
-                          <h3 className="font-display font-semibold text-slate-900">{mode.title}</h3>
+                          <h3 className="font-display font-semibold text-[var(--foreground)]">{mode.title}</h3>
                           <p className="text-xs text-slate-600 leading-relaxed">{mode.question}</p>
                         </div>
                         {isActive && (
@@ -1215,10 +1304,10 @@ function RunTestPageContent() {
 
             {/* Step 2: Detection/Scenario Selection */}
               {currentStep >= 2 && (
-            <div className={cn("space-y-4 border-t border-slate-200 pt-8", currentStep < 2 && "opacity-50")}>
+            <div className={cn("space-y-4 border-t border-[var(--stroke-soft)] pt-8", currentStep < 2 && "opacity-50")}>
                 <div className="flex items-start justify-between">
                   <div className="space-y-1">
-                    <h2 className="text-xl font-display font-semibold text-slate-900 flex items-center gap-2">
+                    <h2 className="text-xl font-display font-semibold text-[var(--foreground)] flex items-center gap-2">
                       <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-indigo-100 text-indigo-700 border border-indigo-200 text-[18px] font-bold">
                       2
                     </span>
@@ -1245,7 +1334,7 @@ function RunTestPageContent() {
               </div>
 
               {!testType && (
-                <div className="ml-9 p-4 rounded-lg border border-slate-200 bg-slate-50">
+                <div className="ml-9 p-4 rounded-lg border border-[var(--stroke-soft)] bg-[var(--surface-elevated)]">
                   <p className="text-sm text-slate-600">
                     Select a validation mode in Step 1 to continue
                   </p>
@@ -1261,11 +1350,11 @@ function RunTestPageContent() {
                           value={detectionSearch}
                           onChange={(e) => setDetectionSearch(e.target.value)}
                           placeholder="Search detections by name, MITRE technique, or SIEM type..."
-                        className="pl-10 h-10 bg-white border-slate-200 text-sm text-slate-900 placeholder:text-slate-500"
+                        className="pl-10 h-10 bg-[var(--surface-card)] border-[var(--stroke-soft)] text-sm text-[var(--foreground)] placeholder:text-slate-500"
                           disabled={isRunning}
                         />
                       </div>
-                    <div className="max-h-64 overflow-y-auto overflow-x-hidden hide-scrollbar space-y-2 border border-slate-200 rounded-lg p-2 bg-white">
+                    <div className="max-h-64 overflow-y-auto overflow-x-hidden hide-scrollbar space-y-2 border border-[var(--stroke-soft)] rounded-lg p-2 bg-[var(--surface-card)]">
                         {detectionsForUi
                           .filter((det) => {
                             if (!detectionSearch.trim()) return true;
@@ -1303,13 +1392,13 @@ function RunTestPageContent() {
                                   isRunning
                                     ? "border-slate-200 text-slate-400 cursor-not-allowed"
                                     : isSelected
-                                    ? "border-indigo-400 bg-indigo-50 text-slate-900 shadow-sm"
+                                    ? "border-indigo-400 bg-indigo-50 text-[var(--foreground)] shadow-sm"
                                     : "border-slate-200 text-slate-700 hover:border-indigo-200 hover:bg-indigo-50 cursor-pointer"
                                 )}
                               >
                                 <div className="flex items-center justify-between">
                                   <div className="flex-1 min-w-0">
-                                    <div className="font-medium text-sm truncate text-slate-900">{det.title}</div>
+                                    <div className="font-medium text-sm truncate text-[var(--foreground)]">{det.title}</div>
                                     <div className="text-xs text-slate-600 mt-0.5">
                                     {det.technique_id} · {det.siem_type?.toUpperCase() || "SIEM"}
                                     </div>
@@ -1322,7 +1411,7 @@ function RunTestPageContent() {
                             );
                           })}
                         {detectionsForUi.length === 0 && (
-                          <div className="p-4 rounded-lg border border-slate-200 bg-slate-50 text-center">
+                          <div className="p-4 rounded-lg border border-[var(--stroke-soft)] bg-[var(--surface-elevated)] text-center">
                             <p className="text-sm text-slate-600">
                               No detections found. Add a detection on the{" "}
                               <Link href="/detections" className="text-indigo-600 hover:text-indigo-700 underline">
@@ -1346,15 +1435,15 @@ function RunTestPageContent() {
                           }).length;
                         return (
                           <p className="text-xs text-slate-600 mt-2">
-                            Showing <span className="font-semibold text-slate-900">{visibleCount}</span> of{" "}
-                            <span className="font-semibold text-slate-900">{detections.length}</span> detections
+                            Showing <span className="font-semibold text-[var(--foreground)]">{visibleCount}</span> of{" "}
+                            <span className="font-semibold text-[var(--foreground)]">{detections.length}</span> detections
                           </p>
                         );
                       })()}
                       {techniqueFromExplore && scenarioNameFromExplore && (
                         <p className="mt-1 text-[11px] text-slate-600">
                           Scenario from Explore:{" "}
-                          <span className="font-semibold text-slate-900">
+                          <span className="font-semibold text-[var(--foreground)]">
                             {scenarioNameFromExplore}
                           </span>{" "}
                           ({techniqueFromExplore})
@@ -1384,16 +1473,16 @@ function RunTestPageContent() {
                         if (relatedSubtechniques.length === 0) return null;
 
                         return (
-                          <div className="mt-4 space-y-2 border-t border-slate-200 pt-4">
+                          <div className="mt-4 space-y-2 border-t border-[var(--stroke-soft)] pt-4">
                             <div>
-                              <p className="text-sm font-semibold text-slate-900">
+                              <p className="text-sm font-semibold text-[var(--foreground)]">
                                 Optional: Choose Subtechnique
                             </p>
                               <p className="text-xs text-slate-600 mt-0.5">
                                 Select a specific ATT&CK subtechnique, or skip to use the detection&apos;s primary technique
                             </p>
                             </div>
-                            <div className="max-h-40 overflow-y-auto overflow-x-hidden hide-scrollbar space-y-2 border border-slate-200 rounded-lg p-2 bg-white">
+                            <div className="max-h-40 overflow-y-auto overflow-x-hidden hide-scrollbar space-y-2 border border-[var(--stroke-soft)] rounded-lg p-2 bg-[var(--surface-card)]">
                               {relatedSubtechniques.map((t) => {
                                 const isSelected = selectedSubtechniqueId === t.id;
                                 return (
@@ -1408,13 +1497,13 @@ function RunTestPageContent() {
                                     className={cn(
                                       "w-full text-left px-4 py-2 rounded-lg border-2 transition-all bg-white",
                                       isSelected
-                                        ? "border-indigo-400 bg-indigo-50 text-slate-900 shadow-sm"
+                                        ? "border-indigo-400 bg-indigo-50 text-[var(--foreground)] shadow-sm"
                                         : "border-slate-200 text-slate-700 hover:border-indigo-200 hover:bg-indigo-50 cursor-pointer"
                                     )}
                                   >
                                     <div className="flex items-center justify-between">
                                       <div className="flex-1 min-w-0">
-                                        <div className="font-medium text-sm truncate text-slate-900">
+                                        <div className="font-medium text-sm truncate text-[var(--foreground)]">
                                         {t.id} · {t.name}
                                         </div>
                                         <div className="text-xs text-slate-600 mt-0.5">
@@ -1442,14 +1531,14 @@ function RunTestPageContent() {
               onValueChange={(value: string) => setSelectedScenario(value)}
                       disabled={isRunning || telemetryScenarios.length === 0}
                     >
-                      <SelectTrigger className="w-full h-11 bg-white border-slate-200 text-slate-900">
+                      <SelectTrigger className="w-full h-11 bg-[var(--surface-card)] border-[var(--stroke-soft)] text-[var(--foreground)]">
                         <SelectValue placeholder="Select a test scenario template" />
               </SelectTrigger>
-                      <SelectContent className="bg-white border-slate-200">
+                      <SelectContent className="bg-[var(--surface-card)] border-[var(--stroke-soft)]">
                         {telemetryScenarios.map((scenario) => (
                           <SelectItem key={scenario.id} value={scenario.id}>
                             <div className="flex flex-col">
-                              <span className="font-medium text-slate-900">{scenario.label}</span>
+                              <span className="font-medium text-[var(--foreground)]">{scenario.label}</span>
                               <span className="text-xs text-slate-600">{scenario.subtitle}</span>
                             </div>
                   </SelectItem>
@@ -1460,9 +1549,9 @@ function RunTestPageContent() {
                       const selectedScenarioData = telemetryScenarios.find((s) => s.id === selectedScenario);
                       const selectedDetectionData = detections.find((d) => d.id === selectedScenario);
                       return selectedScenarioData ? (
-                        <div className="space-y-3 p-4 rounded-lg border border-slate-200 bg-slate-50">
+                        <div className="space-y-3 p-4 rounded-lg border border-[var(--stroke-soft)] bg-[var(--surface-elevated)]">
                           <div>
-                            <div className="text-sm font-medium text-slate-900 flex flex-col gap-0.5">
+                            <div className="text-sm font-medium text-[var(--foreground)] flex flex-col gap-0.5">
                               <span>Scenario:</span>
                               <span>{selectedScenarioData.label}</span>
                               {selectedScenarioData.subtitle && (
@@ -1484,7 +1573,7 @@ function RunTestPageContent() {
                       ) : null;
                     })()}
                     {telemetryScenarios.length === 0 && (
-                      <div className="p-4 rounded-lg border border-slate-200 bg-slate-50">
+                      <div className="p-4 rounded-lg border border-[var(--stroke-soft)] bg-[var(--surface-elevated)]">
                         <p className="text-sm text-slate-600">
                           No validation scenarios are available yet. Add at least one detection or scenario template first.
                       </p>
@@ -1496,9 +1585,9 @@ function RunTestPageContent() {
                 {testType === "find_detection_coverage" && (
                     <div className="ml-9 space-y-3">
                       {techniqueFromExplore ? (
-                        <div className="space-y-3 p-4 rounded-lg border border-slate-200 bg-slate-50">
+                        <div className="space-y-3 p-4 rounded-lg border border-[var(--stroke-soft)] bg-[var(--surface-elevated)]">
                         <div>
-                            <p className="text-sm font-medium text-slate-900">
+                            <p className="text-sm font-medium text-[var(--foreground)]">
                               Scenario: {scenarioCardTitle}
                           </p>
                             <p className="text-xs text-slate-600 mt-0.5">
@@ -1517,16 +1606,14 @@ function RunTestPageContent() {
                           <div className="flex items-center gap-3">
                             <Button
                               size="sm"
-                              className="h-9 px-3 bg-white hover:bg-slate-50 text-slate-900 border border-slate-200 shadow-sm"
+                              className="h-9 px-3 bg-white hover:bg-slate-50 text-[var(--foreground)] border border-slate-200 shadow-sm"
                               onClick={() => setCoverageScenarioConfirmed(true)}
                               disabled={coverageScenarioConfirmed}
                             >
                               {coverageScenarioConfirmed ? "Scenario selected" : "Use this scenario"}
                             </Button>
                             {coverageScenarioConfirmed && (
-                              <Badge variant="outline" className="bg-emerald-50 text-emerald-700 border-emerald-200">
-                                Ready for Step 3
-                              </Badge>
+                              <Chip tone="success">Ready for Step 3</Chip>
                             )}
                           </div>
                         {detections.filter((d) => d.technique_id === techniqueFromExplore).length === 0 && (
@@ -1538,8 +1625,8 @@ function RunTestPageContent() {
                         )}
                       </div>
                     ) : (
-                      <div className="rounded-2xl border border-slate-200 bg-white">
-                        <div className="flex flex-wrap items-center gap-3 border-b border-slate-100 p-4">
+                      <div className="rounded-2xl border border-[var(--stroke-soft)] bg-[var(--surface-card)]">
+                        <div className="flex flex-wrap items-center gap-3 border-b border-[var(--stroke-soft)]/60 p-4">
                           <div className="relative min-w-[240px] flex-1">
                             <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
                             <Input
@@ -1549,7 +1636,7 @@ function RunTestPageContent() {
                                 setTechniquePickerPage(0);
                               }}
                               placeholder="Search techniques by ID or name"
-                              className="h-10 border-slate-200 bg-white pl-9 text-sm"
+                              className="h-10 border-[var(--stroke-soft)] bg-[var(--surface-card)] pl-9 text-sm"
                             />
                           </div>
                           <Select
@@ -1559,7 +1646,7 @@ function RunTestPageContent() {
                               setTechniquePickerPage(0);
                             }}
                           >
-                            <SelectTrigger className="h-10 w-[200px] border-slate-200 bg-white text-sm">
+                            <SelectTrigger className="h-10 w-[200px] border-[var(--stroke-soft)] bg-[var(--surface-card)] text-sm">
                               <SelectValue placeholder="All tactics" />
                             </SelectTrigger>
                             <SelectContent>
@@ -1575,7 +1662,7 @@ function RunTestPageContent() {
                             variant="outline"
                             size="sm"
                             asChild
-                            className="border-slate-200 text-slate-900 hover:border-indigo-200 hover:bg-indigo-50"
+                            className="border-slate-200 text-[var(--foreground)] hover:border-indigo-200 hover:bg-indigo-50"
                           >
                             <Link href="/tests/explore">
                               Open full explore view
@@ -1590,7 +1677,7 @@ function RunTestPageContent() {
                           </div>
                         ) : techniquePickerPageSlice.length === 0 ? (
                           <div className="p-12 text-center">
-                            <p className="text-sm font-semibold text-slate-900">No techniques match your filters</p>
+                            <p className="text-sm font-semibold text-[var(--foreground)]">No techniques match your filters</p>
                             <p className="mt-1 text-xs text-slate-500">Try broadening your search or clearing filters.</p>
                           </div>
                         ) : (
@@ -1607,7 +1694,7 @@ function RunTestPageContent() {
                                         `/run-test?technique_id=${encodeURIComponent(item.id)}&focus=validation&step=2`
                                       );
                                     }}
-                                    className="group flex flex-col rounded-xl border border-slate-200 bg-white p-4 text-left transition hover:border-indigo-300 hover:shadow-md"
+                                    className="group flex flex-col rounded-xl border border-[var(--stroke-soft)] bg-[var(--surface-card)] p-4 text-left transition hover:border-indigo-300 hover:shadow-md"
                                   >
                                     <div className="flex items-start justify-between gap-2">
                                       <span className="font-mono text-xs font-bold text-indigo-700">{item.id}</span>
@@ -1621,29 +1708,29 @@ function RunTestPageContent() {
                                         {meta.label}
                                       </span>
                                     </div>
-                                    <p className="mt-2 line-clamp-2 min-h-[2.5rem] text-sm font-semibold text-slate-900">
+                                    <p className="mt-2 line-clamp-2 min-h-[2.5rem] text-sm font-semibold text-[var(--foreground)]">
                                       {item.name}
                                     </p>
                                     <p className="mt-1 truncate text-xs text-slate-500">
                                       {item.tactics[0] || "No tactic"}
                                     </p>
-                                    <div className="mt-3 flex items-center justify-between border-t border-slate-100 pt-3 text-xs text-slate-600">
+                                    <div className="mt-3 flex items-center justify-between border-t border-[var(--stroke-soft)]/60 pt-3 text-xs text-slate-600">
                                       <div>
                                         <p className="text-[10px] uppercase tracking-wider text-slate-400">Mapped</p>
-                                        <p className="font-semibold text-slate-900">{item.mappedCount}</p>
+                                        <p className="font-semibold text-[var(--foreground)]">{item.mappedCount}</p>
                                       </div>
                                       <div>
                                         <p className="text-[10px] uppercase tracking-wider text-slate-400">Passing</p>
-                                        <p className="font-semibold text-slate-900">{item.validatedCount}</p>
+                                        <p className="font-semibold text-[var(--foreground)]">{item.validatedCount}</p>
                                       </div>
                                       <div>
                                         <p className="text-[10px] uppercase tracking-wider text-slate-400">Best</p>
-                                        <p className="font-semibold text-slate-900">
+                                        <p className="font-semibold text-[var(--foreground)]">
                                           {typeof item.highestScore === "number" ? item.highestScore : "—"}
                                         </p>
                                       </div>
                                     </div>
-                                    <div className="mt-3 inline-flex items-center justify-center gap-1.5 rounded-md border border-slate-200 bg-slate-50 py-1.5 text-xs font-semibold text-slate-700 transition group-hover:border-indigo-200 group-hover:bg-indigo-50 group-hover:text-indigo-700">
+                                    <div className="mt-3 inline-flex items-center justify-center gap-1.5 rounded-md border border-[var(--stroke-soft)] bg-[var(--surface-elevated)] py-1.5 text-xs font-semibold text-slate-700 transition group-hover:border-indigo-200 group-hover:bg-indigo-50 group-hover:text-indigo-700">
                                       <Play className="h-3 w-3" />
                                       Select technique
                                     </div>
@@ -1653,7 +1740,7 @@ function RunTestPageContent() {
                             </div>
 
                             {techniquePickerTotalPages > 1 && (
-                              <div className="flex items-center justify-between border-t border-slate-100 px-4 py-3">
+                              <div className="flex items-center justify-between border-t border-[var(--stroke-soft)]/60 px-4 py-3">
                                 <p className="text-xs text-slate-500">
                                   Showing {techniquePickerPage * TECHNIQUE_PICKER_PAGE_SIZE + 1}–
                                   {Math.min(
@@ -1702,9 +1789,9 @@ function RunTestPageContent() {
 
             {/* Step 3: Environment Configuration */}
             {step2Done && (
-            <div className="space-y-8 border-t border-slate-200 pt-8">
+            <div className="space-y-8 border-t border-[var(--stroke-soft)] pt-8">
                 <div className="space-y-2">
-                  <h2 className="text-xl font-display font-semibold text-slate-900 flex items-center gap-3">
+                  <h2 className="text-xl font-display font-semibold text-[var(--foreground)] flex items-center gap-3">
                     <span className="flex h-11 w-11 items-center justify-center rounded-lg bg-indigo-100 text-indigo-700 border border-indigo-200 text-[18px] font-bold">
                       3
                     </span>
@@ -1717,38 +1804,34 @@ function RunTestPageContent() {
 
                 {/* Configuration Summary */}
                 {step2Done && (
-                  <div className="p-4 rounded-lg border border-slate-200 bg-slate-50 space-y-3">
+                  <div className="p-4 rounded-lg border border-[var(--stroke-soft)] bg-[var(--surface-elevated)] space-y-3">
                     <p className="text-xs uppercase tracking-wider text-slate-600 font-medium">Configuration Summary</p>
                     <div className="flex flex-wrap gap-2">
-                      <Badge variant="outline" className="bg-indigo-50 text-indigo-700 border-indigo-200">
+                      <Chip tone="accent">
                         Mode: {testType === "detection_validation"
                           ? "Validate a Detection"
                           : testType === "find_detection_coverage"
                           ? "Explore Coverage"
                           : "Verify Telemetry Readiness"}
-                      </Badge>
-                    {techniqueFromExplore && (
-                        <Badge variant="outline" className="bg-indigo-50 text-indigo-700 border-indigo-200">
-                          {techniqueFromExplore}
-                        </Badge>
-                    )}
-                    {environment && (
-                        <Badge variant="outline" className="bg-slate-100 text-slate-700 border-slate-200">
+                      </Chip>
+                      {techniqueFromExplore && (
+                        <Chip tone="accent">{techniqueFromExplore}</Chip>
+                      )}
+                      {environment && (
+                        <Chip tone="neutral">
                           {environment === "lab" ? "Lab" : environment === "dev" ? "Dev" : "Prod"}
-                        </Badge>
-                    )}
-                    {targetHost && (
-                        <Badge variant="outline" className="bg-slate-100 text-slate-700 border-slate-200">
-                          {targetHost}
-                        </Badge>
-                    )}
+                        </Chip>
+                      )}
+                      {targetHost && (
+                        <Chip tone="neutral">{targetHost}</Chip>
+                      )}
                     </div>
                   </div>
                 )}
 
                 <div className="grid gap-6 md:grid-cols-2">
                   <div className="space-y-3">
-                    <Label htmlFor="environment-select" className="text-slate-900 text-sm font-medium flex items-center gap-2">
+                    <Label htmlFor="environment-select" className="text-[var(--foreground)] text-sm font-medium flex items-center gap-2">
                       <Server className="h-4 w-4 text-slate-500" />
                       Environment
                     </Label>
@@ -1759,11 +1842,11 @@ function RunTestPageContent() {
                     >
                       <SelectTrigger
                         id="environment-select"
-                        className="w-full h-11 bg-white border-slate-200 text-slate-900"
+                        className="w-full h-11 bg-[var(--surface-card)] border-[var(--stroke-soft)] text-[var(--foreground)]"
                       >
                         <SelectValue placeholder="Select environment" />
                       </SelectTrigger>
-                      <SelectContent className="bg-white border-slate-200">
+                      <SelectContent className="bg-[var(--surface-card)] border-[var(--stroke-soft)]">
                         {canRunTest("lab") && <SelectItem value="lab">Lab (PurveX)</SelectItem>}
                         {canRunTest("dev") && <SelectItem value="dev">Dev</SelectItem>}
                         {canRunTest("prod") && <SelectItem value="prod">Prod (restricted)</SelectItem>}
@@ -1778,23 +1861,30 @@ function RunTestPageContent() {
                   </div>
 
                   <div className="space-y-3">
-                    <Label htmlFor="target-host" className="text-slate-900 text-sm font-medium flex items-center gap-2">
+                    <Label htmlFor="target-host" className="text-[var(--foreground)] text-sm font-medium flex items-center gap-2">
                       <Settings className="h-4 w-4 text-slate-500" />
                       Target Host
                     </Label>
                     {runnerTargets.length > 0 ? (
                       <Select
                         value={targetHost}
-                        onValueChange={(value) => setTargetHost(value)}
+                        onValueChange={(value) => {
+                          setTargetHost(value);
+                          if (fieldErrors.targetHost) {
+                            setFieldErrors((prev) => ({ ...prev, targetHost: undefined }));
+                          }
+                        }}
                         disabled={isRunning || !canSelectTargetHost}
                       >
                         <SelectTrigger
                           id="target-host"
-                          className="w-full h-11 bg-white border-slate-200 text-slate-900"
+                          aria-invalid={!!fieldErrors.targetHost}
+                          aria-describedby="target-host-error"
+                          className="w-full h-11 bg-[var(--surface-card)] border-[var(--stroke-soft)] text-[var(--foreground)]"
                         >
                           <SelectValue placeholder="Select a runner" />
                         </SelectTrigger>
-                        <SelectContent className="bg-white border-slate-200">
+                        <SelectContent className="bg-[var(--surface-card)] border-[var(--stroke-soft)]">
                           {runnerTargets.map((host) => (
                             <SelectItem key={host} value={host}>{host}</SelectItem>
                           ))}
@@ -1804,12 +1894,20 @@ function RunTestPageContent() {
                       <Input
                         id="target-host"
                         value={targetHost}
-                        onChange={(e) => setTargetHost(e.target.value)}
+                        onChange={(e) => {
+                          setTargetHost(e.target.value);
+                          if (fieldErrors.targetHost) {
+                            setFieldErrors((prev) => ({ ...prev, targetHost: undefined }));
+                          }
+                        }}
+                        aria-invalid={!!fieldErrors.targetHost}
+                        aria-describedby="target-host-error"
                         placeholder="e.g. win-lab-01 or 10.0.0.5"
-                        className="h-11 bg-white border-slate-200 text-slate-900 placeholder:text-slate-500"
+                        className="h-11 bg-[var(--surface-card)] border-[var(--stroke-soft)] text-[var(--foreground)] placeholder:text-slate-500"
                         disabled={isRunning || !canSelectTargetHost}
                       />
                     )}
+                    <FieldError id="target-host-error" message={fieldErrors.targetHost} />
                     <p className="text-xs text-slate-600 leading-relaxed">
                       The specific host where the scenario will run. Telemetry and validation evidence will be tied to this host.
                     </p>
@@ -1819,20 +1917,20 @@ function RunTestPageContent() {
                 {environment === "lab" && (
                   <div className="mt-6 space-y-3">
                     <div className="space-y-3">
-                      <Label className="text-slate-900 text-sm font-medium">
+                      <Label className="text-[var(--foreground)] text-sm font-medium">
                         Lab Operating System
                       </Label>
                       <p className="text-xs text-slate-600 leading-relaxed">
                         Choose which lab VMs this scenario should exercise
                       </p>
-                      <div className="inline-flex rounded-lg border border-slate-200 bg-slate-50 p-1">
+                      <div className="inline-flex rounded-lg border border-[var(--stroke-soft)] bg-[var(--surface-elevated)] p-1">
                         <button
                           type="button"
                           className={cn(
                             "px-4 py-2 rounded-md text-sm font-medium transition-all border",
                             labOs === "windows"
-                              ? "bg-white text-slate-900 border-slate-200 shadow-sm"
-                              : "text-slate-600 border-transparent hover:text-slate-900 hover:bg-white"
+                              ? "bg-[var(--surface-card)] text-[var(--foreground)] border-[var(--stroke-soft)] shadow-sm"
+                              : "text-slate-600 dark:text-slate-300 border-transparent hover:text-[var(--foreground)] hover:bg-[var(--surface-card)]"
                           )}
                           onClick={() => setLabOs("windows")}
                           disabled={isRunning}
@@ -1844,8 +1942,8 @@ function RunTestPageContent() {
                           className={cn(
                             "px-4 py-2 rounded-md text-sm font-medium transition-all border",
                             labOs === "linux"
-                              ? "bg-white text-slate-900 border-slate-200 shadow-sm"
-                              : "text-slate-600 border-transparent hover:text-slate-900 hover:bg-white"
+                              ? "bg-[var(--surface-card)] text-[var(--foreground)] border-[var(--stroke-soft)] shadow-sm"
+                              : "text-slate-600 dark:text-slate-300 border-transparent hover:text-[var(--foreground)] hover:bg-[var(--surface-card)]"
                           )}
                           onClick={() => setLabOs("linux")}
                           disabled={isRunning}
@@ -1857,8 +1955,8 @@ function RunTestPageContent() {
                           className={cn(
                             "px-4 py-2 rounded-md text-sm font-medium transition-all border",
                             labOs === "both"
-                              ? "bg-white text-slate-900 border-slate-200 shadow-sm"
-                              : "text-slate-600 border-transparent hover:text-slate-900 hover:bg-white"
+                              ? "bg-[var(--surface-card)] text-[var(--foreground)] border-[var(--stroke-soft)] shadow-sm"
+                              : "text-slate-600 dark:text-slate-300 border-transparent hover:text-[var(--foreground)] hover:bg-[var(--surface-card)]"
                           )}
                           onClick={() => setLabOs("both")}
                           disabled={isRunning}
@@ -1906,20 +2004,20 @@ function RunTestPageContent() {
         )}
 
                 {/* Execution Options */}
-                <div className="space-y-4 pt-6 border-t border-slate-200">
+                <div className="space-y-4 pt-6 border-t border-[var(--stroke-soft)]">
                   <div className="space-y-3">
-                    <Label className="text-slate-900 text-sm font-medium">Run Mode</Label>
+                    <Label className="text-[var(--foreground)] text-sm font-medium">Run Mode</Label>
                     <p className="text-xs text-slate-600 leading-relaxed">
                       Choose to run immediately or set a schedule.
                     </p>
-                    <div className="inline-flex rounded-lg border border-slate-200 bg-slate-50 p-1">
+                    <div className="inline-flex rounded-lg border border-[var(--stroke-soft)] bg-[var(--surface-elevated)] p-1">
                         <button
                           type="button"
                           className={cn(
                             "px-4 py-2 rounded-md text-sm font-medium transition-all border",
                             runMode === "now"
-                              ? "bg-white text-slate-900 border-slate-200 shadow-sm"
-                              : "text-slate-600 border-transparent hover:text-slate-900 hover:bg-white"
+                              ? "bg-[var(--surface-card)] text-[var(--foreground)] border-[var(--stroke-soft)] shadow-sm"
+                              : "text-slate-600 dark:text-slate-300 border-transparent hover:text-[var(--foreground)] hover:bg-[var(--surface-card)]"
                           )}
                           onClick={() => setRunMode("now")}
                           disabled={isRunning || isScheduling}
@@ -1931,8 +2029,8 @@ function RunTestPageContent() {
                           className={cn(
                             "px-4 py-2 rounded-md text-sm font-medium transition-all border",
                             runMode === "schedule"
-                              ? "bg-white text-slate-900 border-slate-200 shadow-sm"
-                              : "text-slate-600 border-transparent hover:text-slate-900 hover:bg-white"
+                              ? "bg-[var(--surface-card)] text-[var(--foreground)] border-[var(--stroke-soft)] shadow-sm"
+                              : "text-slate-600 dark:text-slate-300 border-transparent hover:text-[var(--foreground)] hover:bg-[var(--surface-card)]"
                           )}
                           onClick={() => setRunMode("schedule")}
                           disabled={isRunning || isScheduling || !canScheduleTest(environment)}
@@ -1944,8 +2042,8 @@ function RunTestPageContent() {
                     </div>
 
                     {runMode === "schedule" && (
-                    <div className="mt-4 space-y-4 p-5 rounded-lg border border-slate-200 bg-slate-50">
-                      <p className="text-sm font-medium text-slate-900">Schedule Configuration</p>
+                    <div className="mt-4 space-y-4 p-5 rounded-lg border border-[var(--stroke-soft)] bg-[var(--surface-elevated)]">
+                      <p className="text-sm font-medium text-[var(--foreground)]">Schedule Configuration</p>
                           <div className="grid gap-4 md:grid-cols-2">
                             <div className="space-y-3">
                           <Label htmlFor="schedule-type" className="text-sm text-slate-700 font-medium">
@@ -1955,10 +2053,10 @@ function RunTestPageContent() {
                                 value={scheduleType}
                                 onValueChange={(v: string) => setScheduleType(v as TestScheduleType)}
                               >
-                            <SelectTrigger id="schedule-type" className="h-11 bg-white border-slate-200 text-slate-900">
+                            <SelectTrigger id="schedule-type" className="h-11 bg-[var(--surface-card)] border-[var(--stroke-soft)] text-[var(--foreground)]">
                                   <SelectValue placeholder="Select schedule type" />
                                 </SelectTrigger>
-                            <SelectContent className="bg-white border-slate-200">
+                            <SelectContent className="bg-[var(--surface-card)] border-[var(--stroke-soft)]">
                                   <SelectItem value="once">Run once at specific time</SelectItem>
                                   <SelectItem value="interval">Repeat at regular intervals</SelectItem>
                                 </SelectContent>
@@ -1974,10 +2072,18 @@ function RunTestPageContent() {
                                     id="schedule-time"
                                     type="datetime-local"
                                     value={scheduleTime}
-                                    onChange={(e) => setScheduleTime(e.target.value)}
-                                className="h-11 bg-white border-slate-200 text-slate-900"
+                                    onChange={(e) => {
+                                      setScheduleTime(e.target.value);
+                                      if (fieldErrors.scheduleTime) {
+                                        setFieldErrors((prev) => ({ ...prev, scheduleTime: undefined }));
+                                      }
+                                    }}
+                                    aria-invalid={!!fieldErrors.scheduleTime}
+                                    aria-describedby="schedule-time-error"
+                                className="h-11 bg-[var(--surface-card)] border-[var(--stroke-soft)] text-[var(--foreground)]"
                                     placeholder="Select date and time"
                                   />
+                                  <FieldError id="schedule-time-error" message={fieldErrors.scheduleTime} />
                                 </>
                               ) : (
                                 <>
@@ -1989,10 +2095,18 @@ function RunTestPageContent() {
                                       type="number"
                                       min={1}
                                       value={scheduleIntervalMinutes}
-                                      onChange={(e) => setScheduleIntervalMinutes(e.target.value)}
-                                className="h-11 bg-white border-slate-200 text-slate-900"
+                                      onChange={(e) => {
+                                        setScheduleIntervalMinutes(e.target.value);
+                                        if (fieldErrors.scheduleInterval) {
+                                          setFieldErrors((prev) => ({ ...prev, scheduleInterval: undefined }));
+                                        }
+                                      }}
+                                      aria-invalid={!!fieldErrors.scheduleInterval}
+                                      aria-describedby="schedule-interval-error"
+                                className="h-11 bg-[var(--surface-card)] border-[var(--stroke-soft)] text-[var(--foreground)]"
                                       placeholder="60"
                                     />
+                                  <FieldError id="schedule-interval-error" message={fieldErrors.scheduleInterval} />
                                 </>
                               )}
                             </div>
@@ -2006,7 +2120,7 @@ function RunTestPageContent() {
                     )}
 
                   {/* Action Buttons */}
-                  <div className="flex items-center justify-between gap-4 pt-6 border-t border-slate-200">
+                  <div className="flex items-center justify-between gap-4 pt-6 border-t border-[var(--stroke-soft)]">
                     {currentStep > 1 && (
                       <Button
                         onClick={handlePrevious}
@@ -2050,48 +2164,63 @@ function RunTestPageContent() {
 
       {/* Validation Result */}
       {result && (
-        <Card className="mt-6 border border-slate-200 shadow-lg shadow-slate-200/40 rounded-2xl bg-white">
+        <Card className="mt-6 border border-[var(--stroke-soft)] shadow-[var(--shadow-soft)] rounded-2xl bg-[var(--surface-card)]">
           <CardHeader className="pb-3 flex flex-row items-center justify-between gap-3">
-            <CardTitle className="text-base font-semibold text-slate-900">
+            <CardTitle className="text-base font-semibold text-[var(--foreground)]">
               Validation result
             </CardTitle>
             {lastRunType && (
-              <span className="inline-flex items-center gap-1 rounded-full border border-indigo-200 bg-indigo-50 px-2 py-0.5 text-[10px] uppercase tracking-[0.18em] text-indigo-700">
+              <Chip tone="accent" className="uppercase tracking-[0.18em]">
                 Mode
-                <span className="font-semibold text-indigo-700 normal-case tracking-normal">
+                <span className="font-semibold normal-case tracking-normal">
                   {lastRunType === "detection_validation"
                     ? "Detection validation"
                     : lastRunType === "find_detection_coverage"
                     ? "Find detections"
                     : "Telemetry check"}
                 </span>
-              </span>
+              </Chip>
             )}
           </CardHeader>
-          <CardContent className="space-y-4 text-sm text-slate-700">
+          <CardContent className="space-y-4 text-sm text-slate-700 dark:text-slate-200">
             {(() => {
+              const isTelemetryRun = lastRunType === "telemetry_check";
               const bannerByType: Record<
                 HighLevelResultType,
                 { color: string; icon: ReactNode; title: string; sub: string }
               > = {
-                PASS: {
-                  color: "bg-emerald-50 border-emerald-200 text-emerald-800",
-                  icon: <CheckCircle2 className="h-4 w-4 text-emerald-600" />,
-                  title: "Detection validated",
-                  sub: "Evidence was ingested and the detection fired.",
-                },
+                PASS: isTelemetryRun
+                  ? {
+                      color: "bg-emerald-50 border-emerald-200 text-emerald-800",
+                      icon: <CheckCircle2 className="h-4 w-4 text-emerald-600" />,
+                      title: "Telemetry confirmed",
+                      sub: "Matching events arrived in the SIEM. Detection rule was not evaluated.",
+                    }
+                  : {
+                      color: "bg-emerald-50 border-emerald-200 text-emerald-800",
+                      icon: <CheckCircle2 className="h-4 w-4 text-emerald-600" />,
+                      title: "Detection validated",
+                      sub: "Evidence was ingested and the detection fired.",
+                    },
                 FAIL_RULE_VISIBILITY: {
                   color: "bg-amber-50 border-amber-200 text-amber-800",
                   icon: <AlertTriangle className="h-4 w-4 text-amber-600" />,
                   title: "Detection needs tuning",
                   sub: "Logs were ingested, but the detection rule did not fire.",
                 },
-                NO_LOGS: {
-                  color: "bg-red-50 border-red-200 text-red-800",
-                  icon: <XCircle className="h-4 w-4 text-red-600" />,
-                  title: "No evidence found",
-                  sub: "No expected evidence was seen in your SIEM. This indicates a telemetry or ingestion issue.",
-                },
+                NO_LOGS: isTelemetryRun
+                  ? {
+                      color: "bg-red-50 border-red-200 text-red-800",
+                      icon: <XCircle className="h-4 w-4 text-red-600" />,
+                      title: "Telemetry gap",
+                      sub: "No matching events arrived in the SIEM. Check log sources, agents, and ingestion pipelines.",
+                    }
+                  : {
+                      color: "bg-red-50 border-red-200 text-red-800",
+                      icon: <XCircle className="h-4 w-4 text-red-600" />,
+                      title: "No evidence found",
+                      sub: "No expected evidence was seen in your SIEM. This indicates a telemetry or ingestion issue.",
+                    },
                 SYSTEM_ERROR: {
                   color: "bg-slate-100 border-slate-200 text-slate-800",
                   icon: <Slash className="h-4 w-4 text-slate-500" />,
@@ -2112,42 +2241,42 @@ function RunTestPageContent() {
                       <div className="text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-500">
                         {result.result_type}
                       </div>
-                      <p className="text-slate-900 text-sm">{meta.title}</p>
+                      <p className="text-[var(--foreground)] text-sm">{meta.title}</p>
                       <p className="text-[11px] text-slate-600">{meta.sub}</p>
                     </div>
                   </div>
 
                   <div className="grid gap-4 md:grid-cols-2">
-                    <div className="rounded-lg border border-slate-200 bg-white p-3 space-y-1.5">
+                    <div className="rounded-lg border border-[var(--stroke-soft)] bg-[var(--surface-card)] p-3 space-y-1.5">
                       <div className="text-[11px] uppercase tracking-[0.2em] text-slate-500">
                         Telemetry
                       </div>
                       <p className="text-[11px] text-slate-700">
                         Evidence present:{" "}
-                        <span className="font-semibold text-slate-900">
+                        <span className="font-semibold text-[var(--foreground)]">
                           {result.telemetry_summary.has_logs ? "Yes" : "No"}
                         </span>
                       </p>
                       <p className="text-[11px] text-slate-700">
                         Records found:{" "}
-                        <span className="font-semibold text-slate-900">{result.telemetry_summary.events_found}</span>
+                        <span className="font-semibold text-[var(--foreground)]">{result.telemetry_summary.events_found}</span>
                       </p>
                     </div>
 
                     {lastRunType !== "telemetry_check" && result.detection_summary && (
-                      <div className="rounded-lg border border-slate-200 bg-white p-3 space-y-1.5">
+                      <div className="rounded-lg border border-[var(--stroke-soft)] bg-[var(--surface-card)] p-3 space-y-1.5">
                         <div className="text-[11px] uppercase tracking-[0.2em] text-slate-500">
                           Detection
                         </div>
                         <p className="text-[11px] text-slate-700">
                           Detection fired:{" "}
-                          <span className="font-semibold text-slate-900">
+                          <span className="font-semibold text-[var(--foreground)]">
                             {result.detection_summary.rule_fired ? "Yes" : "No"}
                           </span>
                         </p>
                         <p className="text-[11px] text-slate-700">
                           Matches found:{" "}
-                          <span className="font-semibold text-slate-900">
+                          <span className="font-semibold text-[var(--foreground)]">
                             {result.detection_summary.alerts_found}
                           </span>
                         </p>

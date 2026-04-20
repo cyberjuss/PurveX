@@ -4,18 +4,22 @@ import os
 from typing import Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from ..routers.auth import get_current_user
 from ..config import settings
 from ..db import get_db
 from ..services.ai_assistant import call_llm
 from ..utils.tenant import require_org_id
+from ..utils.authz import require_permission, Permission
 from sqlalchemy import select, desc, func
 from .. import models
 
 
 router = APIRouter(prefix="/assistant", tags=["assistant"])
+
+
+ALLOWED_MODELS = frozenset({"gpt-4o-mini", "gpt-4o", "deepseek-chat", "deepseek-reasoner"})
 
 
 class AssistantRequest(BaseModel):
@@ -33,6 +37,19 @@ class AssistantRequest(BaseModel):
   alert_id: Optional[int] = None
   force_demo: Optional[bool] = False
   model_name: Optional[str] = Field(None, description="Optional model override for this request.")
+
+  @field_validator("model_name")
+  @classmethod
+  def _validate_model_name(cls, value: Optional[str]) -> Optional[str]:
+    if value is None:
+      return None
+    candidate = value.strip()
+    if not candidate:
+      return None
+    if candidate not in ALLOWED_MODELS:
+      # Do not echo the rejected value — it's untrusted input.
+      raise ValueError("model_name is not in the allowed list")
+    return candidate
 
 
 class AssistantResponse(BaseModel):
@@ -406,6 +423,8 @@ async def chat_with_assistant(
   db = Depends(get_db),
 ) -> AssistantResponse:
   """Return a Watchtower answer using the configured AI provider with deterministic fallback."""
+  await require_permission(user, Permission.ASSISTANT_USE, db)
+
   # SECURITY: Sanitize prompt input
   from ..utils.security import sanitize_string
   if not payload.prompt and not payload.action:
@@ -419,13 +438,9 @@ async def chat_with_assistant(
   org_id = require_org_id(user)
   ai_settings = await _load_ai_settings(db, org_id)
   provider, model_name, api_base_url = _configured_ai_settings(ai_settings)
-  requested_model = (payload.model_name or "").strip()
-  if requested_model:
-    # Keep a strict allowlist for per-request model override.
-    allowed_models = {"gpt-4o-mini", "gpt-4o", "deepseek-chat", "deepseek-reasoner"}
-    if requested_model not in allowed_models:
-      raise HTTPException(status_code=400, detail=f"Unsupported model: {requested_model}")
-    model_name = requested_model
+  if payload.model_name:
+    # The Pydantic validator on `model_name` already enforced the allowlist.
+    model_name = payload.model_name
 
   # Build context pack when action is provided (preferred MVP path).
   if action:
@@ -497,7 +512,7 @@ async def chat_with_assistant(
       "Findings:\n"
       f"- Provider: {provider}\n"
       f"- Model: {model_name}\n"
-      f"- Error: {answer}\n"
+      "- The configured AI provider returned an error. Backend logs have the upstream detail.\n"
       "Root cause: OTHER (confidence: high)\n"
       "Next steps:\n"
       f"1) Confirm {key_hint} is configured on the backend.\n"

@@ -19,6 +19,8 @@ async def require_permission(
     permission: PermissionEnum,
     db: AsyncSession,
     request: Request | None = None,
+    resource_criticality=None,
+    environment: str | None = None,
 ):
     """
     Check if a user has a specific permission.
@@ -70,7 +72,12 @@ async def require_permission(
             detail="User organization not set"
         )
     
-    has_perm = await rbac.has_permission(user, permission)
+    has_perm = await rbac.has_permission(
+        user,
+        permission,
+        resource_criticality=resource_criticality,
+        environment=environment,
+    )
     if not has_perm:
         # SECURITY: Log permission denial to audit log
         try:
@@ -131,7 +138,7 @@ async def require_schedule(
             detail=f"Unknown environment for scheduling: {environment!r}",
         )
 
-    await require_permission(user, perm, db, request)
+    await require_permission(user, perm, db, request, environment=env)
 
 
 # Convenience functions for detection-related permissions
@@ -142,6 +149,15 @@ async def require_detection_create(
 ):
     """Check if user has permission to create detections."""
     await require_permission(user, Permission.DETECTIONS_CREATE, db, request)
+
+
+async def require_detection_read(
+    user: models.User,
+    db: AsyncSession,
+    request: Request | None = None,
+):
+    """Check if user has permission to read detections."""
+    await require_permission(user, Permission.DETECTIONS_READ, db, request)
 
 
 async def require_detection_update(
@@ -199,4 +215,4 @@ async def require_test_run(
             detail=f"Unknown environment for test run: {environment!r}",
         )
 
-    await require_permission(user, perm, db, request)
+    await require_permission(user, perm, db, request, environment=env)

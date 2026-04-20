@@ -52,7 +52,31 @@ def _runner_snapshot(runner: models.EnvironmentRunnerConfig) -> Dict[str, Any]:
     }
 
 
-def _build_atomic_command(technique_id: str, marker: str, runner: Dict[str, Any]) -> str:
+def _atomic_selector(
+    atomic_test_number: Optional[int] = None,
+    atomic_test_name: Optional[str] = None,
+    *,
+    powershell: bool,
+) -> str:
+    if atomic_test_number is not None:
+        if atomic_test_number < 1 or atomic_test_number > 999:
+            raise RuntimeError(f"Invalid Atomic test number: {atomic_test_number!r}")
+        return f"-TestNumbers {atomic_test_number}"
+
+    if atomic_test_name:
+        safe_name = atomic_test_name.replace("'", "''" if powershell else "'\"'\"'")
+        return f"-TestNames '{safe_name}'"
+
+    return "-TestNumbers 1"
+
+
+def _build_atomic_command(
+    technique_id: str,
+    marker: str,
+    runner: Dict[str, Any],
+    atomic_test_number: Optional[int] = None,
+    atomic_test_name: Optional[str] = None,
+) -> str:
     technique_id = technique_id.strip().upper()
     if not re.fullmatch(_TECHNIQUE_ID_RE, technique_id):
         raise RuntimeError(f"Invalid technique_id for atomic execution: {technique_id!r}")
@@ -61,24 +85,32 @@ def _build_atomic_command(technique_id: str, marker: str, runner: Dict[str, Any]
     safe_marker = marker.replace("'", "''")
     if is_windows:
         safe_technique_id = technique_id.replace("'", "''")
+        selector = _atomic_selector(atomic_test_number, atomic_test_name, powershell=True)
         return (
             "powershell -NoProfile -ExecutionPolicy Bypass -Command "
             f"\"$ErrorActionPreference='Stop'; "
             f"try {{ eventcreate /T INFORMATION /ID 100 /L APPLICATION /SO PurveX /D '{safe_marker}' | Out-Null }} catch {{}}; "
             f"Import-Module Invoke-AtomicRedTeam -ErrorAction Stop; "
-            f"Invoke-AtomicTest '{safe_technique_id}' -TestNumbers 1 -GetPrereqs\""
+            f"Invoke-AtomicTest '{safe_technique_id}' {selector} -GetPrereqs\""
         )
     safe_technique_id = shlex.quote(technique_id)
     safe_marker_shell = shlex.quote(marker)
+    selector = _atomic_selector(atomic_test_number, None, powershell=True)
     return (
         "bash -lc "
         f"\"logger -t purvex {safe_marker_shell} || true; "
         f"pwsh -NoProfile -Command 'Import-Module Invoke-AtomicRedTeam -ErrorAction Stop; "
-        f"Invoke-AtomicTest {safe_technique_id} -TestNumbers 1 -GetPrereqs'\""
+        f"Invoke-AtomicTest {safe_technique_id} {selector} -GetPrereqs'\""
     )
 
 
-def run_atomic_test(technique_id: str, marker: str, runner: Optional[Dict[str, Any]]) -> str:
+def run_atomic_test(
+    technique_id: str,
+    marker: str,
+    runner: Optional[Dict[str, Any]],
+    atomic_test_number: Optional[int] = None,
+    atomic_test_name: Optional[str] = None,
+) -> str:
     """Run an Atomic Red Team test over SSH using the configured runner."""
     if not runner:
         raise RuntimeError("No environment runner is configured for this test.")
@@ -87,7 +119,13 @@ def run_atomic_test(technique_id: str, marker: str, runner: Optional[Dict[str, A
     if not runner.get("hostname") or not runner.get("username"):
         raise RuntimeError("Runner hostname and username are required for SSH execution.")
 
-    command = _build_atomic_command(technique_id, marker, runner)
+    command = _build_atomic_command(
+        technique_id,
+        marker,
+        runner,
+        atomic_test_number=atomic_test_number,
+        atomic_test_name=atomic_test_name,
+    )
     client = paramiko.SSHClient()
     client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
 
@@ -251,12 +289,33 @@ async def execute_test_pipeline(test_id: int, expected_org_id: int):
 
             technique_id = detection.technique_id if detection is not None else (test.technique_id or "UNKNOWN")
             runner_payload = _runner_snapshot(runner_config) if runner_config else None
-            command_str = await anyio.to_thread.run_sync(run_atomic_test, technique_id, test.marker, runner_payload)
+            command_str = await anyio.to_thread.run_sync(
+                run_atomic_test,
+                technique_id,
+                test.marker,
+                runner_payload,
+                test.atomic_test_number,
+                test.atomic_test_name,
+            )
             logger.info("Atomic test command for %s: %s", test_id, command_str)
 
             await asyncio.sleep(20)
 
-            if detection is not None:
+            # Pick the validation strategy based on the user's stated intent
+            # (test.mode), not just on whether a detection happens to be linked.
+            # Behaviour matrix:
+            #   TELEMETRY_CHECK     → always telemetry-only (no rule scoring,
+            #                         no detection-status mutation below)
+            #   ALERT_CHECK         → telemetry-only when no detection is linked,
+            #                         detection scoring otherwise (legacy behavior)
+            #   DETECTION_VALIDATION→ detection scoring when a detection is
+            #                         linked, telemetry fallback otherwise
+            run_mode = (getattr(test, "mode", None) or "DETECTION_VALIDATION").upper()
+            use_telemetry_only = (
+                run_mode == "TELEMETRY_CHECK" or detection is None
+            )
+
+            if not use_telemetry_only:
                 result_status, score, sample_events = await anyio.to_thread.run_sync(
                     validate_detection_for_test,
                     test,
@@ -278,7 +337,11 @@ async def execute_test_pipeline(test_id: int, expected_org_id: int):
             await db.commit()
             await db.refresh(test)
 
-            if detection is not None:
+            # Only update the detection's lifecycle counters when the rule was
+            # actually evaluated. A telemetry-only run (TELEMETRY_CHECK or
+            # detection-less) does not exercise the rule logic, so flipping
+            # ACTIVE / NEEDS_IMPROVEMENT off its result would be misleading.
+            if detection is not None and not use_telemetry_only:
                 detection.last_tested_at = test.finished_at
                 if result_status == "PASS":
                     if not detection.last_pass_at or test.finished_at > detection.last_pass_at:
@@ -304,7 +367,7 @@ async def execute_test_pipeline(test_id: int, expected_org_id: int):
                 logger.warning("Error applying test data retention: %s", retention_err)
 
             existing_artifact = None
-            if detection is not None:
+            if detection is not None and not use_telemetry_only:
                 try:
                     artifact_result = await db.execute(
                         select(models.TestArtifact).where(models.TestArtifact.test_id == test.id)

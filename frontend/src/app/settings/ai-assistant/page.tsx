@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { Card, CardContent } from "@/components/ui/card";
+import { SkeletonCard } from "@/components/ui/skeleton";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -153,7 +154,10 @@ export default function AIAssistantSettingsPage() {
           subtitle="Configure what the assistant can analyze, how it responds, and what data limits apply inside PurveX."
           icon={<Sparkles className="h-5 w-5" />}
         />
-        <Card><CardContent className="pt-6 text-sm text-muted-foreground">Loading AI assistant settings...</CardContent></Card>
+        <div className="space-y-4">
+          <SkeletonCard />
+          <SkeletonCard />
+        </div>
       </PageContainer>
     );
   }

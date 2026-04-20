@@ -10,6 +10,7 @@ from ..db import get_db, async_sessionmaker
 from .. import models, schemas
 from ..routers.auth import get_current_user
 from ..utils.tenant import require_org_id
+from ..utils.authz import require_permission, Permission
 
 router = APIRouter(
     prefix="/sandbox",
@@ -36,6 +37,8 @@ async def get_sandbox_environment(
     current_user: CurrentUser,
 ):
     """Return the current organisation's PurveX Lab / sandbox, if it exists."""
+    await require_permission(current_user, Permission.SETTINGS_READ, db)
+
     org_id = require_org_id(current_user)
 
     result = await db.execute(
@@ -63,11 +66,7 @@ async def provision_sandbox_environment(
     creates a logical sandbox record that future n8n workflows and lab
     provisioning services can attach to.
     """
-    if not current_user.is_admin:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only administrators can provision a sandbox environment.",
-        )
+    await require_permission(current_user, Permission.SETTINGS_UPDATE, db)
 
     org_id = require_org_id(current_user)
 
@@ -126,11 +125,7 @@ async def reset_sandbox_environment(
     dedicated service) to actually tear down and recreate lab VMs. For now, we
     just ensure the record exists and mark it as ready.
     """
-    if not current_user.is_admin:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only administrators can reset a sandbox environment.",
-        )
+    await require_permission(current_user, Permission.SETTINGS_UPDATE, db)
 
     org_id = require_org_id(current_user)
 

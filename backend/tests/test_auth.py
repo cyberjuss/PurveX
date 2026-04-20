@@ -65,7 +65,7 @@ class TestAuthentication:
         """Test that login endpoint exists."""
         # Try to login (may fail without proper setup, but endpoint should exist)
         response = client.post(
-            "/api/v1/auth/login",
+            "/auth/login",
             data={"username": "admin", "password": "admin"}
         )
         # Should not be 404 (endpoint exists)

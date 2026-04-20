@@ -11,12 +11,14 @@ import {
   type DetectionAlert,
 } from "@/lib/api";
 import { formatRelative } from "date-fns";
-import { 
-  Cpu, MessageCircle, Loader2, X, Sparkles, RefreshCw,
-  Search, Activity, BookOpen, FileText, TrendingUp, Zap, AlertTriangle, SendHorizonal, Plus
+import {
+  Cpu, MessageCircle, Loader2, Sparkles, RefreshCw,
+  Search, Activity, BookOpen, FileText, TrendingUp, Zap, AlertTriangle, SendHorizonal, Plus,
+  ShieldCheck,
 } from "lucide-react";
 import { PageContainer } from "@/components/layout/page-container";
 import { cn } from "@/lib/utils";
+import { ProposeFixDialog } from "@/components/proposals/propose-fix-dialog";
 
 type ChatMessage = {
   id: number;
@@ -48,6 +50,21 @@ function getErrorMessage(error: unknown, fallback: string) {
   return error instanceof Error ? error.message : fallback;
 }
 
+function safeFormatRelative(timestamp: string): string {
+  try {
+    const date = new Date(timestamp);
+    if (Number.isNaN(date.getTime())) return "Just now";
+    return formatRelative(date, new Date());
+  } catch {
+    return "Just now";
+  }
+}
+
+function scrollChatToBottom(container: HTMLDivElement | null) {
+  if (!container) return;
+  container.scrollTo({ top: container.scrollHeight, behavior: "smooth" });
+}
+
 function WatchtowerPageContent() {
   const searchParams = useSearchParams();
   const [loading, setLoading] = useState(true);
@@ -58,9 +75,12 @@ function WatchtowerPageContent() {
   const [selectedAlert, setSelectedAlert] = useState<DetectionAlert | null>(null);
   const [mounted, setMounted] = useState(false);
   const [customPrompt, setCustomPrompt] = useState("");
-  const [showConversationRail] = useState(false);
   const [selectedModel, setSelectedModel] = useState("deepseek-chat");
   const [analystGoal, setAnalystGoal] = useState<AnalystGoal>("find_weaknesses");
+  // ``proposeSeed`` carries the assistant message content through to the
+  // propose-fix dialog so the reviewer sees the AI's rationale verbatim,
+  // not just the field patch. null means the dialog is closed.
+  const [proposeSeed, setProposeSeed] = useState<string | null>(null);
   const chatContainerRef = useRef<HTMLDivElement>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
   const requestIdRef = useRef(0);
@@ -72,38 +92,18 @@ function WatchtowerPageContent() {
   const detectionId = searchParams.get("detectionId");
   const alertId = searchParams.get("alertId");
 
-  const showQuickActions = useMemo(() => 
+  const showQuickActions = useMemo(() =>
     messages.length === 0 || (messages.length === 1 && messages[0]?.role === "assistant"),
     [messages]
   );
-  const conversationItems = useMemo(() => {
-    const firstUserMessage = messages.find((msg) => msg.role === "user");
-    const title = firstUserMessage?.content?.slice(0, 60) || (selectedDetection ? selectedDetection.title : "New analysis");
-    return [
-      {
-        id: "active",
-        title,
-        subtitle: selectedDetection ? "Detection context" : "Portfolio context",
-      },
-    ];
-  }, [messages, selectedDetection]);
 
   useEffect(() => {
     setMounted(true);
   }, []);
 
   useEffect(() => {
-    if (!mounted || !chatContainerRef.current) return;
-    
-    const timer = setTimeout(() => {
-      if (chatContainerRef.current) {
-        chatContainerRef.current.scrollTo({
-          top: chatContainerRef.current.scrollHeight,
-          behavior: "smooth",
-        });
-      }
-    }, 50);
-    
+    if (!mounted) return;
+    const timer = setTimeout(() => scrollChatToBottom(chatContainerRef.current), 50);
     return () => clearTimeout(timer);
   }, [messages, mounted]);
 
@@ -254,6 +254,15 @@ function WatchtowerPageContent() {
     }
   }, [analystGoal]);
 
+  // Hooks must run on every render, so compute derived state BEFORE the
+  // loading/error early returns below. Moving this after them causes
+  // "Rendered more hooks than during the previous render" when the page
+  // transitions from loading → ready.
+  const visibleMessages = useMemo(
+    () => (showQuickActions ? [] : messages),
+    [showQuickActions, messages],
+  );
+
   async function handleQuickAction(action: QuickAction) {
     if (AI_DISABLED) {
       const now = new Date().toISOString();
@@ -268,11 +277,7 @@ function WatchtowerPageContent() {
       return;
     }
     if (action.autoSend) {
-      setTimeout(() => {
-        handleSend(action);
-      }, 100);
-    } else {
-      // No free-form input in MVP mode.
+      void handleSend(action);
     }
   }
 
@@ -322,15 +327,6 @@ function WatchtowerPageContent() {
       };
       setMessages(prev => [...prev, assistantMsg]);
     }, AI_REQUEST_TIMEOUT_MS);
-    
-    setTimeout(() => {
-      if (chatContainerRef.current) {
-        chatContainerRef.current.scrollTo({
-          top: chatContainerRef.current.scrollHeight,
-          behavior: "smooth",
-        });
-      }
-    }, 100);
 
     try {
       
@@ -358,15 +354,6 @@ function WatchtowerPageContent() {
         
         setMessages(prev => [...prev, assistantMsg]);
         setCustomPrompt("");
-        
-        setTimeout(() => {
-          if (chatContainerRef.current) {
-            chatContainerRef.current.scrollTo({
-              top: chatContainerRef.current.scrollHeight,
-              behavior: "smooth",
-            });
-          }
-        }, 100);
       } catch (fetchErr: unknown) {
         if (timeoutRef.current) clearTimeout(timeoutRef.current);
         if (requestIdRef.current !== requestId) return;
@@ -411,15 +398,6 @@ function WatchtowerPageContent() {
       };
       
       setMessages(prev => [...prev, assistantMsg]);
-      
-      setTimeout(() => {
-        if (chatContainerRef.current) {
-          chatContainerRef.current.scrollTo({
-            top: chatContainerRef.current.scrollHeight,
-            behavior: "smooth",
-          });
-        }
-      }, 100);
     } finally {
       setSending(false);
       abortControllerRef.current = null;
@@ -477,79 +455,44 @@ function WatchtowerPageContent() {
   const currentQuickActions = selectedDetection ? detectionQuickActions : generalQuickActions;
 
   return (
-    <div className="w-full min-h-screen flex bg-[var(--surface-page)] text-[var(--foreground)] overflow-y-auto">
-      {showConversationRail && (
-        <aside className="hidden lg:flex w-72 shrink-0 border-r border-[var(--stroke-soft)] bg-[var(--surface-shell)]">
-          <div className="flex h-full w-full flex-col">
-            <div className="border-b border-[var(--stroke-soft)] p-3">
-              <Button
-                variant="outline"
-                className="w-full justify-start"
-                onClick={() => {
-                  setMessages([]);
-                  setCustomPrompt("");
-                }}
-              >
-                <Plus className="mr-2 h-4 w-4" />
-                New chat
-              </Button>
+    <div className="flex h-screen w-full flex-col overflow-hidden bg-[var(--surface-page)] text-[var(--foreground)]">
+      {/* Header */}
+      <header className="flex-shrink-0 border-b border-[var(--stroke-soft)] bg-[var(--surface-shell)]">
+        <div className="mx-auto flex w-full max-w-5xl items-center justify-between gap-4 px-4 py-3 sm:px-6 lg:px-8">
+          <div className="flex min-w-0 items-center gap-3">
+            <div className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg border border-[var(--stroke-soft)] bg-[var(--surface-elevated)]">
+              <Cpu className="h-4 w-4 text-[var(--accent-strong)]" />
             </div>
-            <div className="flex-1 space-y-2 overflow-y-auto p-3">
-              {conversationItems.map((item) => (
-                <button
-                  key={item.id}
-                  type="button"
-                  className="w-full rounded-xl border border-[var(--accent-line)] bg-[var(--accent-soft)] px-3 py-2 text-left"
-                >
-                  <p className="truncate text-sm font-medium text-[var(--foreground)]">{item.title}</p>
-                  <p className="mt-1 text-xs text-[var(--surface-subtle-foreground)]">{item.subtitle}</p>
-                </button>
-              ))}
-            </div>
-            <div className="border-t border-[var(--stroke-soft)] p-3">
-              <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-[var(--surface-subtle-foreground)]">
-                Model
-              </label>
-              <select
-                value={selectedModel}
-                onChange={(event) => setSelectedModel(event.target.value)}
-                className="w-full rounded-lg border border-[var(--stroke-soft)] bg-[var(--surface-elevated)] px-3 py-2 text-sm outline-none focus:border-[var(--accent-line)]"
-              >
-                <option value="deepseek-chat">DeepSeek Chat</option>
-                <option value="deepseek-reasoner">DeepSeek Reasoner</option>
-                <option value="gpt-4o-mini">GPT-4o mini (fast)</option>
-                <option value="gpt-4o">GPT-4o (balanced)</option>
-              </select>
-              <p className="mt-1 text-[11px] text-[var(--surface-subtle-foreground)]">Active model for this chat.</p>
+            <div className="min-w-0">
+              <p className="text-sm font-semibold leading-tight text-[var(--foreground)]">Watchtower</p>
+              <p className="truncate text-xs text-[var(--surface-subtle-foreground)]">
+                {selectedDetection
+                  ? `${selectedDetection.title} · ${selectedDetection.technique_id}`
+                  : "Portfolio analysis"}
+              </p>
             </div>
           </div>
-        </aside>
-      )}
-      {/* Main Chat Area - Full Width and Height */}
-      <div className="flex-1 flex flex-col min-h-0">
-        <div className="sticky top-0 z-20 border-b border-[var(--stroke-soft)] bg-[var(--surface-shell)] px-4 py-2 sm:px-6 lg:px-8">
-          <div className="mx-auto flex w-full max-w-5xl items-center justify-between">
-            <div className="flex items-center gap-2">
-              <Cpu className="h-4 w-4 text-[var(--accent-strong)]" />
-              <p className="text-sm font-medium text-[var(--foreground)]">Watchtower</p>
-            </div>
-            <div className="hidden sm:flex items-center gap-2">
-              <span className="text-xs text-[var(--surface-subtle-foreground)]">Goal</span>
+
+          <div className="flex items-center gap-2">
+            <div className="hidden items-center gap-1.5 rounded-lg border border-[var(--stroke-soft)] bg-[var(--surface-elevated)] px-2.5 py-1.5 sm:flex">
+              <span className="text-[11px] font-medium uppercase tracking-wider text-[var(--surface-subtle-foreground)]">Goal</span>
               <select
                 value={analystGoal}
                 onChange={(event) => setAnalystGoal(event.target.value as AnalystGoal)}
-                className="rounded-lg border border-[var(--stroke-soft)] bg-[var(--surface-elevated)] px-2 py-1 text-xs outline-none focus:border-[var(--accent-line)]"
+                className="bg-transparent text-xs font-medium text-[var(--foreground)] outline-none"
               >
                 <option value="find_weaknesses">Find weaknesses</option>
                 <option value="reduce_false_positives">Reduce false positives</option>
                 <option value="improve_detection_coverage">Improve coverage</option>
                 <option value="stabilize_failing_tests">Stabilize failing tests</option>
               </select>
-              <span className="text-xs text-[var(--surface-subtle-foreground)]">Model</span>
+            </div>
+            <div className="hidden items-center gap-1.5 rounded-lg border border-[var(--stroke-soft)] bg-[var(--surface-elevated)] px-2.5 py-1.5 sm:flex">
+              <span className="text-[11px] font-medium uppercase tracking-wider text-[var(--surface-subtle-foreground)]">Model</span>
               <select
                 value={selectedModel}
                 onChange={(event) => setSelectedModel(event.target.value)}
-                className="rounded-lg border border-[var(--stroke-soft)] bg-[var(--surface-elevated)] px-2 py-1 text-xs outline-none focus:border-[var(--accent-line)]"
+                className="bg-transparent text-xs font-medium text-[var(--foreground)] outline-none"
               >
                 <option value="deepseek-chat">DeepSeek Chat</option>
                 <option value="deepseek-reasoner">DeepSeek Reasoner</option>
@@ -557,241 +500,210 @@ function WatchtowerPageContent() {
                 <option value="gpt-4o">GPT-4o</option>
               </select>
             </div>
+            {messages.length > 0 && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  setMessages([]);
+                  setCustomPrompt("");
+                  if (abortControllerRef.current) abortControllerRef.current.abort();
+                }}
+              >
+                <Plus className="mr-1.5 h-3.5 w-3.5" />
+                New
+              </Button>
+            )}
           </div>
         </div>
-            <div 
-              ref={chatContainerRef}
-          className={cn(
-            "flex-1 overflow-x-hidden flex flex-col",
-            messages.length > 0 ? "overflow-y-auto" : "overflow-y-hidden"
-          )}
-        >
-          <div className={cn(
-            "w-full px-4 sm:px-6 lg:px-8 flex-1 flex flex-col max-w-5xl mx-auto",
-            showQuickActions ? "py-6" : "py-8",
-            messages.length > 0 && "pb-24"
-          )}>
-            {/* Quick Actions - Full Page Layout */}
-            {showQuickActions && (
-              <div className="flex flex-col items-center justify-center flex-1 space-y-6 animate-fade-in-scale">
-                <div className="text-center space-y-2 mb-4">
-                  <div className="inline-flex items-center justify-center h-14 w-14 rounded-2xl bg-[var(--surface-elevated)] border border-[var(--stroke-soft)] mb-3">
-                    <Cpu className="h-7 w-7 text-[var(--accent-strong)]" />
-                  </div>
-                  <h2 className="text-2xl font-display font-bold text-[var(--foreground)]">What should Watchtower analyze?</h2>
-                  <p className="text-[var(--surface-subtle-foreground)] text-sm">Ask about trust, evidence, validation blockers, or what to fix next.</p>
-                </div>
-                
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 w-full max-w-4xl">
-                  {currentQuickActions.map((action, idx) => {
-                    const Icon = action.icon;
-                    return (
-                        <button
-                        key={action.id}
-                        onClick={() => handleQuickAction(action)}
-                        disabled={sending || AI_DISABLED}
-                        className={cn(
-                          "group relative text-left px-5 py-4 rounded-xl border transition-all duration-200",
-                          !AI_DISABLED && "hover:scale-[1.01] hover:shadow-md",
-                          "bg-[var(--surface-elevated)] border-[var(--stroke-soft)]",
-                          !AI_DISABLED && "hover:border-[var(--accent-line)] hover:bg-[var(--surface-subtle)]",
-                          AI_DISABLED && "opacity-60 cursor-not-allowed",
-                          "animate-fade-in-scale"
-                        )}
-                        style={{ animationDelay: `${idx * 50}ms` }}
-                      >
-                        <div className="flex items-start gap-4">
-                           <div className={cn(
-                             "h-9 w-9 rounded-lg flex items-center justify-center flex-shrink-0 transition-transform duration-200 group-hover:scale-110",
-                             action.color === "sky" && "bg-sky-100 text-sky-600",
-                             action.color === "emerald" && "bg-emerald-100 text-emerald-600",
-                             action.color === "amber" && "bg-amber-100 text-amber-600",
-                             action.color === "purple" && "bg-purple-100 text-purple-600",
-                           )}>
-                            <Icon className="h-4 w-4" />
-                          </div>
-                          <div className="flex-1 min-w-0">
-                            <h3 className="font-display font-semibold text-sm text-[var(--foreground)] mb-1">
-                              {action.title}
-                            </h3>
-                            <p className="text-xs text-[var(--surface-subtle-foreground)] leading-relaxed">
-                              {action.description}
-                            </p>
-                            </div>
-                          </div>
-                        </button>
-                    );
-                  })}
-                </div>
+      </header>
 
-                <div className="w-full max-w-4xl rounded-2xl border border-[var(--stroke-soft)] bg-[var(--surface-elevated)] p-4 shadow-sm">
-                  <div className="mb-3">
-                    <h3 className="text-sm font-display font-semibold text-[var(--foreground)]">Ask a custom PurveX question</h3>
-                    <p className="text-xs text-[var(--surface-subtle-foreground)]">
-                      Ask about trust, evidence, telemetry gaps, rule tuning, retest plans, or how to improve coverage.
-                    </p>
-                  </div>
-                  <div className="flex flex-col gap-3">
-                    <textarea
-                      value={customPrompt}
-                      onChange={(event) => setCustomPrompt(event.target.value)}
-                      placeholder={
-                        selectedDetection
-                          ? "Example: What is the most likely reason this detection is failing, and what exact rule changes should I try first?"
-                          : "Example: Which detections are hurting trust the most right now, and what should the team fix first?"
-                      }
-                      className="min-h-28 w-full resize-y rounded-xl border border-[var(--stroke-soft)] bg-[var(--surface-shell)] px-4 py-3 text-sm text-[var(--foreground)] outline-none transition-colors placeholder:text-[var(--surface-subtle-foreground)] focus:border-[var(--accent-line)]"
-                    />
-                    <div className="flex items-center justify-between gap-3">
-                      <p className="text-xs text-[var(--surface-subtle-foreground)]">
-                        Context: {selectedDetection ? "Selected detection" : "Portfolio workspace"}
-                      </p>
-                      <Button
-                        onClick={() => void handleSend()}
-                        disabled={sending || !customPrompt.trim() || AI_DISABLED}
-                        className="bg-[var(--accent-strong)] text-white hover:opacity-90"
-                      >
-                        {sending ? (
-                          <>
-                            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                            Asking...
-                          </>
-                        ) : (
-                          <>
-                            <SendHorizonal className="mr-2 h-4 w-4" />
-                            Ask Watchtower
-                          </>
-                        )}
-                      </Button>
-                    </div>
-                  </div>
-                </div>
+      {/* Main scroll area */}
+      <main ref={chatContainerRef} className="flex-1 overflow-y-auto">
+        <div className="mx-auto w-full max-w-4xl px-4 py-8 sm:px-6 lg:px-8">
+          {showQuickActions ? (
+            <div className="flex min-h-[calc(100vh-260px)] flex-col items-center justify-center text-center animate-fade-in-scale">
+              <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-2xl border border-[var(--stroke-soft)] bg-[var(--surface-elevated)]">
+                <Cpu className="h-6 w-6 text-[var(--accent-strong)]" />
               </div>
-            )}
+              <h1 className="text-xl font-display font-semibold text-[var(--foreground)] sm:text-2xl">
+                {selectedDetection
+                  ? `Analyze ${selectedDetection.title}`
+                  : "What should Watchtower analyze?"}
+              </h1>
+              <p className="mt-2 max-w-md text-sm text-[var(--surface-subtle-foreground)]">
+                Pick a starting point, or ask a custom question below.
+              </p>
 
-            {/* Messages - Full Width Layout */}
-            {messages.length > 0 && (
-              <div className="space-y-6 py-8 max-w-4xl mx-auto w-full">
-                {messages.map((msg, idx) => (
-                  <div
-                    key={msg.id}
-                    className={cn(
-                      "flex gap-4 animate-fade-in-scale",
-                      msg.role === "user" ? "justify-end" : "justify-start"
-                    )}
-                    style={{ animationDelay: `${idx * 30}ms` }}
-                  >
-                    {msg.role === "assistant" && (
-                      <div className="flex-shrink-0 h-8 w-8 rounded-lg bg-[var(--surface-elevated)] border border-[var(--stroke-soft)] flex items-center justify-center mt-1">
-                        <MessageCircle className="h-4 w-4 text-[var(--accent-strong)]" />
-                          </div>
-                    )}
-                    
-                    <div className={cn(
-                      "max-w-[85%] rounded-2xl px-5 py-4",
-                      msg.role === "user"
-                        ? "bg-[var(--accent-soft)] text-[var(--foreground)] border border-[var(--accent-line)]"
-                        : cn(
-                            "bg-[var(--surface-elevated)] text-[var(--foreground)] border border-[var(--stroke-soft)]",
-                            msg.error && "border-red-500/40 bg-red-50 dark:bg-red-500/10"
-                          )
-                    )}>
-                      <div className="whitespace-pre-wrap break-words text-sm leading-relaxed text-[var(--foreground)]">
-                        {msg.content}
-                      </div>
+              <div className="mt-8 grid w-full grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                {currentQuickActions.map((action, idx) => {
+                  const Icon = action.icon;
+                  return (
+                    <button
+                      key={action.id}
+                      onClick={() => handleQuickAction(action)}
+                      disabled={sending || AI_DISABLED}
+                      className={cn(
+                        "group flex h-full flex-col gap-3 rounded-xl border border-[var(--stroke-soft)] bg-[var(--surface-elevated)] p-4 text-left transition-all",
+                        !AI_DISABLED && "hover:border-[var(--accent-line)] hover:bg-[var(--surface-subtle)] hover:shadow-sm",
+                        AI_DISABLED && "cursor-not-allowed opacity-60",
+                        "animate-fade-in-scale"
+                      )}
+                      style={{ animationDelay: `${idx * 40}ms` }}
+                    >
                       <div className={cn(
-                        "mt-2 text-xs",
-                        "text-[var(--surface-subtle-foreground)]"
+                        "flex h-9 w-9 items-center justify-center rounded-lg transition-transform group-hover:scale-105",
+                        action.color === "sky" && "bg-sky-100 text-sky-600",
+                        action.color === "emerald" && "bg-emerald-100 text-emerald-600",
+                        action.color === "amber" && "bg-amber-100 text-amber-600",
+                        action.color === "purple" && "bg-purple-100 text-purple-600",
                       )}>
-                        {mounted ? formatRelative(new Date(msg.timestamp), new Date()) : "Just now"}
+                        <Icon className="h-4 w-4" />
                       </div>
+                      <div>
+                        <h3 className="text-sm font-semibold text-[var(--foreground)]">{action.title}</h3>
+                        <p className="mt-1 text-xs leading-relaxed text-[var(--surface-subtle-foreground)]">
+                          {action.description}
+                        </p>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-6">
+              {visibleMessages.map((msg, idx) => (
+                <div
+                  key={msg.id}
+                  className={cn(
+                    "flex gap-3 animate-fade-in-scale",
+                    msg.role === "user" ? "justify-end" : "justify-start"
+                  )}
+                  style={{ animationDelay: `${idx * 30}ms` }}
+                >
+                  {msg.role === "assistant" && (
+                    <div className="mt-1 flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg border border-[var(--stroke-soft)] bg-[var(--surface-elevated)]">
+                      <MessageCircle className="h-4 w-4 text-[var(--accent-strong)]" />
                     </div>
+                  )}
 
-                    {msg.role === "user" && (
-                      <div className="flex-shrink-0 h-8 w-8 rounded-lg bg-[var(--surface-elevated)] border border-[var(--stroke-soft)] flex items-center justify-center mt-1">
-                        <Cpu className="h-4 w-4 text-[var(--foreground)]" />
+                  <div className={cn(
+                    "max-w-[85%] rounded-2xl px-4 py-3",
+                    msg.role === "user"
+                      ? "border border-[var(--accent-line)] bg-[var(--accent-soft)] text-[var(--foreground)]"
+                      : cn(
+                          "border border-[var(--stroke-soft)] bg-[var(--surface-elevated)] text-[var(--foreground)]",
+                          msg.error && "border-red-500/40 bg-red-50 dark:bg-red-500/10"
+                        )
+                  )}>
+                    <div className="whitespace-pre-wrap break-words text-sm leading-relaxed">
+                      {msg.content}
+                    </div>
+                    <div className="mt-2 flex items-center justify-between gap-2 text-[11px] text-[var(--surface-subtle-foreground)]">
+                      <span>
+                        {mounted ? safeFormatRelative(msg.timestamp) : "Just now"}
+                      </span>
+                      {msg.role === "assistant" && !msg.error && selectedDetection ? (
+                        <button
+                          type="button"
+                          onClick={() => setProposeSeed(msg.content)}
+                          className="inline-flex items-center gap-1 rounded-full border border-[var(--accent-line)] bg-[var(--accent-soft)] px-2 py-0.5 text-[11px] font-semibold text-[var(--accent-strong)] transition hover:brightness-110"
+                        >
+                          <ShieldCheck className="h-3 w-3" />
+                          File as proposal
+                        </button>
+                      ) : null}
+                    </div>
+                  </div>
+
+                  {msg.role === "user" && (
+                    <div className="mt-1 flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg border border-[var(--stroke-soft)] bg-[var(--surface-elevated)]">
+                      <Cpu className="h-4 w-4 text-[var(--foreground)]" />
+                    </div>
+                  )}
+                </div>
+              ))}
+
+              {sending && (
+                <div className="flex gap-3 justify-start animate-fade-in-scale">
+                  <div className="mt-1 flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg border border-[var(--stroke-soft)] bg-[var(--surface-elevated)]">
+                    <MessageCircle className="h-4 w-4 text-[var(--accent-strong)]" />
+                  </div>
+                  <div className="rounded-2xl border border-[var(--stroke-soft)] bg-[var(--surface-elevated)] px-4 py-3">
+                    <Loader2 className="h-4 w-4 animate-spin text-[var(--foreground)]" />
+                  </div>
                 </div>
               )}
             </div>
-                ))}
-                
-                {sending && (
-                  <div className="flex gap-4 justify-start animate-fade-in-scale">
-                    <div className="flex-shrink-0 h-8 w-8 rounded-lg bg-[var(--surface-elevated)] border border-[var(--stroke-soft)] flex items-center justify-center mt-1">
-                      <MessageCircle className="h-4 w-4 text-[var(--accent-strong)]" />
-                    </div>
-                    <div className="bg-[var(--surface-elevated)] text-[var(--foreground)] border border-[var(--stroke-soft)] rounded-2xl px-5 py-4">
-                      <Loader2 className="h-5 w-5 animate-spin text-[var(--foreground)]" />
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
+          )}
         </div>
+      </main>
 
-        {/* Focused Actions Footer */}
-        <div className="flex-shrink-0 border-t border-[var(--stroke-soft)] bg-[var(--surface-shell)] z-10 sticky bottom-0 backdrop-blur">
-          <div className="w-full px-4 py-3 sm:px-6 lg:px-12">
-            <div className="max-w-4xl mx-auto flex items-center justify-between gap-4">
-              <div className="flex items-center gap-3 text-sm text-[var(--surface-subtle-foreground)]">
-                {AI_DISABLED ? (
-                  <span className="text-xs text-[var(--surface-subtle-foreground)]">
-                    Watchtower is temporarily unavailable for this workspace.
-                  </span>
+      {/* Sticky composer */}
+      <footer className="flex-shrink-0 border-t border-[var(--stroke-soft)] bg-[var(--surface-shell)]">
+        <div className="mx-auto w-full max-w-4xl px-4 py-3 sm:px-6 lg:px-8">
+          <div className="rounded-2xl border border-[var(--stroke-soft)] bg-[var(--surface-elevated)] transition-colors focus-within:border-[var(--accent-line)]">
+            <textarea
+              value={customPrompt}
+              onChange={(event) => setCustomPrompt(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" && !event.shiftKey && !sending && customPrompt.trim() && !AI_DISABLED) {
+                  event.preventDefault();
+                  void handleSend();
+                }
+              }}
+              placeholder={
+                selectedDetection
+                  ? "Ask a question about this detection, its evidence, or how to improve it..."
+                  : "Ask about validation health, coverage gaps, or what to fix first..."
+              }
+              disabled={AI_DISABLED}
+              className="block max-h-40 min-h-[56px] w-full resize-none bg-transparent px-4 pt-3 pb-1 text-sm text-[var(--foreground)] outline-none placeholder:text-[var(--surface-subtle-foreground)] disabled:cursor-not-allowed disabled:opacity-60"
+            />
+            <div className="flex items-center justify-between gap-2 px-3 pb-2">
+              <span className="inline-flex items-center gap-1.5 rounded-full border border-[var(--stroke-soft)] bg-[var(--surface-shell)] px-2 py-0.5 text-[11px] text-[var(--surface-subtle-foreground)]">
+                <span className="h-1.5 w-1.5 rounded-full bg-[var(--accent-strong)]" />
+                {selectedDetection ? "Detection context" : "Portfolio context"}
+              </span>
+              <Button
+                size="sm"
+                onClick={() => void handleSend()}
+                disabled={sending || !customPrompt.trim() || AI_DISABLED}
+                className="bg-[var(--accent-strong)] text-white hover:opacity-90"
+              >
+                {sending ? (
+                  <>
+                    <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                    Sending
+                  </>
                 ) : (
-                  <span className="text-xs text-[var(--surface-subtle-foreground)]">
-                    Watchtower uses your live PurveX workspace context to answer questions about trust, evidence, and validation blockers.
-                  </span>
+                  <>
+                    <SendHorizonal className="mr-1.5 h-3.5 w-3.5" />
+                    Ask Watchtower
+                  </>
                 )}
-              </div>
-              <div className="flex items-center gap-2">
-                {messages.length > 0 && (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => {
-                      setMessages([]);
-                      setCustomPrompt("");
-                      if (abortControllerRef.current) {
-                        abortControllerRef.current.abort();
-                      }
-                    }}
-                  >
-                    <X className="h-4 w-4 mr-2" />
-                    New analysis
-                  </Button>
-                )}
-                {!showQuickActions && (
-                  <Button
-                    size="sm"
-                    onClick={() => void handleSend()}
-                    disabled={sending || !customPrompt.trim() || AI_DISABLED}
-                    className="bg-[var(--accent-strong)] text-white hover:opacity-90"
-                  >
-                    <SendHorizonal className="h-4 w-4 mr-2" />
-                    Ask
-                  </Button>
-                )}
-              </div>
+              </Button>
             </div>
-            {!showQuickActions && (
-              <div className="max-w-4xl mx-auto mt-3">
-                <textarea
-                  value={customPrompt}
-                  onChange={(event) => setCustomPrompt(event.target.value)}
-                  placeholder={
-                    selectedDetection
-                      ? "Ask a PurveX-specific question about this detection, its evidence, or how to improve it."
-                      : "Ask a PurveX-specific question about validation health, failures, or what the team should do next."
-                  }
-                  className="min-h-24 w-full resize-y rounded-2xl border border-[var(--stroke-soft)] bg-[var(--surface-elevated)] px-4 py-3 text-sm text-[var(--foreground)] outline-none transition-colors placeholder:text-[var(--surface-subtle-foreground)] focus:border-[var(--accent-line)]"
-                />
-              </div>
-            )}
           </div>
+          {AI_DISABLED && (
+            <p className="mt-2 text-center text-xs text-[var(--surface-subtle-foreground)]">
+              Watchtower is temporarily unavailable for this workspace.
+            </p>
+          )}
         </div>
-      </div>
+      </footer>
+
+      <ProposeFixDialog
+        open={proposeSeed !== null}
+        onOpenChange={(open) => {
+          if (!open) setProposeSeed(null);
+        }}
+        detection={selectedDetection}
+        proposerLabel={`PurveX Assistant · ${selectedModel}`}
+        initialField="siem_query"
+        initialReason={proposeSeed ?? ""}
+      />
     </div>
   );
 }

@@ -347,7 +347,7 @@ export default function ReportsPage() {
 
           <div className="ml-auto flex items-end">
             <Button
-              className="h-10 bg-slate-900 text-white hover:bg-slate-800"
+              className="h-10"
               onClick={() => window.print()}
               disabled={loading}
             >

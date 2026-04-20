@@ -14,7 +14,7 @@ load_dotenv(dotenv_path=ROOT_ENV)
 DEFAULT_DEPLOYMENT_ENV = os.getenv("PURVEX_ENV", "dev")
 DEFAULT_DATABASE_URL = os.getenv(
     "DATABASE_URL",
-    "postgresql+asyncpg://purvex:password@localhost:5432/purvex",
+    f"sqlite+aiosqlite:///{(BACKEND_DIR / 'purvex.db').as_posix()}",
 )
 DEFAULT_CREATE_DEFAULT_ADMIN = DEFAULT_DEPLOYMENT_ENV.lower() != "prod"
 DEFAULT_ADMIN_PASSWORD_VALUE = (
@@ -42,6 +42,7 @@ class Settings(BaseSettings):
     LOGIN_LOCKOUT_MINUTES: int = 30  # How long an account stays locked (prod default)
     LOGIN_RATE_LIMIT_MAX_REQUESTS: int = 5  # Attempts allowed in rate-limit window (prod default)
     LOGIN_RATE_LIMIT_WINDOW_SECONDS: int = 300  # Window size in seconds for rate limit (prod default)
+    REDIS_URL: Optional[str] = os.getenv("REDIS_URL")
 
     # Password history / reuse policy
     PASSWORD_HISTORY_LENGTH: int = 5  # How many previous hashes to remember per user
@@ -106,10 +107,22 @@ class Settings(BaseSettings):
     BUSINESS_HOURS_END: str = "17:00"
     ONLY_PROD_DURING_MAINTENANCE_WINDOWS: bool = False
 
+    # Slow-query logger — any SQL that takes longer than this is emitted at
+    # WARNING so ops can spot regressions before they hit users. Set to 0 to
+    # disable. Default is intentionally loose; tune once baselined.
+    SLOW_QUERY_THRESHOLD_MS: int = int(os.getenv("SLOW_QUERY_THRESHOLD_MS", "500"))
+
     # Audit log retention
     AUDIT_RETENTION_DAYS: int = 30
     AUDIT_RETENTION_ENABLED: bool = True
     AUDIT_RETENTION_INTERVAL_HOURS: int = 24
+
+    # Test + artifact retention. Tests generate a lot of data once scheduled runs
+    # are in use; default to a longer window than audit events but still bounded.
+    TEST_RETENTION_DAYS: int = 180
+    TEST_RETENTION_ENABLED: bool = True
+    TEST_RETENTION_INTERVAL_HOURS: int = 24
+    STALE_TEST_TIMEOUT_MINUTES: int = 60
 
     # Detection Scoring & Health Settings (MVP)
     BASE_SCORING_EXPLANATION: str = (
@@ -178,6 +191,8 @@ if settings.DEPLOYMENT_ENV.lower() in ("prod", "staging"):
         _missing.append("JWT_SECRET_KEY")
     if not os.getenv("PURVEX_ENCRYPTION_KEY"):
         _missing.append("PURVEX_ENCRYPTION_KEY")
+    if not os.getenv("REDIS_URL"):
+        _missing.append("REDIS_URL (required for distributed rate limiting in staging/production)")
     if "sqlite" in settings.database_url.lower():
         _missing.append("DATABASE_URL (SQLite is not supported in production — use PostgreSQL)")
     if _missing:

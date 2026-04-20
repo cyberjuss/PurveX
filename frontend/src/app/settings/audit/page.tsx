@@ -3,14 +3,15 @@
 import { useCallback, useEffect, useState } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { SkeletonTableRows } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
+import { Chip, type ChipProps } from "@/components/ui/chip";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { getAuditEvents, getAuditStats, cleanupAuditEvents, AuditEvent, AuditStats } from "@/lib/api";
 import { 
-  Search, Filter, Download, RefreshCw, User, Activity, 
+  Search, Filter, Download, User, Activity, 
   Shield, Settings, TestTube, Key, Server, Clock,
   FileText, AlertCircle
 } from "lucide-react";
@@ -21,21 +22,26 @@ import { PageHeader } from "@/components/layout/page-header";
 import { usePermissions } from "@/hooks/usePermissions";
 import { useToast } from "@/components/ui/toast";
 
-const ACTION_COLORS: Record<string, string> = {
-  "LOGIN_SUCCESS": "bg-emerald-500/20 text-emerald-400 border-emerald-500/30",
-  "LOGIN_FAILED": "bg-red-500/20 text-red-400 border-red-500/30",
-  "CREATE_DETECTION": "bg-blue-500/20 text-blue-400 border-blue-500/30",
-  "UPDATE_DETECTION": "bg-amber-500/20 text-amber-400 border-amber-500/30",
-  "DELETE_DETECTION": "bg-red-500/20 text-red-400 border-red-500/30",
-  "RUN_TEST": "bg-purple-500/20 text-purple-400 border-purple-500/30",
-  "SCHEDULE_TEST": "bg-indigo-500/20 text-indigo-400 border-indigo-500/30",
-  "CREATE_SIEM_CONNECTION": "bg-cyan-500/20 text-cyan-400 border-cyan-500/30",
-  "UPDATE_SIEM_CONNECTION": "bg-amber-500/20 text-amber-400 border-amber-500/30",
-  "DELETE_SIEM_CONNECTION": "bg-red-500/20 text-red-400 border-red-500/30",
-  "SET_USER_PASSWORD": "bg-orange-500/20 text-orange-400 border-orange-500/30",
-  "UPDATE_SETTINGS_ORGANIZATION": "bg-slate-500/20 text-slate-400 border-slate-500/30",
-  "PROVISION_SANDBOX": "bg-green-500/20 text-green-400 border-green-500/30",
-  "RESET_SANDBOX": "bg-yellow-500/20 text-yellow-400 border-yellow-500/30",
+// Audit events have many action codes but only a handful of semantic
+// meanings (created / updated / deleted / security / sensitive). Collapse
+// them into Chip tones so the audit log stays colour-consistent even when
+// new action codes are added on the backend — any unmapped code defaults
+// to `neutral`.
+const ACTION_TONE: Record<string, NonNullable<ChipProps["tone"]>> = {
+  LOGIN_SUCCESS: "success",
+  PROVISION_SANDBOX: "success",
+  LOGIN_FAILED: "danger",
+  DELETE_DETECTION: "danger",
+  DELETE_SIEM_CONNECTION: "danger",
+  CREATE_DETECTION: "info",
+  CREATE_SIEM_CONNECTION: "info",
+  UPDATE_DETECTION: "warning",
+  UPDATE_SIEM_CONNECTION: "warning",
+  RESET_SANDBOX: "warning",
+  SET_USER_PASSWORD: "warning",
+  RUN_TEST: "accent",
+  SCHEDULE_TEST: "accent",
+  UPDATE_SETTINGS_ORGANIZATION: "neutral",
 };
 
 const RESOURCE_ICONS: Record<string, typeof Activity> = {
@@ -224,7 +230,7 @@ export default function AuditLogPage() {
               size="sm"
               onClick={handleExport}
               disabled={events.length === 0}
-              className="h-9 whitespace-nowrap bg-white border-slate-200 text-slate-900 hover:bg-slate-50 shadow-sm"
+              className="h-9 whitespace-nowrap bg-[var(--surface-card)] border-[var(--stroke-soft)] text-[var(--foreground)] hover:bg-[var(--surface-elevated)] shadow-sm"
             >
               <Download className="h-4 w-4 mr-2" />
               Export CSV
@@ -234,7 +240,7 @@ export default function AuditLogPage() {
       </div>
 
       {isAdmin() && (
-        <Card className="mb-6 border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-950">
+        <Card className="mb-6 border border-[var(--stroke-soft)] bg-[var(--surface-card)] shadow-sm dark:border-slate-800 dark:bg-slate-950">
           <CardHeader>
             <CardTitle className="text-base">Retention cleanup</CardTitle>
             <CardDescription>
@@ -249,7 +255,7 @@ export default function AuditLogPage() {
                   min={1}
                   value={cleanupDays}
                   onChange={(e) => setCleanupDays(Number(e.target.value))}
-                  className="h-9 w-24 text-center border-slate-200 bg-slate-50 text-slate-900 font-semibold"
+                  className="h-9 w-24 text-center border-slate-200 bg-slate-50 text-[var(--foreground)] font-semibold"
                   aria-label="Audit cleanup days"
                 />
                 <span className="text-sm text-slate-600 dark:text-slate-400">days to keep at minimum</span>
@@ -259,7 +265,7 @@ export default function AuditLogPage() {
                 size="sm"
                 onClick={handleCleanup}
                 disabled={cleaning}
-                className="h-9 whitespace-nowrap bg-white border-slate-200 text-slate-900 hover:bg-slate-50 shadow-sm"
+                className="h-9 whitespace-nowrap bg-[var(--surface-card)] border-[var(--stroke-soft)] text-[var(--foreground)] hover:bg-[var(--surface-elevated)] shadow-sm"
               >
                 <Filter className={cn("h-4 w-4 mr-2", cleaning && "animate-spin")} />
                 Clean records older than {cleanupDays} days
@@ -271,7 +277,7 @@ export default function AuditLogPage() {
 
       {stats && (
         <div className="grid gap-4 md:grid-cols-4 mb-6">
-          <Card className="border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-950">
+          <Card className="border border-[var(--stroke-soft)] bg-[var(--surface-card)] shadow-sm dark:border-slate-800 dark:bg-slate-950">
             <CardHeader className="pb-3">
               <CardTitle className="text-sm font-medium text-slate-400">Total Events</CardTitle>
             </CardHeader>
@@ -281,7 +287,7 @@ export default function AuditLogPage() {
             </CardContent>
           </Card>
 
-          <Card className="border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-950">
+          <Card className="border border-[var(--stroke-soft)] bg-[var(--surface-card)] shadow-sm dark:border-slate-800 dark:bg-slate-950">
             <CardHeader className="pb-3">
               <CardTitle className="text-sm font-medium text-slate-400">Top Action</CardTitle>
             </CardHeader>
@@ -295,7 +301,7 @@ export default function AuditLogPage() {
             </CardContent>
           </Card>
 
-          <Card className="border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-950">
+          <Card className="border border-[var(--stroke-soft)] bg-[var(--surface-card)] shadow-sm dark:border-slate-800 dark:bg-slate-950">
             <CardHeader className="pb-3">
               <CardTitle className="text-sm font-medium text-slate-400">Top Resource</CardTitle>
             </CardHeader>
@@ -309,7 +315,7 @@ export default function AuditLogPage() {
             </CardContent>
           </Card>
 
-          <Card className="border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-950">
+          <Card className="border border-[var(--stroke-soft)] bg-[var(--surface-card)] shadow-sm dark:border-slate-800 dark:bg-slate-950">
             <CardHeader className="pb-3">
               <CardTitle className="text-sm font-medium text-slate-400">Most Active User</CardTitle>
             </CardHeader>
@@ -325,7 +331,7 @@ export default function AuditLogPage() {
         </div>
       )}
 
-      <Card className="mb-6 border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-950">
+      <Card className="mb-6 border border-[var(--stroke-soft)] bg-[var(--surface-card)] shadow-sm dark:border-slate-800 dark:bg-slate-950">
         <CardHeader>
           <CardTitle className="text-base">Find changes</CardTitle>
           <CardDescription>Search audit history by person, action, resource type, and time range.</CardDescription>
@@ -347,7 +353,7 @@ export default function AuditLogPage() {
                       fetchEvents();
                     }
                   }}
-                  className="pl-9 h-9 bg-white border-slate-200 text-slate-900 placeholder:text-slate-500 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200"
+                  className="pl-9 h-9 bg-white border-slate-200 text-[var(--foreground)] placeholder:text-slate-500 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200"
                 />
               </div>
             </div>
@@ -355,10 +361,10 @@ export default function AuditLogPage() {
             <div className="space-y-2">
               <Label htmlFor="action" className="text-xs text-slate-400">Action</Label>
               <Select value={actionFilter} onValueChange={(v: string) => { setActionFilter(v); setPage(0); }}>
-                <SelectTrigger id="action" className="h-9 bg-white border-slate-200 text-slate-900">
+                <SelectTrigger id="action" className="h-9 bg-white border-slate-200 text-[var(--foreground)]">
                   <SelectValue />
                 </SelectTrigger>
-                <SelectContent className="bg-white border border-slate-200 shadow-lg">
+                <SelectContent className="bg-white border border-[var(--stroke-soft)] shadow-lg">
                   <SelectItem value="all">All Actions</SelectItem>
                   {uniqueActions.map(action => (
                     <SelectItem key={action} value={action}>
@@ -372,10 +378,10 @@ export default function AuditLogPage() {
             <div className="space-y-2">
               <Label htmlFor="resource" className="text-xs text-slate-400">Resource Type</Label>
               <Select value={resourceTypeFilter} onValueChange={(v: string) => { setResourceTypeFilter(v); setPage(0); }}>
-                <SelectTrigger id="resource" className="h-9 bg-white border-slate-200 text-slate-900">
+                <SelectTrigger id="resource" className="h-9 bg-white border-slate-200 text-[var(--foreground)]">
                   <SelectValue />
                 </SelectTrigger>
-                <SelectContent className="bg-white border border-slate-200 shadow-lg">
+                <SelectContent className="bg-white border border-[var(--stroke-soft)] shadow-lg">
                   <SelectItem value="all">All Resources</SelectItem>
                   {uniqueResourceTypes.map(type => (
                     <SelectItem key={type} value={type}>
@@ -389,10 +395,10 @@ export default function AuditLogPage() {
             <div className="space-y-2">
               <Label htmlFor="dateRange" className="text-xs text-slate-400">Date Range</Label>
               <Select value={dateRange} onValueChange={(value: "7d" | "30d" | "90d" | "all") => { setDateRange(value); setPage(0); }}>
-                <SelectTrigger id="dateRange" className="h-9 bg-white border-slate-200 text-slate-900">
+                <SelectTrigger id="dateRange" className="h-9 bg-white border-slate-200 text-[var(--foreground)]">
                   <SelectValue />
                 </SelectTrigger>
-                <SelectContent className="bg-white border border-slate-200 shadow-lg">
+                <SelectContent className="bg-white border border-[var(--stroke-soft)] shadow-lg">
                   <SelectItem value="7d">Last 7 days</SelectItem>
                   <SelectItem value="30d">Last 30 days</SelectItem>
                   <SelectItem value="90d">Last 90 days</SelectItem>
@@ -404,7 +410,7 @@ export default function AuditLogPage() {
         </CardContent>
       </Card>
 
-      <Card className="border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-950">
+      <Card className="border border-[var(--stroke-soft)] bg-[var(--surface-card)] shadow-sm dark:border-slate-800 dark:bg-slate-950">
         <CardHeader>
           <CardTitle className="text-base">Change history</CardTitle>
           <CardDescription className="text-slate-500">
@@ -413,9 +419,11 @@ export default function AuditLogPage() {
         </CardHeader>
         <CardContent>
           {loading ? (
-            <div className="flex items-center justify-center py-12">
-              <RefreshCw className="h-6 w-6 animate-spin text-slate-500" />
-            </div>
+            <Table>
+              <TableBody>
+                <SkeletonTableRows rows={6} columns={5} />
+              </TableBody>
+            </Table>
           ) : error ? (
             <div className="flex items-center justify-center py-12 text-red-400">
               <AlertCircle className="h-5 w-5 mr-2" />
@@ -428,7 +436,7 @@ export default function AuditLogPage() {
             </div>
           ) : (
             <>
-              <div className="rounded-lg border border-slate-200 overflow-hidden">
+              <div className="rounded-lg border border-[var(--stroke-soft)] overflow-hidden">
                 <Table>
                   <TableHeader>
                     <TableRow className="border-slate-200 bg-slate-50">
@@ -462,16 +470,10 @@ export default function AuditLogPage() {
                             </div>
                           </TableCell>
                           <TableCell>
-                            <Badge
-                              variant="outline"
-                              className={cn(
-                                "text-xs font-medium",
-                                ACTION_COLORS[event.action] || "bg-slate-500/20 text-slate-400 border-slate-500/30"
-                              )}
-                            >
-                              <ActionIcon className="h-3 w-3 mr-1.5" />
+                            <Chip tone={ACTION_TONE[event.action] ?? "neutral"}>
+                              <ActionIcon className="h-3 w-3" />
                               {event.action.replace(/_/g, " ")}
-                            </Badge>
+                            </Chip>
                           </TableCell>
                           <TableCell className="text-slate-300">
                             {event.resource_type ? (

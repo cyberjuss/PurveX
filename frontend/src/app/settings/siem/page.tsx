@@ -13,6 +13,10 @@ import { Permission } from "@/lib/permissions";
 import { useToast } from "@/components/ui/toast";
 import { PageContainer } from "@/components/layout/page-container";
 import { PageHeader } from "@/components/layout/page-header";
+import { PageSkeleton } from "@/components/ui/skeleton";
+import { FieldError, FormError } from "@/components/ui/form-error";
+import { z } from "zod";
+import { httpUrlSchema, safeNameSchema } from "@/lib/validators";
 
 interface SIEMConnection {
   id: number;
@@ -70,7 +74,29 @@ export default function SiemSettingsPage() {
   const [srcField, setSrcField] = useState("src");
   const [signatureField, setSignatureField] = useState("signature");
   const [esApp, setEsApp] = useState("SplunkEnterpriseSecurity");
+  // Elastic
+  const [elasticApiKey, setElasticApiKey] = useState("");
+  const [elasticSignalsIndex, setElasticSignalsIndex] = useState(".alerts-security.alerts-default");
+  const [elasticEventsIndex, setElasticEventsIndex] = useState("logs-*");
+  // Sentinel
+  const [sentinelTenantId, setSentinelTenantId] = useState("");
+  const [sentinelClientId, setSentinelClientId] = useState("");
+  const [sentinelClientSecret, setSentinelClientSecret] = useState("");
+  const [sentinelWorkspaceId, setSentinelWorkspaceId] = useState("");
+  const [sentinelSubscriptionId, setSentinelSubscriptionId] = useState("");
+  const [sentinelResourceGroup, setSentinelResourceGroup] = useState("");
+  const [sentinelWorkspaceName, setSentinelWorkspaceName] = useState("");
   const [isSaving, setIsSaving] = useState(false);
+  const [fieldErrors, setFieldErrors] = useState<{
+    name?: string;
+    url?: string;
+    credential?: string;
+  }>({});
+
+  const siemType = (formData.siem_type || "").toLowerCase();
+  const isSplunk = siemType === "splunk";
+  const isElastic = siemType === "elastic" || siemType === "elasticsearch" || siemType === "kibana";
+  const isSentinel = siemType === "sentinel";
 
   useEffect(() => {
     fetchConnections();
@@ -140,30 +166,103 @@ export default function SiemSettingsPage() {
     setSrcField("src");
     setSignatureField("signature");
     setEsApp("SplunkEnterpriseSecurity");
+    setElasticApiKey("");
+    setElasticSignalsIndex(".alerts-security.alerts-default");
+    setElasticEventsIndex("logs-*");
+    setSentinelTenantId("");
+    setSentinelClientId("");
+    setSentinelClientSecret("");
+    setSentinelWorkspaceId("");
+    setSentinelSubscriptionId("");
+    setSentinelResourceGroup("");
+    setSentinelWorkspaceName("");
   };
 
   const handleFormSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!formData.siem_type || !formData.name || !formData.url || !formData.auth_type) {
-      setError("Please fill in all required fields.");
+
+    // Core common fields. URL is optional for Sentinel (portal URL is optional
+    // on that connector) so the schema is composed conditionally.
+    const commonSchema = z.object({
+      name: safeNameSchema,
+      url: isSentinel ? z.string().trim().optional() : httpUrlSchema,
+      siem_type: z.string().min(1, "Pick a SIEM type."),
+      auth_type: z.string().min(1, "Pick an auth type."),
+    });
+
+    const parsed = commonSchema.safeParse({
+      name: formData.name ?? "",
+      url: formData.url ?? "",
+      siem_type: formData.siem_type ?? "",
+      auth_type: formData.auth_type ?? "",
+    });
+
+    const nextFieldErrors: typeof fieldErrors = {};
+    if (!parsed.success) {
+      for (const issue of parsed.error.issues) {
+        const key = issue.path[0];
+        if (key === "name" && !nextFieldErrors.name) nextFieldErrors.name = issue.message;
+        if (key === "url" && !nextFieldErrors.url) nextFieldErrors.url = issue.message;
+      }
+    }
+
+    // Connector-specific required credential. Keep the check shallow — the
+    // server performs full validation when the user clicks "Test connection".
+    let credentialIssue: string | undefined;
+    if (isSplunk && !splunkToken && !editingConnection) {
+      credentialIssue = "Splunk HEC/auth token is required.";
+    } else if (isElastic && !elasticApiKey && !editingConnection) {
+      credentialIssue = "Elastic API key is required.";
+    } else if (isSentinel && !editingConnection) {
+      if (!sentinelTenantId || !sentinelClientId || !sentinelClientSecret || !sentinelWorkspaceId) {
+        credentialIssue = "Tenant, client ID, client secret, and workspace ID are required for Sentinel.";
+      }
+    }
+    if (credentialIssue) nextFieldErrors.credential = credentialIssue;
+
+    if (Object.keys(nextFieldErrors).length > 0) {
+      setFieldErrors(nextFieldErrors);
+      setError(null);
       return;
     }
 
+    setFieldErrors({});
+
     const payload: Partial<SIEMConnection> = { ...formData };
-    const credentialsPayload = {
-      token: splunkToken || undefined,
-      web_url: splunkWebUrl || undefined,
-      verify_ssl: verifySsl === "true",
-      notable_index: notableIndex || "notable",
-      alerts_mode: alertsMode,
-      alerts_index: alertsIndex || undefined,
-      host_field: hostField || "host",
-      user_field: userField || "user",
-      dest_field: destField || "dest",
-      src_field: srcField || "src",
-      signature_field: signatureField || "signature",
-      es_app: esApp || "SplunkEnterpriseSecurity",
-    };
+    let credentialsPayload: Record<string, unknown> = {};
+    if (isSplunk) {
+      credentialsPayload = {
+        token: splunkToken || undefined,
+        web_url: splunkWebUrl || undefined,
+        verify_ssl: verifySsl === "true",
+        notable_index: notableIndex || "notable",
+        alerts_mode: alertsMode,
+        alerts_index: alertsIndex || undefined,
+        host_field: hostField || "host",
+        user_field: userField || "user",
+        dest_field: destField || "dest",
+        src_field: srcField || "src",
+        signature_field: signatureField || "signature",
+        es_app: esApp || "SplunkEnterpriseSecurity",
+      };
+    } else if (isElastic) {
+      credentialsPayload = {
+        api_key: elasticApiKey || undefined,
+        verify_ssl: verifySsl === "true",
+        signals_index: elasticSignalsIndex || ".alerts-security.alerts-default",
+        events_index: elasticEventsIndex || "logs-*",
+      };
+    } else if (isSentinel) {
+      credentialsPayload = {
+        tenant_id: sentinelTenantId || undefined,
+        client_id: sentinelClientId || undefined,
+        client_secret: sentinelClientSecret || undefined,
+        workspace_id: sentinelWorkspaceId || undefined,
+        subscription_id: sentinelSubscriptionId || undefined,
+        resource_group: sentinelResourceGroup || undefined,
+        workspace_name: sentinelWorkspaceName || undefined,
+      };
+    }
     const hasAnyCredentials = Object.values(credentialsPayload).some(value => value !== undefined);
     if (hasAnyCredentials) {
       payload.credentials = JSON.stringify(credentialsPayload);
@@ -207,6 +306,8 @@ export default function SiemSettingsPage() {
     setEditingConnection(connection);
     setFormData({ ...connection, credentials: "" });
     setSplunkToken("");
+    setElasticApiKey("");
+    setSentinelClientSecret("");
     try {
       const parsed = connection.credentials ? JSON.parse(connection.credentials) : {};
       setSplunkWebUrl(parsed.web_url || "");
@@ -220,6 +321,14 @@ export default function SiemSettingsPage() {
       setSrcField(parsed.src_field || "src");
       setSignatureField(parsed.signature_field || "signature");
       setEsApp(parsed.es_app || "SplunkEnterpriseSecurity");
+      setElasticSignalsIndex(parsed.signals_index || ".alerts-security.alerts-default");
+      setElasticEventsIndex(parsed.events_index || "logs-*");
+      setSentinelTenantId(parsed.tenant_id || "");
+      setSentinelClientId(parsed.client_id || "");
+      setSentinelWorkspaceId(parsed.workspace_id || "");
+      setSentinelSubscriptionId(parsed.subscription_id || "");
+      setSentinelResourceGroup(parsed.resource_group || "");
+      setSentinelWorkspaceName(parsed.workspace_name || "");
     } catch {
       setSplunkWebUrl("");
       setVerifySsl("true");
@@ -232,6 +341,14 @@ export default function SiemSettingsPage() {
       setSrcField("src");
       setSignatureField("signature");
       setEsApp("SplunkEnterpriseSecurity");
+      setElasticSignalsIndex(".alerts-security.alerts-default");
+      setElasticEventsIndex("logs-*");
+      setSentinelTenantId("");
+      setSentinelClientId("");
+      setSentinelWorkspaceId("");
+      setSentinelSubscriptionId("");
+      setSentinelResourceGroup("");
+      setSentinelWorkspaceName("");
     }
     setShowAddForm(true);
   };
@@ -263,9 +380,7 @@ export default function SiemSettingsPage() {
   if (loading) {
     return (
       <PageContainer maxWidth="xl">
-        <div className="rounded-2xl border border-[var(--stroke-soft)] bg-[var(--surface-card)] p-6 text-sm text-[var(--surface-subtle-foreground)]">
-          Loading SIEM connections...
-        </div>
+        <PageSkeleton withEyebrow withActions variant="list" rows={3} />
       </PageContainer>
     );
   }
@@ -308,46 +423,160 @@ export default function SiemSettingsPage() {
               <div className="grid gap-3 md:grid-cols-2">
                 <div className="space-y-2">
                   <Label htmlFor="name">Connection name</Label>
-                  <Input id="name" value={formData.name || ""} onChange={handleFormChange} required placeholder="e.g. Production Splunk" />
+                  <Input
+                    id="name"
+                    value={formData.name || ""}
+                    onChange={handleFormChange}
+                    required
+                    placeholder="e.g. Production Splunk"
+                    aria-invalid={!!fieldErrors.name}
+                    aria-describedby="siem-name-error"
+                  />
+                  <FieldError id="siem-name-error" message={fieldErrors.name} />
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="siem_type">SIEM type</Label>
                   <Select onValueChange={(v: string) => handleSelectChange("siem_type", v)} value={formData.siem_type}>
                     <SelectTrigger><SelectValue placeholder="Select SIEM type" /></SelectTrigger>
-                    <SelectContent><SelectItem value="Splunk">Splunk</SelectItem></SelectContent>
+                    <SelectContent>
+                      <SelectItem value="Splunk">Splunk</SelectItem>
+                      <SelectItem value="Elastic">Elastic Security</SelectItem>
+                      <SelectItem value="Sentinel">Microsoft Sentinel</SelectItem>
+                    </SelectContent>
                   </Select>
                 </div>
                 <div className="space-y-2 md:col-span-2">
-                  <Label htmlFor="url">Management URL (port 8089)</Label>
-                  <Input id="url" value={formData.url || ""} onChange={handleFormChange} required placeholder="https://splunk.company.com:8089" />
+                  <Label htmlFor="url">
+                    {isSplunk && "Management URL (port 8089)"}
+                    {isElastic && "Kibana base URL"}
+                    {isSentinel && "Portal URL (optional)"}
+                  </Label>
+                  <Input
+                    id="url"
+                    value={formData.url || ""}
+                    onChange={handleFormChange}
+                    required={!isSentinel}
+                    placeholder={
+                      isSplunk
+                        ? "https://splunk.company.com:8089"
+                        : isElastic
+                          ? "https://kibana.company.com"
+                          : "https://portal.azure.com"
+                    }
+                    aria-invalid={!!fieldErrors.url}
+                    aria-describedby="siem-url-error"
+                  />
+                  <FieldError id="siem-url-error" message={fieldErrors.url} />
                 </div>
               </div>
 
-              <div className="grid gap-3 md:grid-cols-2">
-                <div className="space-y-2">
-                  <Label htmlFor="auth_type">Authentication</Label>
-                  <Select onValueChange={(v: string) => handleSelectChange("auth_type", v)} value={formData.auth_type}>
-                    <SelectTrigger><SelectValue placeholder="Select auth type" /></SelectTrigger>
-                    <SelectContent><SelectItem value="Token">Token</SelectItem></SelectContent>
-                  </Select>
+              {fieldErrors.credential && (
+                <FormError message={fieldErrors.credential} />
+              )}
+
+              {isSplunk && (
+                <div className="grid gap-3 md:grid-cols-2">
+                  <div className="space-y-2">
+                    <Label htmlFor="auth_type">Authentication</Label>
+                    <Select onValueChange={(v: string) => handleSelectChange("auth_type", v)} value={formData.auth_type}>
+                      <SelectTrigger><SelectValue placeholder="Select auth type" /></SelectTrigger>
+                      <SelectContent><SelectItem value="Token">Token</SelectItem></SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="credentials">Splunk token</Label>
+                    <Input
+                      id="credentials"
+                      type="password"
+                      value={splunkToken}
+                      onChange={(e) => setSplunkToken(e.target.value)}
+                      placeholder={editingConnection ? "Leave blank to keep current" : "Paste token"}
+                    />
+                  </div>
                 </div>
-                <div className="space-y-2">
-                  <Label htmlFor="credentials">Splunk token</Label>
-                  <Input
-                    id="credentials"
-                    type="password"
-                    value={splunkToken}
-                    onChange={(e) => setSplunkToken(e.target.value)}
-                    placeholder={editingConnection ? "Leave blank to keep current" : "Paste token"}
-                  />
+              )}
+
+              {isElastic && (
+                <div className="grid gap-3 md:grid-cols-2">
+                  <div className="space-y-2">
+                    <Label htmlFor="auth_type">Authentication</Label>
+                    <Select onValueChange={(v: string) => handleSelectChange("auth_type", v)} value={formData.auth_type}>
+                      <SelectTrigger><SelectValue placeholder="Select auth type" /></SelectTrigger>
+                      <SelectContent><SelectItem value="ApiKey">API key</SelectItem></SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="elastic_api_key">Elastic API key</Label>
+                    <Input
+                      id="elastic_api_key"
+                      type="password"
+                      value={elasticApiKey}
+                      onChange={(e) => setElasticApiKey(e.target.value)}
+                      placeholder={editingConnection ? "Leave blank to keep current" : "Paste base64 API key"}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Signals index</Label>
+                    <Input value={elasticSignalsIndex} onChange={(e) => setElasticSignalsIndex(e.target.value)} placeholder=".alerts-security.alerts-default" />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Events index pattern</Label>
+                    <Input value={elasticEventsIndex} onChange={(e) => setElasticEventsIndex(e.target.value)} placeholder="logs-*" />
+                  </div>
                 </div>
-              </div>
+              )}
+
+              {isSentinel && (
+                <div className="grid gap-3 md:grid-cols-2">
+                  <div className="space-y-2">
+                    <Label htmlFor="auth_type">Authentication</Label>
+                    <Select onValueChange={(v: string) => handleSelectChange("auth_type", v)} value={formData.auth_type}>
+                      <SelectTrigger><SelectValue placeholder="Select auth type" /></SelectTrigger>
+                      <SelectContent><SelectItem value="ServicePrincipal">Service principal</SelectItem></SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Tenant ID</Label>
+                    <Input value={sentinelTenantId} onChange={(e) => setSentinelTenantId(e.target.value)} placeholder="00000000-0000-0000-0000-000000000000" />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Client ID</Label>
+                    <Input value={sentinelClientId} onChange={(e) => setSentinelClientId(e.target.value)} placeholder="App registration client ID" />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Client secret</Label>
+                    <Input
+                      type="password"
+                      value={sentinelClientSecret}
+                      onChange={(e) => setSentinelClientSecret(e.target.value)}
+                      placeholder={editingConnection ? "Leave blank to keep current" : "Client secret value"}
+                    />
+                  </div>
+                  <div className="space-y-2 md:col-span-2">
+                    <Label>Log Analytics workspace ID</Label>
+                    <Input value={sentinelWorkspaceId} onChange={(e) => setSentinelWorkspaceId(e.target.value)} placeholder="Workspace (customer) ID" />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Subscription ID (optional, for rules)</Label>
+                    <Input value={sentinelSubscriptionId} onChange={(e) => setSentinelSubscriptionId(e.target.value)} />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Resource group (optional)</Label>
+                    <Input value={sentinelResourceGroup} onChange={(e) => setSentinelResourceGroup(e.target.value)} />
+                  </div>
+                  <div className="space-y-2 md:col-span-2">
+                    <Label>Workspace name (optional)</Label>
+                    <Input value={sentinelWorkspaceName} onChange={(e) => setSentinelWorkspaceName(e.target.value)} />
+                  </div>
+                </div>
+              )}
 
               <div className="space-y-2">
                 <Label htmlFor="log_marker_pattern">Log marker pattern</Label>
                 <Input id="log_marker_pattern" value={formData.log_marker_pattern || ""} onChange={handleFormChange} required placeholder="purvex_*" />
               </div>
 
+              {isSplunk && (
               <details className="rounded-xl border border-[var(--stroke-soft)] bg-[var(--surface-elevated)] p-4">
                 <summary className="cursor-pointer text-sm font-medium text-[var(--foreground)]">Advanced evidence mapping</summary>
                 <div className="mt-4 grid gap-3 md:grid-cols-2">
@@ -401,6 +630,7 @@ export default function SiemSettingsPage() {
                   </div>
                 </div>
               </details>
+              )}
 
               <div className="flex gap-2 pt-2">
                 <Button type="submit" disabled={isSaving}>

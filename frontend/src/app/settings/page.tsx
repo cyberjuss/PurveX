@@ -14,6 +14,7 @@ import {
   ChevronRight,
   ArrowRight,
   AlertCircle,
+  GitBranch,
 } from "lucide-react";
 import { PageContainer } from "@/components/layout/page-container";
 import { PageHeader } from "@/components/layout/page-header";
@@ -23,6 +24,7 @@ import {
   getEnvironmentRunners,
   getTestingPolicySettings,
   getAIAssistantSettings,
+  listDetectionSources,
 } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
@@ -46,6 +48,7 @@ export default function SettingsPage() {
   const [hasPolicy, setHasPolicy] = useState(false);
   const [hasAiAssistant, setHasAiAssistant] = useState(false);
   const [orgName, setOrgName] = useState<string | null>(null);
+  const [detectionSourceCount, setDetectionSourceCount] = useState<number | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -58,12 +61,14 @@ export default function SettingsPage() {
           runners,
           policy,
           aiSettings,
+          detectionSources,
         ] = await Promise.allSettled([
           getOrganizationSettings(),
           getSiemConnections(),
           getEnvironmentRunners(),
           getTestingPolicySettings(),
           getAIAssistantSettings(),
+          listDetectionSources(),
         ]);
 
         if (cancelled) return;
@@ -82,6 +87,9 @@ export default function SettingsPage() {
         }
         if (aiSettings.status === "fulfilled") {
           setHasAiAssistant(true);
+        }
+        if (detectionSources.status === "fulfilled") {
+          setDetectionSourceCount(detectionSources.value.length);
         }
       } finally {
         // Intentionally no local loading gate here; the overview can render
@@ -154,6 +162,21 @@ export default function SettingsPage() {
       color: "amber",
       status: hasAiAssistant ? "configured" : "default",
       statusText: hasAiAssistant ? "Configured" : "Using defaults",
+      category: "advanced",
+    },
+    {
+      id: "detection-sources",
+      href: "/settings/detection-sources",
+      label: "Detection Sources",
+      description: "Connect a git repository to treat detections as code — sync creates proposals that route through the approval inbox.",
+      icon: GitBranch,
+      color: "violet",
+      status: (detectionSourceCount ?? 0) > 0 ? "configured" : "not_configured",
+      statusText:
+        (detectionSourceCount ?? 0) > 0
+          ? `${detectionSourceCount} source${detectionSourceCount === 1 ? "" : "s"}`
+          : "Not configured",
+      count: detectionSourceCount ?? 0,
       category: "advanced",
     },
     {

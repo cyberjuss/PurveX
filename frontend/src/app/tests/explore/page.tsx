@@ -356,8 +356,8 @@ export default function ExplorePage() {
               <div className="inline-flex items-center justify-center h-16 w-16 rounded-2xl bg-gradient-to-br from-indigo-500/20 to-white/20 border-2 border-indigo-500/30 mb-6">
                 <Target className="h-8 w-8 text-indigo-400" />
                   </div>
-              <p className="text-xl font-semibold text-slate-800 mb-2">No techniques found</p>
-              <p className="text-sm text-slate-600 mb-4">
+              <p className="text-xl font-semibold text-[var(--foreground)] mb-2">No techniques found</p>
+              <p className="text-sm text-slate-600 dark:text-slate-300 mb-4">
                 {hasActiveFilters
                   ? "Try adjusting your search or filter criteria"
                   : "No MITRE techniques available. Please check your data source."}
@@ -373,7 +373,7 @@ export default function ExplorePage() {
                       description: "All filters have been reset.",
                     });
                   }}
-                  className="mt-4 focus:outline-none focus:ring-2 focus:ring-sky-500/50 border-slate-200 text-slate-700 hover:bg-slate-50"
+                  className="mt-4 focus:outline-none focus:ring-2 focus:ring-sky-500/50 border-[var(--stroke-soft)] text-slate-700 dark:text-slate-200 hover:bg-[var(--surface-elevated)]"
                   aria-label="Clear all filters"
                 >
                   Clear all filters
@@ -384,7 +384,7 @@ export default function ExplorePage() {
         ) : (
           <div className="space-y-6">
             {/* Filter toolbar */}
-            <Card className="border border-slate-200 bg-white shadow-sm">
+            <Card className="border border-[var(--stroke-soft)] bg-[var(--surface-card)] shadow-sm">
               <CardContent className="px-4 py-4">
                 <div className="flex flex-wrap items-end gap-4">
                   <div className="flex-1 min-w-[200px] space-y-1">
@@ -398,7 +398,7 @@ export default function ExplorePage() {
                           const value = e.target.value;
                           if (value.length <= 200) setSearchQuery(value);
                         }}
-                        className="pl-9 pr-10 h-10 bg-white border-slate-200 !text-black placeholder:text-slate-500"
+                        className="pl-9 pr-10 h-10 bg-[var(--surface-card)] border-[var(--stroke-soft)] !text-[var(--foreground)] placeholder:text-slate-500 dark:placeholder:text-slate-400"
                       />
                       {searchQuery && (
                         <button
@@ -502,12 +502,12 @@ export default function ExplorePage() {
                       return (
                         <div
                           key={column.tactic}
-                    className="flex-1 min-w-[320px] max-w-[380px] rounded-2xl border border-slate-200 bg-white flex flex-col shadow-md overflow-hidden"
+                    className="flex-1 min-w-[320px] max-w-[380px] rounded-2xl border border-[var(--stroke-soft)] bg-[var(--surface-card)] flex flex-col shadow-md overflow-hidden"
                         >
                           {/* Enhanced Tactic Header */}
-                    <div className="px-5 py-5 bg-slate-50 border-b border-slate-200">
+                    <div className="px-5 py-5 bg-[var(--surface-elevated)] border-b border-[var(--stroke-soft)]">
                             <div className="flex items-center justify-between mb-2">
-                        <div className="text-sm uppercase tracking-wider text-slate-900 font-bold">
+                        <div className="text-sm uppercase tracking-wider text-[var(--foreground)] font-bold">
                                 {column.tactic}
                               </div>
                         <div className="h-7 w-7 rounded-lg bg-indigo-50 border border-indigo-100 flex items-center justify-center">
@@ -576,7 +576,7 @@ export default function ExplorePage() {
                                   className={cn(
                                     "relative rounded-xl p-4 mb-2 group",
                               "bg-white",
-                              "border border-slate-200",
+                              "border border-[var(--stroke-soft)]",
                                     "cursor-pointer transition-all duration-200",
                               "hover:border-indigo-200 hover:shadow-md hover:-translate-y-[1px]"
                                   )}
@@ -603,7 +603,7 @@ export default function ExplorePage() {
                                   <div className="h-1.5 w-1.5 rounded-full bg-indigo-500/70" />
                                       </div>
                                       {parent.name && (
-                                  <div className="text-sm font-medium text-slate-900 leading-snug font-body line-clamp-2">
+                                  <div className="text-sm font-medium text-[var(--foreground)] leading-snug font-body line-clamp-2">
                                           {parent.name}
                                         </div>
                                       )}
@@ -627,7 +627,7 @@ export default function ExplorePage() {
                                   />
                                   <span>{hasDetectionMapped(parent.id) ? "Detections mapped" : "No detections"}</span>
                                 </div>
-                                <div className="inline-flex items-center gap-2 px-2 py-1 rounded-md bg-slate-50 border border-slate-200 text-slate-600">
+                                <div className="inline-flex items-center gap-2 px-2 py-1 rounded-md bg-slate-50 border border-[var(--stroke-soft)] text-slate-600">
                                   <Clock className="h-3.5 w-3.5 text-slate-500" />
                                   <span>Test status unavailable</span>
                                       </div>
@@ -638,7 +638,7 @@ export default function ExplorePage() {
                                     <Button
                                       size="sm"
                                       variant="outline"
-                                      className="w-full h-9 border-slate-200 text-slate-900 hover:bg-slate-50"
+                                      className="w-full h-9 border-slate-200 text-[var(--foreground)] hover:bg-slate-50"
                                       onClick={(e) => {
                                         e.preventDefault();
                                         e.stopPropagation();
@@ -672,8 +672,8 @@ export default function ExplorePage() {
             <div className="mt-8 pt-6 border-t border-slate-200">
                 <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
                 <div className="text-sm font-medium text-slate-700 text-center sm:text-left">
-                  Showing <span className="text-slate-900 font-semibold">{pageColumns.length}</span> of{" "}
-                  <span className="text-slate-900 font-semibold">{tacticColumns.length}</span> tactics
+                  Showing <span className="text-[var(--foreground)] font-semibold">{pageColumns.length}</span> of{" "}
+                  <span className="text-[var(--foreground)] font-semibold">{tacticColumns.length}</span> tactics
                   </div>
                   
                   {totalPages > 1 && (
@@ -683,7 +683,7 @@ export default function ExplorePage() {
                         size="sm"
                         onClick={() => setTacticPage((p) => Math.max(0, p - 1))}
                         disabled={currentPage === 0}
-                      className="h-10 px-4 border-slate-300 bg-white text-slate-900 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed"
+                      className="h-10 px-4 border-slate-300 bg-white text-[var(--foreground)] hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed"
                       >
                         <ChevronLeft className="h-4 w-4 mr-1" />
                         Previous
@@ -709,8 +709,8 @@ export default function ExplorePage() {
                               className={cn(
                                 "h-8 w-8 rounded-lg text-xs font-medium transition-all",
                                 currentPage === pageNum
-                                ? "bg-white text-slate-900 border border-slate-900 shadow-sm"
-                                : "bg-white text-slate-700 border border-slate-200 hover:bg-slate-50"
+                                ? "bg-white text-[var(--foreground)] border border-slate-900 shadow-sm"
+                                : "bg-white text-slate-700 border border-[var(--stroke-soft)] hover:bg-slate-50"
                               )}
                             >
                               {pageNum + 1}
@@ -724,7 +724,7 @@ export default function ExplorePage() {
                         size="sm"
                         onClick={() => setTacticPage((p) => Math.min(totalPages - 1, p + 1))}
                         disabled={currentPage >= totalPages - 1}
-                      className="h-10 px-4 border-slate-300 bg-white text-slate-900 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed"
+                      className="h-10 px-4 border-slate-300 bg-white text-[var(--foreground)] hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed"
                       >
                         Next
                         <ChevronRight className="h-4 w-4 ml-1" />

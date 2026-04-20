@@ -18,4 +18,15 @@ bcrypt==3.2.2
 email-validator
 loguru
 reportlab>=4.0.0
+alembic>=1.13.0
+redis>=5.0.0
+arq>=0.26.0
+python-json-logger>=2.0.7
+prometheus-client>=0.20.0
+opentelemetry-api>=1.25.0
+opentelemetry-sdk>=1.25.0
+opentelemetry-exporter-otlp>=1.25.0
+opentelemetry-instrumentation-fastapi>=0.46b0
+opentelemetry-instrumentation-sqlalchemy>=0.46b0
+opentelemetry-instrumentation-httpx>=0.46b0
 

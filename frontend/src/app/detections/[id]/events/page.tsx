@@ -194,7 +194,7 @@ export default function DetectionEventsPage() {
   }
 
   return (
-    <PageContainer maxWidth="xl" className="space-y-6">
+    <PageContainer maxWidth="md" className="space-y-6">
       <PageHeader
         eyebrow="Detection events"
         title={detection?.title || "Event records"}
@@ -202,9 +202,7 @@ export default function DetectionEventsPage() {
         icon={<Activity className="h-5 w-5" />}
         actions={
           <Link href={`/run-test?detectionId=${detectionId}`}>
-            <Button className="bg-black text-white hover:bg-slate-800 dark:bg-white dark:text-black dark:hover:bg-slate-200">
-              Revalidate detection
-            </Button>
+            <Button>Revalidate detection</Button>
           </Link>
         }
       />
@@ -378,7 +376,8 @@ export default function DetectionEventsPage() {
       <Sheet open={selectedEvent != null} onOpenChange={(open) => !open && setSelectedEventId(null)}>
         <SheetContent
           side="right"
-          className="w-full sm:w-[88vw] lg:w-[50vw] lg:max-w-[960px] lg:min-w-0 data-[state=open]:duration-500 data-[state=closed]:duration-300"
+          style={{ width: "50vw", maxWidth: "720px", minWidth: "480px" }}
+          className="!w-[50vw] !max-w-[720px] !min-w-[480px] data-[state=open]:duration-500 data-[state=closed]:duration-300"
         >
           <SheetHeader className="sticky top-0 z-20 bg-white/90 backdrop-blur supports-[backdrop-filter]:bg-white/75 dark:bg-slate-950/90 dark:supports-[backdrop-filter]:bg-slate-950/75">
             <SheetTitle>{selectedEvent?.name || selectedEvent?.message || "Event detail"}</SheetTitle>
@@ -439,9 +438,7 @@ export default function DetectionEventsPage() {
                 </div>
                 <div className="animate-in fade-in slide-in-from-bottom-1 flex flex-wrap gap-2">
                   <Link href={`/run-test?detectionId=${detectionId}`}>
-                    <Button size="sm" className="bg-black text-white hover:bg-slate-800 dark:bg-white dark:text-black dark:hover:bg-slate-200">
-                      Revalidate
-                    </Button>
+                    <Button size="sm">Revalidate</Button>
                   </Link>
                   <Link href={`/agent?detectionId=${detectionId}&alertId=${selectedEvent.id}`}>
                     <Button size="sm" variant="outline" className="inline-flex items-center gap-2">

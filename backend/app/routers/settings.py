@@ -1,4 +1,4 @@
-from typing import List, Optional, Annotated
+from typing import Any, Dict, List, Optional, Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status, Request, Body, Response
 from datetime import datetime, timedelta, timezone
@@ -40,6 +40,57 @@ def deserialize_json_column(data):
             pass # Return original string if not valid JSON
     return data
 
+
+def _load_secret_json(value: Any) -> Any:
+    if isinstance(value, str):
+        try:
+            return json.loads(value)
+        except json.JSONDecodeError:
+            return value
+    return value
+
+
+def _dump_secret_payload(value: Any) -> str:
+    if isinstance(value, (dict, list)):
+        return json.dumps(value)
+    if isinstance(value, str):
+        return value
+    return json.dumps(value)
+
+
+def _prepare_siem_credentials_for_storage(
+    credentials: Any,
+    existing_credentials: str | None = None,
+) -> str | None:
+    if credentials in ("", None):
+        return None
+
+    incoming_payload = _load_secret_json(credentials)
+    existing_payload: Any = {}
+    if existing_credentials:
+        try:
+            existing_payload = _load_secret_json(decrypt_value(existing_credentials))
+        except Exception:
+            existing_payload = {}
+
+    if isinstance(incoming_payload, dict) and isinstance(existing_payload, dict):
+        if "token" not in incoming_payload and existing_payload.get("token"):
+            incoming_payload["token"] = existing_payload["token"]
+
+    return encrypt_value(_dump_secret_payload(incoming_payload))
+
+
+def _prepare_ai_api_key_for_storage(api_key: str | None) -> str | None:
+    if not api_key:
+        return api_key
+    return encrypt_value(api_key)
+
+
+def _model_column_data(model: type, data: dict[str, Any]) -> dict[str, Any]:
+    columns = {column.name for column in model.__table__.columns}
+    return {key: value for key, value in data.items() if key in columns}
+
+
 def safe_user_identity(user: models.User):
     try:
         return int(user.id), str(user.email)
@@ -53,6 +104,8 @@ async def get_organization_settings(
     db: DBSession,
     current_user: CurrentUser, # Requires authentication
 ):
+    await require_permission(current_user, Permission.SETTINGS_READ, db)
+
     org_id = require_org_id(current_user)
     result = await db.execute(
         select(models.Organization).where(models.Organization.id == org_id)
@@ -220,6 +273,8 @@ async def list_siem_connections(
     db: DBSession,
     current_user: CurrentUser,
 ):
+    await require_permission(current_user, Permission.SETTINGS_READ, db)
+
     # Scope SIEM connections to the caller's organization.
     org_id = require_org_id(current_user)
     result = await db.execute(
@@ -243,7 +298,9 @@ async def create_siem_connection(
     sanitized_data = sanitize_model_inputs(siem_create)
     sanitized_data.pop("organization_id", None)
     if "credentials" in sanitized_data and sanitized_data["credentials"]:
-        sanitized_data["credentials"] = encrypt_value(sanitized_data["credentials"])
+        sanitized_data["credentials"] = _prepare_siem_credentials_for_storage(
+            sanitized_data["credentials"]
+        )
 
     org_id = require_org_id(current_user)
     db_siem = models.SIEMConnection(
@@ -276,6 +333,8 @@ async def get_siem_connection(
     db: DBSession,
     current_user: CurrentUser,
 ):
+    await require_permission(current_user, Permission.SETTINGS_READ, db)
+
     # SECURITY: Validate siem_id is positive
     if siem_id <= 0:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid SIEM connection ID")
@@ -325,20 +384,10 @@ async def update_siem_connection(
     if update_data.get("credentials") in ["", None]:
         update_data.pop("credentials", None)
     if "credentials" in update_data:
-        try:
-            incoming = update_data.get("credentials")
-            incoming_data = json.loads(incoming) if isinstance(incoming, str) else (incoming or {})
-        except Exception:
-            incoming_data = {}
-        try:
-            decrypted_existing = decrypt_value(siem_connection.credentials) if siem_connection.credentials else None
-            existing_data = json.loads(decrypted_existing) if decrypted_existing else {}
-        except Exception:
-            existing_data = {}
-        if isinstance(existing_data, dict) and isinstance(incoming_data, dict):
-            if "token" not in incoming_data and existing_data.get("token"):
-                incoming_data["token"] = existing_data.get("token")
-            update_data["credentials"] = encrypt_value(json.dumps(incoming_data))
+        update_data["credentials"] = _prepare_siem_credentials_for_storage(
+            update_data["credentials"],
+            siem_connection.credentials,
+        )
     for key, value in update_data.items():
         setattr(siem_connection, key, value)
     
@@ -388,6 +437,30 @@ async def sync_siem_detections(
     from ..services.detection_sync import sync_connection
     report = await sync_connection(db, siem_connection, limit=max(1, min(limit, 1000)))
 
+    # If this connection is linked to an audit mirror and has any
+    # mirrorable change events, publish them as one commit. We run this
+    # AFTER ``sync_connection`` has committed so the mirror only ever
+    # reflects state that's also in the DB. Mirror failures are
+    # non-fatal for the sync endpoint — we surface them in the response
+    # but never undo the sync.
+    mirror_result: Optional[Dict[str, Any]] = None
+    if (
+        siem_connection.audit_mirror_enabled
+        and siem_connection.audit_mirror_id
+        and any(e.action != "skip" for e in report.events)
+    ):
+        mirror = await db.get(
+            models.DetectionGitMirror, siem_connection.audit_mirror_id
+        )
+        if mirror is not None and mirror.enabled:
+            from ..services import git_writeback
+
+            outcome = await git_writeback.publish_events(
+                db, mirror, siem_connection, report.events
+            )
+            await db.commit()
+            mirror_result = outcome.to_dict()
+
     async with async_sessionmaker() as session:
         session.add(
             models.AuditEvent(
@@ -396,12 +469,17 @@ async def sync_siem_detections(
                 action="SYNC_SIEM_DETECTIONS",
                 resource_type="settings",
                 resource_id=str(siem_connection.id),
-                details=json.dumps(report.to_dict()),
+                details=json.dumps(
+                    {"report": report.to_dict(), "mirror": mirror_result}
+                ),
             )
         )
         await session.commit()
 
-    return report.to_dict()
+    response = report.to_dict()
+    if mirror_result is not None:
+        response["mirror"] = mirror_result
+    return response
 
 
 @router.delete("/siem-connections/{siem_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -645,7 +723,7 @@ async def list_environment_runners(
     db: DBSession,
     current_user: CurrentUser,
 ):
-    await require_permission(current_user, Permission.SETTINGS_RUNNERS_MANAGE, db)
+    await require_permission(current_user, Permission.SETTINGS_READ, db)
     org_id = require_org_id(current_user)
     result = await db.execute(
         select(models.EnvironmentRunnerConfig).where(
@@ -971,7 +1049,7 @@ async def get_environment_runner(
     if runner_id <= 0:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid environment runner ID")
     
-    await require_permission(current_user, Permission.SETTINGS_RUNNERS_MANAGE, db)
+    await require_permission(current_user, Permission.SETTINGS_READ, db)
     org_id = require_org_id(current_user)
     result = await db.execute(
         select(models.EnvironmentRunnerConfig)
@@ -1171,6 +1249,8 @@ async def get_testing_policy(
     db: DBSession,
     current_user: CurrentUser,
 ):
+    await require_permission(current_user, Permission.SETTINGS_READ, db)
+
     # Get user's organization_id - auto-assign to default org if missing
     org_id = getattr(current_user, "organization_id", None)
     if not org_id:
@@ -1294,6 +1374,8 @@ async def get_detection_scoring(
     db: DBSession,
     current_user: CurrentUser,
 ):
+    await require_permission(current_user, Permission.SETTINGS_READ, db)
+
     # Get user's organization_id - auto-assign to default org if missing
     org_id = getattr(current_user, "organization_id", None)
     if not org_id:
@@ -1399,6 +1481,8 @@ async def get_ai_assistant_settings(
     db: DBSession,
     current_user: CurrentUser,
 ):
+    await require_permission(current_user, Permission.SETTINGS_READ, db)
+
     # Get user's organization_id - auto-assign to default org if missing
     org_id = getattr(current_user, "organization_id", None)
     if not org_id:
@@ -1487,16 +1571,24 @@ async def update_ai_assistant_settings(
 
     if not ai_settings:
         # Create new AI settings for this organization
-        ai_settings_data = ai_settings_update.model_dump()
+        ai_settings_data = _model_column_data(
+            models.AIAssistantSettings,
+            ai_settings_update.model_dump(),
+        )
         ai_settings_data["organization_id"] = org_id
         if ai_settings_data.get("api_key"):
-            ai_settings_data["api_key"] = encrypt_value(ai_settings_data["api_key"])
+            ai_settings_data["api_key"] = _prepare_ai_api_key_for_storage(
+                ai_settings_data["api_key"]
+            )
         ai_settings = models.AIAssistantSettings(**ai_settings_data)
         db.add(ai_settings)
     else:
-        update_data = ai_settings_update.model_dump(exclude_unset=True)
+        update_data = _model_column_data(
+            models.AIAssistantSettings,
+            ai_settings_update.model_dump(exclude_unset=True),
+        )
         if update_data.get("api_key"):
-            update_data["api_key"] = encrypt_value(update_data["api_key"])
+            update_data["api_key"] = _prepare_ai_api_key_for_storage(update_data["api_key"])
         for key, value in update_data.items():
             setattr(ai_settings, key, value)
     

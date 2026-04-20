@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import { usePathname } from "next/navigation";
 import Link from "next/link";
 import Image from "next/image";
+import { SWRConfig } from "swr";
 import "./globals.css";
 import { Sidebar } from "@/components/layout/sidebar";
 import { TopHeader } from "@/components/layout/top-header";
@@ -41,9 +42,9 @@ export default function RootClientLayout({
       subtitle: "Build the habit of proving your work, learning faster, and steadily raising your level as an operator.",
     },
     lab: {
-      label: "LAB",
-      title: "Lab",
-      subtitle: "Experiment without fear, validate quickly, and create the kind of repetition that compounds into real mastery.",
+      label: "ENDPOINTS",
+      title: "Endpoints",
+      subtitle: "Monitor registered agents, endpoint health, and recent validation activity.",
     },
     settings: {
       label: "SETTINGS",
@@ -173,7 +174,7 @@ export default function RootClientLayout({
       "/dashboard": "PurveX | Dashboard",
       "/detections": "PurveX | Detections",
       "/tests": "PurveX | Tests",
-      "/lab": "PurveX | Lab",
+      "/lab": "PurveX | Endpoints",
       "/settings": "PurveX | Settings",
       "/reports": "PurveX | Reports",
       "/run-test": "PurveX | Run Validation",
@@ -205,7 +206,6 @@ export default function RootClientLayout({
     if (last && now - last > maxIdleMs) {
       try {
         localStorage.removeItem(lastAuthKey);
-        localStorage.removeItem("purvex_access_token");
         localStorage.removeItem("purvex_username");
         localStorage.removeItem("purvex_user_role");
         localStorage.removeItem("purvex_dev_offline_mode");
@@ -341,6 +341,20 @@ export default function RootClientLayout({
           </div>
       </div>
       <ThemeProvider>
+          <SWRConfig
+            value={{
+              revalidateOnFocus: false,
+              revalidateIfStale: true,
+              keepPreviousData: true,
+              dedupingInterval: 30_000,
+              errorRetryCount: 2,
+              errorRetryInterval: 2_000,
+              shouldRetryOnError: (err: Error) => {
+                const msg = (err?.message || "").toLowerCase();
+                return !(msg.includes("not authenticated") || msg.includes("sign in again"));
+              },
+            }}
+          >
           <ToastProvider>
           <div className="flex min-h-screen w-screen bg-[var(--surface-shell)] text-[var(--surface-shell-foreground)]">
             <Sidebar
@@ -420,6 +434,7 @@ export default function RootClientLayout({
           </div>
         </div>
           </ToastProvider>
+          </SWRConfig>
         </ThemeProvider>
     </>
   );

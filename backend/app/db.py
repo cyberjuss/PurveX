@@ -2,10 +2,24 @@ from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sess
 from sqlalchemy.orm import declarative_base
 from .config import settings
 
-# Use settings.database_url instead of settings.DATABASE_URL
-async_engine = create_async_engine(
-    settings.database_url, connect_args={"check_same_thread": False}
-)
+_connect_args = {}
+if "sqlite" in settings.database_url:
+    _connect_args["check_same_thread"] = False
+
+async_engine = create_async_engine(settings.database_url, connect_args=_connect_args)
+
+try:
+    # Attach slow-query hook to the underlying sync engine. Keeps DB cost
+    # observable in prod without depending on external APM.
+    from .utils.db_observability import install_slow_query_logger
+
+    install_slow_query_logger(async_engine.sync_engine)
+except Exception:  # pragma: no cover - observability must never break boot
+    import logging
+
+    logging.getLogger("purvex.db").warning(
+        "slow_query_logger_disabled", exc_info=True
+    )
 
 async_sessionmaker = async_sessionmaker(
     autocommit=False,

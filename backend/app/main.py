@@ -4,6 +4,7 @@ import logging
 import os
 import sys
 import re
+from pathlib import Path
 
 # Add the project root to the Python path to allow absolute imports
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
@@ -16,6 +17,11 @@ from sqlalchemy import or_, select, text, inspect
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from .middleware.security import SecurityHeadersMiddleware, RateLimitMiddleware, RequestLoggingMiddleware
 from .middleware.csrf import CSRFProtectionMiddleware
+from .middleware.request_context import RequestContextMiddleware
+from .middleware.metrics import PrometheusMiddleware, metrics_response
+from .logging_config import configure_logging
+
+configure_logging()
 
 from .config import settings
 from . import models
@@ -33,11 +39,75 @@ from .routers import rbac as rbac_router
 from .routers import auth_2fa as auth_2fa_router
 from .routers import password_reset as password_reset_router
 from .routers import reports as reports_router
+from .routers import onboarding as onboarding_router
+from .routers import proposals as proposals_router
+from .routers import detection_sources as detection_sources_router
+from .routers import detection_mirrors as detection_mirrors_router
 from .security import hash_password, verify_password
 from .utils.security import validate_jwt_secret
 from .services.audit_retention import run_audit_retention_loop
+from .services.test_retention import run_test_retention_loop
+from .services.test_reconciliation import reconcile_stale_tests
 
 logger = logging.getLogger("purvex.api")
+MANAGED_SCHEMA_ENVS = {"prod", "staging"}
+
+
+async def _atomic_warmup_wrapper(preload):
+    """Log the outcome of Atomic catalog preload without blocking startup."""
+    try:
+        count = await preload()
+        if count:
+            logger.info("Atomic catalog warmed: %d tests loaded", count)
+        else:
+            logger.debug("Atomic catalog warmup returned 0 tests")
+    except Exception:
+        logger.exception("Atomic catalog warmup raised")
+
+
+def _is_managed_schema_env() -> bool:
+    return settings.DEPLOYMENT_ENV.lower() in MANAGED_SCHEMA_ENVS
+
+
+def _current_alembic_head() -> str:
+    """Return the expected Alembic head revision from the local migration tree."""
+    try:
+        from alembic.config import Config
+        from alembic.script import ScriptDirectory
+    except ImportError as exc:
+        raise RuntimeError("Alembic is required for staging/production startup checks.") from exc
+
+    backend_dir = Path(__file__).resolve().parents[1]
+    config = Config(str(backend_dir / "alembic.ini"))
+    config.set_main_option("script_location", str(backend_dir / "alembic"))
+    script = ScriptDirectory.from_config(config)
+    head = script.get_current_head()
+    if not head:
+        raise RuntimeError("No Alembic migration head found.")
+    return head
+
+
+async def verify_database_migrations_current() -> None:
+    """Fail fast when staging/prod database schema is not managed by Alembic."""
+    expected_head = _current_alembic_head()
+
+    async with async_engine.begin() as conn:
+        def check_version(sync_conn):
+            inspector = inspect(sync_conn)
+            if not inspector.has_table("alembic_version"):
+                raise RuntimeError(
+                    "Database is missing alembic_version. Run `alembic upgrade head` "
+                    "before starting PurveX in staging/production."
+                )
+            rows = sync_conn.execute(text("SELECT version_num FROM alembic_version")).fetchall()
+            versions = {row[0] for row in rows}
+            if expected_head not in versions:
+                raise RuntimeError(
+                    f"Database migration version mismatch. Expected Alembic head "
+                    f"{expected_head!r}, found {sorted(versions)!r}. Run `alembic upgrade head`."
+                )
+
+        await conn.run_sync(check_version)
 
 
 def ensure_bcrypt_compatible():
@@ -72,6 +142,16 @@ app = FastAPI(
 )
 
 
+@app.on_event("startup")
+async def configure_observability():
+    """Enable OpenTelemetry tracing when an OTLP endpoint is configured."""
+    try:
+        from .tracing import configure_tracing
+        configure_tracing(app, engine=async_engine)
+    except Exception:
+        logger.exception("Failed to configure tracing (non-fatal)")
+
+
 @app.on_event("startup")  # Register as a startup event
 async def create_db_and_tables():
     """Create database tables and ensure a default admin exists for first‑run.
@@ -80,9 +160,14 @@ async def create_db_and_tables():
     eventually disable CREATE_DEFAULT_ADMIN.
     """
     try:
+        if _is_managed_schema_env():
+            await verify_database_migrations_current()
+            logger.info("Database migration state is current.")
+
         # Create tables using SQLAlchemy metadata
         async with async_engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
+            if not _is_managed_schema_env():
+                await conn.run_sync(Base.metadata.create_all)
             # Ensure new columns exist in legacy databases (lightweight migration).
             def ensure_tests_endpoint(sync_conn):
                 inspector = inspect(sync_conn)
@@ -97,6 +182,21 @@ async def create_db_and_tables():
                     sync_conn.execute(text("ALTER TABLE tests ADD COLUMN initiated_by_username VARCHAR(100)"))
                 if "initiated_by_role" not in columns:
                     sync_conn.execute(text("ALTER TABLE tests ADD COLUMN initiated_by_role VARCHAR(100)"))
+                # Backfill columns added by alembic 0003 for legacy SQLite
+                # databases that pre-date the migration.
+                if "atomic_test_id" not in columns:
+                    sync_conn.execute(text("ALTER TABLE tests ADD COLUMN atomic_test_id VARCHAR(255)"))
+                if "atomic_test_name" not in columns:
+                    sync_conn.execute(text("ALTER TABLE tests ADD COLUMN atomic_test_name VARCHAR(500)"))
+                if "atomic_test_number" not in columns:
+                    sync_conn.execute(text("ALTER TABLE tests ADD COLUMN atomic_test_number INTEGER"))
+                # Lightweight backfill for the run-mode column. Mirrors the
+                # Alembic 0004 migration for managed environments.
+                if "mode" not in columns:
+                    sync_conn.execute(text(
+                        "ALTER TABLE tests ADD COLUMN mode VARCHAR(50) "
+                        "NOT NULL DEFAULT 'DETECTION_VALIDATION'"
+                    ))
                 user_columns = {col["name"] for col in inspector.get_columns("users")}
                 if "username" not in user_columns:
                     sync_conn.execute(text("ALTER TABLE users ADD COLUMN username VARCHAR(100)"))
@@ -161,7 +261,60 @@ async def create_db_and_tables():
                     sync_conn.execute(text("ALTER TABLE detections ADD COLUMN last_synced_at DATETIME"))
                 if "drift_detected_at" not in detection_columns:
                     sync_conn.execute(text("ALTER TABLE detections ADD COLUMN drift_detected_at DATETIME"))
-            await conn.run_sync(ensure_tests_endpoint)
+                # Git provenance columns (alembic 0007 — Detection-as-Code).
+                if "detection_source_id" not in detection_columns:
+                    sync_conn.execute(
+                        text(
+                            "ALTER TABLE detections ADD COLUMN detection_source_id INTEGER"
+                        )
+                    )
+                if "source_path" not in detection_columns:
+                    sync_conn.execute(
+                        text("ALTER TABLE detections ADD COLUMN source_path VARCHAR(500)")
+                    )
+                if "source_commit_sha" not in detection_columns:
+                    sync_conn.execute(
+                        text(
+                            "ALTER TABLE detections ADD COLUMN source_commit_sha VARCHAR(64)"
+                        )
+                    )
+                if "source_payload" not in detection_columns:
+                    sync_conn.execute(
+                        text("ALTER TABLE detections ADD COLUMN source_payload TEXT")
+                    )
+
+                # Backfill composite performance indexes (alembic 0005) on
+                # legacy SQLite databases. create_all() only makes missing
+                # tables, not missing indexes on existing tables.
+                existing_indexes: set[str] = set()
+                for tbl in ("tests", "audit_events", "jobs"):
+                    try:
+                        existing_indexes.update(
+                            ix["name"] for ix in inspector.get_indexes(tbl)
+                        )
+                    except Exception:
+                        continue
+
+                perf_indexes = [
+                    ("ix_tests_org_started_at", "tests", "organization_id, started_at"),
+                    ("ix_tests_detection_mode_started", "tests", "detection_id, mode, started_at"),
+                    ("ix_tests_org_status", "tests", "organization_id, status"),
+                    ("ix_audit_events_created_at", "audit_events", "created_at"),
+                    ("ix_audit_events_action_created_at", "audit_events", "action, created_at"),
+                    ("ix_jobs_status_enqueued_at", "jobs", "status, enqueued_at"),
+                    ("ix_jobs_org_enqueued_at", "jobs", "organization_id, enqueued_at"),
+                ]
+                for name, table, cols in perf_indexes:
+                    if name in existing_indexes:
+                        continue
+                    try:
+                        sync_conn.execute(
+                            text(f"CREATE INDEX IF NOT EXISTS {name} ON {table} ({cols})")
+                        )
+                    except Exception as exc:  # pragma: no cover - defensive
+                        logger.debug("Skipped index %s: %s", name, exc)
+            if not _is_managed_schema_env():
+                await conn.run_sync(ensure_tests_endpoint)
         
         # Automatically run RBAC migration on startup.
         from .services.rbac_migration import run_rbac_migration
@@ -186,6 +339,13 @@ async def create_db_and_tables():
 
         # Verify bcrypt compatibility early to avoid login crashes.
         ensure_bcrypt_compatible()
+
+        reconciled = await reconcile_stale_tests(
+            async_sessionmaker,
+            timeout_minutes=settings.STALE_TEST_TIMEOUT_MINUTES,
+        )
+        if reconciled:
+            logger.warning("Reconciled %d stale test run(s) during startup", reconciled)
         
         # SECURITY: Enforce production security requirements
         is_production = settings.DEPLOYMENT_ENV.lower() == "prod"
@@ -459,9 +619,31 @@ async def create_db_and_tables():
         from .services.test_scheduler import start_scheduler
         try:
             start_scheduler(interval_seconds=60)  # Check every minute
-            logger.info("✓ Test scheduler worker started")
+            logger.info("Test scheduler worker started")
         except Exception as scheduler_err:
-            logger.warning(f"⚠ Failed to start test scheduler: {scheduler_err}")
+            logger.warning(f"Failed to start test scheduler: {scheduler_err}")
+
+        # Start the SIEM → git audit mirror scheduler. Cadence is governed
+        # by PURVEX_MIRROR_SCHEDULER_INTERVAL_SEC (default 900s). Disable
+        # with PURVEX_MIRROR_SCHEDULER_ENABLED=false if you only want
+        # manual (endpoint-triggered) syncs.
+        try:
+            from .services.mirror_scheduler import start_mirror_scheduler
+
+            start_mirror_scheduler()
+            logger.info("Mirror scheduler worker started")
+        except Exception as mirror_err:
+            logger.warning(f"Failed to start mirror scheduler: {mirror_err}")
+
+        # Warm the Atomic Red Team catalog off the hot path so the first
+        # /atomic/tests request doesn't pay the full parse cost. Runs as a
+        # fire-and-forget task; failures only affect first-request latency.
+        try:
+            from .routers.atomic import preload_atomic_catalog
+
+            asyncio.create_task(_atomic_warmup_wrapper(preload_atomic_catalog))
+        except Exception as warm_err:  # pragma: no cover - defensive
+            logger.warning(f"Atomic catalog warmup skipped: {warm_err}")
 
         # Start audit retention cleanup loop
         if settings.AUDIT_RETENTION_ENABLED:
@@ -477,14 +659,34 @@ async def create_db_and_tables():
                 settings.AUDIT_RETENTION_DAYS,
                 settings.AUDIT_RETENTION_INTERVAL_HOURS,
             )
+
+        # Start test retention cleanup loop
+        if settings.TEST_RETENTION_ENABLED:
+            asyncio.create_task(
+                run_test_retention_loop(
+                    async_sessionmaker,
+                    retention_days=settings.TEST_RETENTION_DAYS,
+                    interval_hours=settings.TEST_RETENTION_INTERVAL_HOURS,
+                )
+            )
+            logger.info(
+                "Test retention enabled: %s days, interval %s hours",
+                settings.TEST_RETENTION_DAYS,
+                settings.TEST_RETENTION_INTERVAL_HOURS,
+            )
         
     except asyncio.CancelledError:
         # Handle cancellation gracefully during hot reload
         logger.warning("Startup cancelled (likely due to hot reload)")
-        # Stop scheduler on cancellation
+        # Stop schedulers on cancellation
         try:
             from .services.test_scheduler import stop_scheduler
             await stop_scheduler()
+        except Exception:
+            pass
+        try:
+            from .services.mirror_scheduler import stop_mirror_scheduler
+            await stop_mirror_scheduler()
         except Exception:
             pass
         raise
@@ -510,11 +712,15 @@ def parse_cors_origins(raw_value: str) -> list[str]:
     return [origin.strip() for origin in value.split(",") if origin.strip()]
 
 # Security middleware (add first, processes responses last)
+# RequestContextMiddleware is added last so it runs FIRST on inbound — every
+# other middleware sees the correlation ID.
 app.add_middleware(SecurityHeadersMiddleware)
 if os.getenv("PURVEX_ENV", "dev").lower() == "prod":
     app.add_middleware(RateLimitMiddleware, max_requests=100, window_seconds=60)
 app.add_middleware(RequestLoggingMiddleware)
 app.add_middleware(CSRFProtectionMiddleware)
+app.add_middleware(PrometheusMiddleware)
+app.add_middleware(RequestContextMiddleware)
 
 # Production security middleware
 from .middleware.production import HTTPSEnforcementMiddleware, RequestSizeLimitMiddleware
@@ -707,6 +913,10 @@ app.include_router(rbac_router.router)  # /rbac/me/roles, /rbac/me/permissions, 
 app.include_router(auth_2fa_router.router)  # /auth/2fa/setup, /auth/2fa/verify, etc.
 app.include_router(password_reset_router.router)
 app.include_router(reports_router.router)  # /reports/generate, /reports/, /reports/{report_id}/download
+app.include_router(onboarding_router.router)  # /onboarding/status
+app.include_router(proposals_router.router)  # /proposals (AI remediation guardrails)
+app.include_router(detection_sources_router.router)  # /detection-sources (DaC sync)
+app.include_router(detection_mirrors_router.router)  # /detection-mirrors (SIEM-to-Git audit mirror)
 
 
 @app.get("/health")
@@ -715,25 +925,91 @@ async def health():
     return {"status": "ok"}
 
 
+@app.get("/metrics", include_in_schema=False)
+async def metrics():
+    """Prometheus-format metrics exposition."""
+    return metrics_response()
+
+
 @app.get("/ready")
+@app.get("/health/dependencies")
 async def ready():
-    """Readiness probe that verifies database connectivity."""
+    """Readiness probe that verifies every hard dependency."""
+    checks: dict[str, dict] = {}
+    overall_ok = True
+
     try:
         async with async_sessionmaker() as session:
-            # Cheap query just to ensure the connection and metadata are usable.
             await session.execute(select(1))
-        return {"status": "ready"}
-    except Exception as exc:  # pragma: no cover - defensive logging
-        logger.exception("Readiness check failed", exc_info=exc)
-        raise HTTPException(status_code=503, detail="Service not ready")
+        checks["database"] = {"status": "ok"}
+    except Exception as exc:
+        overall_ok = False
+        checks["database"] = {"status": "error", "detail": str(exc)[:200]}
+        logger.exception("Database readiness check failed", exc_info=exc)
+
+    try:
+        from .utils.redis_client import get_redis_client
+        client = get_redis_client()
+        if client is None:
+            checks["redis"] = {"status": "disabled"}
+        else:
+            client.ping()
+            checks["redis"] = {"status": "ok"}
+    except Exception as exc:
+        # Redis is optional — don't fail readiness if it's down.
+        checks["redis"] = {"status": "degraded", "detail": str(exc)[:200]}
+
+    payload = {"status": "ready" if overall_ok else "not_ready", "checks": checks}
+    if not overall_ok:
+        raise HTTPException(status_code=503, detail=payload)
+    return payload
 
 
 @app.on_event("shutdown")
 async def shutdown_event():
-    """Cleanup on application shutdown."""
+    """Graceful shutdown: stop background workers and close DB connections.
+
+    Order matters — stop schedulers first so they don't fire new DB work while
+    we're tearing down the engine.
+    """
+    logger.info("Shutdown requested — draining background workers")
+
     try:
         from .services.test_scheduler import stop_scheduler
         await stop_scheduler()
         logger.info("Test scheduler stopped")
     except Exception as exc:
         logger.warning(f"Error stopping scheduler: {exc}")
+
+    try:
+        from .services.mirror_scheduler import stop_mirror_scheduler
+        await stop_mirror_scheduler()
+        logger.info("Mirror scheduler stopped")
+    except Exception as exc:
+        logger.warning(f"Error stopping mirror scheduler: {exc}")
+
+    try:
+        from .jobs import drain_inprocess_jobs
+
+        drained = await drain_inprocess_jobs(timeout_seconds=30)
+        if drained:
+            logger.info("Drained %d in-process background job(s)", drained)
+    except Exception as exc:
+        logger.warning(f"Error draining in-process jobs: {exc}")
+
+    try:
+        await async_engine.dispose()
+        logger.info("Database engine disposed")
+    except Exception as exc:
+        logger.warning(f"Error disposing database engine: {exc}")
+
+    try:
+        from .utils.redis_client import get_redis_client
+        client = get_redis_client()
+        if client is not None:
+            client.close()
+            logger.info("Redis client closed")
+    except Exception as exc:
+        logger.warning(f"Error closing Redis client: {exc}")
+
+    logger.info("Shutdown complete")

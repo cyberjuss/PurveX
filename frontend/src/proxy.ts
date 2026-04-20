@@ -1,7 +1,67 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { randomBytes } from "crypto";
 
-// Security middleware: applies hardened headers to all routes.
+// Edge proxy (Next.js 16 successor to `middleware.ts`). Runs on every
+// request matched by `config.matcher` below and handles three concerns in
+// order:
+//
+//   1. Auth gate — redirects unauthenticated users hitting app routes to
+//      `/login` before any SSR work starts.
+//   2. Rate limiting — per-IP best-effort limiter for `/api` traffic so one
+//      instance can't trivially be swamped.
+//   3. Security headers — CSP (with per-request nonce), HSTS, COOP/CORP,
+//      etc., applied to every response leaving the edge.
+//
+// NOTE: Next.js 16 enforces a single edge file per app. If you re-introduce
+// a `middleware.ts` the build will fail with
+// "Both middleware file ... and proxy file ... are detected".
+
+const AUTH_COOKIE = "access_token";
+
+// Routes rendered as unauthenticated (allowlist). Anything under
+// `AUTH_PREFIXES` that isn't in this list requires a session cookie.
+const PUBLIC_PREFIXES = [
+  "/login",
+  "/setup",
+  "/forgot-password",
+  "/reset-password",
+  "/legal",
+  "/about",
+  "/press",
+  "/contact",
+  "/creators",
+];
+
+// App surfaces that require a logged-in session. Keep in sync with the
+// authenticated navigation surface (sidebar, quick links, etc.). Marketing
+// pages and Next.js internals (`/_next`, `/api` proxy, favicon) are omitted
+// intentionally.
+const AUTH_PREFIXES = [
+  "/dashboard",
+  "/detections",
+  "/tests",
+  "/mitre",
+  "/lab",
+  "/endpoints",
+  "/reports",
+  "/run-test",
+  "/settings",
+  "/notifications",
+  "/events",
+  "/alerts",
+];
+
+function isPublic(pathname: string): boolean {
+  return PUBLIC_PREFIXES.some(
+    (prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`),
+  );
+}
+
+function requiresAuth(pathname: string): boolean {
+  return AUTH_PREFIXES.some(
+    (prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`),
+  );
+}
 
 // Very lightweight in-memory rate limiter (best-effort; per-instance only).
 const RATE_LIMIT_WINDOW_MS = 60_000;
@@ -11,6 +71,7 @@ const rateLimitStore: Map<string, { count: number; expires: number }> = new Map(
 
 export default function proxy(request: NextRequest) {
   const isDev = process.env.NODE_ENV !== "production";
+  const { pathname, search } = request.nextUrl;
   const hostname = request.nextUrl.hostname;
   const protocol = request.nextUrl.protocol;
   const isPotentiallyTrustworthyOrigin =
@@ -26,6 +87,24 @@ export default function proxy(request: NextRequest) {
     const redirectUrl = request.nextUrl.clone();
     redirectUrl.hostname = "localhost";
     return NextResponse.redirect(redirectUrl, 307);
+  }
+
+  // Auth gate — cheap cookie check before SSR/data fetching. The backend
+  // still authoritatively validates the token on every API call, so a
+  // tampered cookie only bypasses the redirect, not the actual session.
+  if (requiresAuth(pathname) && !isPublic(pathname)) {
+    const hasSession = Boolean(request.cookies.get(AUTH_COOKIE)?.value);
+    if (!hasSession) {
+      const loginUrl = request.nextUrl.clone();
+      loginUrl.pathname = "/login";
+      loginUrl.search = "";
+      loginUrl.searchParams.set("reason", "expired");
+      const target = `${pathname}${search || ""}`;
+      if (target && target !== "/") {
+        loginUrl.searchParams.set("next", target);
+      }
+      return NextResponse.redirect(loginUrl);
+    }
   }
 
   // Basic rate limiting for API routes.
