@@ -30,7 +30,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { LifecycleBadge, LifecycleProgress, LifecycleStage } from "@/components/lifecycle/LifecycleVisualizer";
+import { LifecycleProgress } from "@/components/lifecycle/LifecycleVisualizer";
 import { cn } from "@/lib/utils";
 import { PageContainer } from "@/components/layout/page-container";
 import { PageHeader } from "@/components/layout/page-header";
@@ -79,6 +79,24 @@ type DashboardRunner = {
   status?: string | null;
   enabled?: boolean | null;
 };
+
+type DetectionReadinessKey = "ready" | "needs_tuning" | "telemetry_gap" | "needs_validation";
+
+function detectionIsStale(detection: Detection) {
+  if (!detection.last_tested_at) return false;
+  const testedAt = new Date(detection.last_tested_at).getTime();
+  if (!Number.isFinite(testedAt)) return false;
+  return Date.now() - testedAt > 1000 * 60 * 60 * 24 * 21;
+}
+
+function getDetectionReadiness(detection: Detection): DetectionReadinessKey {
+  const result = (detection.last_result || "").toUpperCase();
+  const status = (detection.status || "").toUpperCase();
+  if (result === "PASS" && !detectionIsStale(detection)) return "ready";
+  if (result === "FAIL" || status === "NEEDS_IMPROVEMENT") return "needs_tuning";
+  if (result === "INCONCLUSIVE") return "telemetry_gap";
+  return "needs_validation";
+}
 
 export default function DashboardPage() {
   const router = useRouter();
@@ -136,20 +154,21 @@ export default function DashboardPage() {
     };
   }, [allDetections]);
 
-  const lifecycleSummary = useMemo(() => {
+  const readinessSummary = useMemo(() => {
     const total = allDetections.length;
-    const inProd = allDetections.filter(
-      d => d.lifecycle_stage === "deploy" || d.lifecycle_stage === "maintain"
-    ).length;
+    const counts: Record<DetectionReadinessKey, number> = {
+      ready: 0,
+      needs_tuning: 0,
+      telemetry_gap: 0,
+      needs_validation: 0,
+    };
+    for (const detection of allDetections) {
+      counts[getDetectionReadiness(detection)] += 1;
+    }
     return {
       total,
-      identify: allDetections.filter(d => d.lifecycle_stage === "identify").length,
-      design: allDetections.filter(d => d.lifecycle_stage === "design").length,
-      develop: allDetections.filter(d => d.lifecycle_stage === "develop").length,
-      test: allDetections.filter(d => d.lifecycle_stage === "test").length,
-      deploy: allDetections.filter(d => d.lifecycle_stage === "deploy").length,
-      maintain: allDetections.filter(d => d.lifecycle_stage === "maintain").length,
-      progress: Math.round((inProd / (total || 1)) * 100),
+      ...counts,
+      progress: Math.round((counts.ready / (total || 1)) * 100),
     };
   }, [allDetections]);
 
@@ -345,7 +364,7 @@ export default function DashboardPage() {
             <PageHeader
               eyebrow="Validation workspace"
               title="Dashboard"
-              subtitle="Validate detections, prove coverage, and show what to fix next."
+              subtitle="See which detections are trustworthy, which telemetry paths are broken, and what the team needs to fix next."
             />
 
           {/* System Health & MITRE Coverage Row */}
@@ -732,7 +751,7 @@ export default function DashboardPage() {
                     <ScanLine className="h-5 w-5 text-[var(--surface-card-foreground)]" />
                   </div>
                   <div>
-                    <p className="text-sm font-semibold text-[var(--surface-card-foreground)]">Open telemetry gap</p>
+                    <p className="text-sm font-semibold text-[var(--surface-card-foreground)]">Investigate missing logs</p>
                     <p className="text-xs text-[var(--surface-subtle-foreground)]">Jump straight into a telemetry-first rerun.</p>
                   </div>
                 </div>
@@ -917,42 +936,55 @@ export default function DashboardPage() {
                     </CardDescription>
                   </div>
                   <Badge className="bg-indigo-500/20 text-indigo-300 border-indigo-500/40 font-semibold">
-                    {lifecycleSummary.progress}% ready
+                    {readinessSummary.progress}% ready
                   </Badge>
                 </div>
               </CardHeader>
               <CardContent className="pt-6">
                 <div className="space-y-4 mb-6">
                   {[
-                    { stage: "deploy", label: "Deployed", stat: lifecycleSummary.deploy, color: "emerald" },
-                    { stage: "maintain", label: "Maintained", stat: lifecycleSummary.maintain, color: "blue" },
-                    { stage: "develop", label: "In Development", stat: lifecycleSummary.develop, color: "indigo" },
-                    { stage: "test", label: "Testing", stat: lifecycleSummary.test, color: "amber" },
-                  ].map(entry => (
-                    <div key={entry.stage} className="flex items-center justify-between rounded-xl border border-[var(--stroke-soft)] bg-[var(--surface-elevated)] p-3 shadow-sm">
-                      <div className="flex items-center gap-3">
-                        <LifecycleBadge stage={entry.stage as LifecycleStage} />
-                        <span className="text-sm font-body text-[var(--surface-card-foreground)]">{entry.label}</span>
-                      </div>
-                      <div className="flex items-center gap-4">
-                        <span className="text-lg font-display font-bold text-[var(--surface-card-foreground)]">{entry.stat}</span>
-                        <div className="h-2 w-32 overflow-hidden rounded-full bg-[var(--surface-subtle)]">
-                          <div
+                    { key: "ready", label: "Ready", stat: readinessSummary.ready, color: "emerald", icon: ShieldCheck },
+                    { key: "needs_tuning", label: "Needs tuning", stat: readinessSummary.needs_tuning, color: "rose", icon: AlertTriangle },
+                    { key: "telemetry_gap", label: "No logs", stat: readinessSummary.telemetry_gap, color: "amber", icon: Activity },
+                    { key: "needs_validation", label: "Needs validation", stat: readinessSummary.needs_validation, color: "indigo", icon: Target },
+                  ].map(entry => {
+                    const Icon = entry.icon;
+                    return (
+                      <div key={entry.key} className="flex items-center justify-between rounded-xl border border-[var(--stroke-soft)] bg-[var(--surface-elevated)] p-3 shadow-sm">
+                        <div className="flex items-center gap-3">
+                          <span
                             className={cn(
-                              "h-full transition-all",
-                              entry.color === "emerald" && "bg-emerald-500",
-                              entry.color === "blue" && "bg-blue-500",
-                              entry.color === "indigo" && "bg-blue-500",
-                              entry.color === "amber" && "bg-amber-500"
+                              "inline-flex h-8 w-8 items-center justify-center rounded-full border",
+                              entry.color === "emerald" && "border-emerald-500/40 bg-emerald-500/15 text-emerald-300",
+                              entry.color === "rose" && "border-rose-500/40 bg-rose-500/15 text-rose-300",
+                              entry.color === "amber" && "border-amber-500/40 bg-amber-500/15 text-amber-300",
+                              entry.color === "indigo" && "border-indigo-500/40 bg-indigo-500/15 text-indigo-300"
                             )}
-                            style={{ width: `${(entry.stat / (lifecycleSummary.total || 1)) * 100}%` }}
-                          />
+                          >
+                            <Icon className="h-4 w-4" />
+                          </span>
+                          <span className="text-sm font-body text-[var(--surface-card-foreground)]">{entry.label}</span>
+                        </div>
+                        <div className="flex items-center gap-4">
+                          <span className="text-lg font-display font-bold text-[var(--surface-card-foreground)]">{entry.stat}</span>
+                          <div className="h-2 w-32 overflow-hidden rounded-full bg-[var(--surface-subtle)]">
+                            <div
+                              className={cn(
+                                "h-full transition-all",
+                                entry.color === "emerald" && "bg-emerald-500",
+                                entry.color === "rose" && "bg-rose-500",
+                                entry.color === "indigo" && "bg-blue-500",
+                                entry.color === "amber" && "bg-amber-500"
+                              )}
+                              style={{ width: `${(entry.stat / (readinessSummary.total || 1)) * 100}%` }}
+                            />
+                          </div>
                         </div>
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
-                <LifecycleProgress progressPercent={lifecycleSummary.progress} />
+                <LifecycleProgress progressPercent={readinessSummary.progress} />
               </CardContent>
             </Card>
 

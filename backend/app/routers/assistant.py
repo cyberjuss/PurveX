@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 import os
+from datetime import datetime, timedelta, timezone
 from typing import Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -12,14 +14,49 @@ from ..db import get_db
 from ..services.ai_assistant import call_llm
 from ..utils.tenant import require_org_id
 from ..utils.authz import require_permission, Permission
+from ..utils.rate_limit import check_rate_limit
 from sqlalchemy import select, desc, func
 from .. import models
+
+
+def _enforce_chat_rate_limit(user) -> None:
+  """Per-user sliding-window cap on Watchtower chat. Each authenticated
+  user has their own bucket so one runaway client can't starve teammates.
+  We key on ``user.id`` rather than IP so the limit follows the session
+  even across NAT.
+  """
+  user_id = getattr(user, "id", None)
+  if user_id is None:
+    return
+  allowed, _ = check_rate_limit(
+    f"assistant_chat:{user_id}",
+    max_requests=settings.AI_CHAT_RATE_LIMIT_MAX_REQUESTS,
+    window_seconds=settings.AI_CHAT_RATE_LIMIT_WINDOW_SECONDS,
+  )
+  if not allowed:
+    raise HTTPException(
+      status_code=429,
+      detail=(
+        "Watchtower chat rate limit exceeded. "
+        f"Try again in a few minutes "
+        f"(limit: {settings.AI_CHAT_RATE_LIMIT_MAX_REQUESTS} requests / "
+        f"{settings.AI_CHAT_RATE_LIMIT_WINDOW_SECONDS}s)."
+      ),
+    )
 
 
 router = APIRouter(prefix="/assistant", tags=["assistant"])
 
 
 ALLOWED_MODELS = frozenset({"gpt-4o-mini", "gpt-4o", "deepseek-chat", "deepseek-reasoner"})
+
+
+ALLOWED_ANALYST_GOALS = frozenset({
+  "find_weaknesses",
+  "reduce_false_positives",
+  "improve_detection_coverage",
+  "stabilize_failing_tests",
+})
 
 
 class AssistantRequest(BaseModel):
@@ -35,8 +72,11 @@ class AssistantRequest(BaseModel):
   )
   detection_id: Optional[str] = None
   alert_id: Optional[int] = None
-  force_demo: Optional[bool] = False
   model_name: Optional[str] = Field(None, description="Optional model override for this request.")
+  analyst_goal: Optional[str] = Field(
+    None,
+    description="High-level objective steering the assistant's recommendations (find_weaknesses, reduce_false_positives, improve_detection_coverage, stabilize_failing_tests).",
+  )
 
   @field_validator("model_name")
   @classmethod
@@ -51,6 +91,26 @@ class AssistantRequest(BaseModel):
       raise ValueError("model_name is not in the allowed list")
     return candidate
 
+  @field_validator("analyst_goal")
+  @classmethod
+  def _validate_analyst_goal(cls, value: Optional[str]) -> Optional[str]:
+    if value is None:
+      return None
+    candidate = value.strip().lower()
+    if not candidate:
+      return None
+    if candidate not in ALLOWED_ANALYST_GOALS:
+      raise ValueError("analyst_goal is not in the allowed list")
+    return candidate
+
+
+GOAL_INSTRUCTIONS: dict[str, str] = {
+  "find_weaknesses": "Analyst goal: find detection weaknesses in query logic and tuning. Prioritize concrete fixes analysts can apply now.",
+  "reduce_false_positives": "Analyst goal: reduce false positives while preserving coverage. Prioritize precision improvements and safe thresholds over recall.",
+  "improve_detection_coverage": "Analyst goal: improve detection coverage. Prioritize telemetry gaps, missing field mappings, and untested techniques.",
+  "stabilize_failing_tests": "Analyst goal: stabilize failing validations. Prioritize root-cause isolation, minimal query changes, and a tight retest loop.",
+}
+
 
 class AssistantResponse(BaseModel):
   """Simple wrapper for the LLM's answer text."""
@@ -60,58 +120,18 @@ class AssistantResponse(BaseModel):
 
 MAX_PROMPT_CHARS = 10000  # Basic guard against extremely large prompts.
 
-ACTION_TEMPLATES: dict[str, str] = {
-  "portfolio_health": (
-    "You are Watchtower for PurveX. Use the Portfolio Context to answer.\n"
-    "Format:\n"
-    "Summary: 2-3 sentences.\n"
-    "Findings:\n- bullet\n- bullet\n"
-    "Root cause: choose one of LOGGING_PIPELINE | RULE_LOGIC | FIELD_MISMATCH | THRESHOLDING | OTHER (confidence: low|medium|high)\n"
-    "Next steps:\n1) step\n2) step\n3) step\n"
-  ),
-  "coverage_gaps": (
-    "Identify top coverage gaps from Portfolio Context.\n"
-    "Format: Summary, Findings (2 bullets), Root cause, Next steps (1-3)."
-  ),
-  "coverage_improve": (
-    "Recommend the top 3 coverage improvements based on Portfolio Context.\n"
-    "Format: Summary, Findings (2 bullets), Root cause, Next steps (1-3)."
-  ),
-  "detection_summary": (
-    "Summarize the detection and latest test outcome. Keep it concise.\n"
-    "Format: Summary, Findings (2 bullets), Root cause, Next steps (1-3)."
-  ),
-  "test_explain": (
-    "Explain the latest test result and why it passed/failed. Identify missing telemetry if any.\n"
-    "Format: Summary, Findings (2 bullets), Root cause, Next steps (1-3)."
-  ),
-  "fix_recommendations": (
-    "Provide concrete fixes to improve this detection and how to validate.\n"
-    "Format: Summary, Findings (2 bullets), Root cause, Next steps (1-3)."
-  ),
-  "alert_explain": (
-    "Explain the selected alert/event and recommended actions.\n"
-    "Format: Summary, Findings (2 bullets), Root cause, Next steps (1-3)."
-  ),
+# Action focus hints — one line each. Format is enforced once, in the
+# unified system prompt below. Hints only narrow what the AI should pay
+# attention to; they never redefine the response shape.
+ACTION_FOCUS: dict[str, str] = {
+  "portfolio_health": "Focus on overall validation health: pass-rate trend, top failing detections, and per-environment regressions.",
+  "coverage_gaps": "Focus on coverage gaps: distinguish telemetry-missing (INCONCLUSIVE) from rule-logic gaps (FAIL). Prioritize CRITICAL/HIGH techniques.",
+  "coverage_improve": "Focus on the top 3 highest-leverage coverage improvements. Be concrete about which detections to touch first.",
+  "detection_summary": "Focus on this detection's current trust level: what it covers, recent trend, and what blocks it from passing reliably.",
+  "test_explain": "Focus on why the latest test result is what it is. Differentiate telemetry-missing from rule-logic failure using the sample events count and content.",
+  "fix_recommendations": "Focus on concrete, minimal query/rule edits that address the failure mode you see in the events. Always include a retest step.",
+  "alert_explain": "Focus on what the selected alert/event shows and the action a detection engineer should take next.",
 }
-
-STATIC_DEMO_CONTEXT = (
-  "[Portfolio Context]\n"
-  "Total detections: 12\n"
-  "Total tests: 24\n"
-  "Pass rate: 62%\n"
-  "Recent techniques: T1059.001, T1021.001, T1110, T1003\n"
-  "Recent tests: 241:T1059.001:PASS, 240:T1021.001:FAIL, 239:T1110:INCONCLUSIVE\n"
-  "Recent failing tests: 240:T1021.001:FAIL, 239:T1110:INCONCLUSIVE\n"
-  "\n[Detection Context]\n"
-  "Title: PowerShell Command Execution\n"
-  "MITRE Technique: T1059.001\n"
-  "SIEM Type: splunk\n"
-  "Status: ACTIVE\n"
-  "Description: Detects suspicious PowerShell execution patterns.\n"
-  "SIEM Query:\nindex=windows EventCode=4104 (ScriptBlockText=\"*EncodedCommand*\" OR ScriptBlockText=\"*ExecutionPolicy Bypass*\")\n"
-  "Latest Test Run:\n- Test ID: 241\n- Started: 2026-01-25T10:30:00Z\n- Environment: lab\n- Status: completed\n- Result: FAIL\n- Score: 45\n"
-)
 
 def _truncate(value: Optional[str], max_len: int) -> str:
   if not value:
@@ -120,56 +140,175 @@ def _truncate(value: Optional[str], max_len: int) -> str:
     return value
   return value[:max_len] + "\n... (truncated)"
 
-async def _build_portfolio_context(db, org_id: int) -> str:
-  det_count = (await db.execute(select(func.count()).select_from(models.Detection).where(models.Detection.organization_id == org_id))).scalar() or 0
-  test_count = (await db.execute(select(func.count()).select_from(models.Test).where(models.Test.organization_id == org_id))).scalar() or 0
-  pass_count = (await db.execute(
-    select(func.count()).select_from(models.Test)
-    .where(models.Test.organization_id == org_id, models.Test.result == "PASS")
-  )).scalar() or 0
-  pass_rate = int(round((pass_count / test_count) * 100)) if test_count else 0
+def _norm_result(value: Optional[str]) -> str:
+  return (value or "").strip().upper()
 
-  recent_tests_result = await db.execute(
-    select(models.Test)
-    .where(models.Test.organization_id == org_id)
-    .order_by(desc(models.Test.started_at))
-    .limit(5)
-  )
-  recent_tests = recent_tests_result.scalars().all()
+
+async def _build_portfolio_context(db, org_id: int) -> str:
+  """Portfolio-scoped context with the signals an analyst would actually use:
+  pass/fail/inconclusive split, top repeatedly-failing detections (last 30d),
+  and a per-environment breakdown so the AI can say "prod is worse than lab"
+  rather than guessing.
+  """
+  det_count = (
+    await db.execute(
+      select(func.count()).select_from(models.Detection).where(models.Detection.organization_id == org_id)
+    )
+  ).scalar() or 0
+
+  # Aggregate test counts by result in one pass, then derive rates. We also
+  # exclude TELEMETRY_CHECK runs from "pass rate" because they validate
+  # logging coverage, not detection logic — mixing them muddies the signal.
+  result_rows = (
+    await db.execute(
+      select(func.upper(models.Test.result), func.count())
+      .where(
+        models.Test.organization_id == org_id,
+        models.Test.mode != "TELEMETRY_CHECK",
+      )
+      .group_by(func.upper(models.Test.result))
+    )
+  ).all()
+  by_result = {(row[0] or "UNKNOWN"): int(row[1]) for row in result_rows}
+  pass_count = by_result.get("PASS", 0)
+  fail_count = by_result.get("FAIL", 0)
+  inconclusive_count = by_result.get("INCONCLUSIVE", 0)
+  scored_total = pass_count + fail_count + inconclusive_count
+  pass_rate = int(round((pass_count / scored_total) * 100)) if scored_total else 0
+
+  # Per-environment split — surfaces "prod regressing while lab is healthy".
+  env_rows = (
+    await db.execute(
+      select(
+        models.Test.environment,
+        func.upper(models.Test.result),
+        func.count(),
+      )
+      .where(
+        models.Test.organization_id == org_id,
+        models.Test.mode != "TELEMETRY_CHECK",
+      )
+      .group_by(models.Test.environment, func.upper(models.Test.result))
+    )
+  ).all()
+  env_breakdown: dict[str, dict[str, int]] = {}
+  for env, result, count in env_rows:
+    bucket = env_breakdown.setdefault((env or "unknown").lower(), {})
+    bucket[result or "UNKNOWN"] = int(count)
+  env_lines = []
+  for env, counts in sorted(env_breakdown.items()):
+    p, f_, i = counts.get("PASS", 0), counts.get("FAIL", 0), counts.get("INCONCLUSIVE", 0)
+    total = p + f_ + i
+    if total == 0:
+      continue
+    env_lines.append(f"{env}: {p}P/{f_}F/{i}I ({int(round(p/total*100))}% pass)")
+
+  # Top repeatedly-failing detections in the last 30 days. This is the
+  # actionable list: a detection that fails once is noise, one that fails
+  # 4 times in a row is a real coverage hole.
+  cutoff = datetime.now(timezone.utc) - timedelta(days=30)
+  top_failing_rows = (
+    await db.execute(
+      select(
+        models.Test.detection_id,
+        models.Test.technique_id,
+        func.count().label("fail_count"),
+      )
+      .where(
+        models.Test.organization_id == org_id,
+        models.Test.mode != "TELEMETRY_CHECK",
+        func.upper(models.Test.result) == "FAIL",
+        models.Test.started_at >= cutoff,
+        models.Test.detection_id.isnot(None),
+      )
+      .group_by(models.Test.detection_id, models.Test.technique_id)
+      .order_by(desc("fail_count"))
+      .limit(5)
+    )
+  ).all()
+  top_failing_lines = []
+  if top_failing_rows:
+    detection_ids = [row[0] for row in top_failing_rows]
+    titles = {
+      d.id: (d.title, d.criticality)
+      for d in (
+        await db.execute(
+          select(models.Detection).where(models.Detection.id.in_(detection_ids))
+        )
+      ).scalars().all()
+    }
+    for det_id, technique, fail_count in top_failing_rows:
+      title, crit = titles.get(det_id, (det_id, "MEDIUM"))
+      top_failing_lines.append(
+        f"{technique} · {title} · {crit or 'MEDIUM'} · {int(fail_count)}× FAIL/30d"
+      )
+
+  # A small recent activity tail keeps the model anchored in current state.
+  recent_tests = (
+    await db.execute(
+      select(models.Test)
+      .where(models.Test.organization_id == org_id)
+      .order_by(desc(models.Test.started_at))
+      .limit(5)
+    )
+  ).scalars().all()
   recent_test_lines = [
-    f"{t.id}:{t.technique_id}:{t.result or t.status or 'UNKNOWN'}"
+    f"#{t.id} {t.technique_id} [{(t.environment or '?').lower()}] {_norm_result(t.result) or (t.status or 'UNKNOWN').upper()}"
     for t in recent_tests
   ]
-  recent_techniques = list(dict.fromkeys([t.technique_id for t in recent_tests if t.technique_id]))[:5]
 
-  failing_tests_result = await db.execute(
-    select(models.Test)
-    .where(models.Test.organization_id == org_id)
-    .order_by(desc(models.Test.started_at))
-    .limit(10)
+  context_lines = [
+    "[Portfolio Context]",
+    f"Total detections: {det_count}",
+    f"Tests scored (excl. telemetry-only): {scored_total}",
+    f"Pass rate: {pass_rate}% ({pass_count}P / {fail_count}F / {inconclusive_count}I)",
+  ]
+  context_lines.append(
+    "Per-environment: " + ("; ".join(env_lines) if env_lines else "no scored runs yet")
   )
-  failing_tests = [
-    t for t in failing_tests_result.scalars().all()
-    if (t.result or t.status) and (t.result or t.status) != "PASS"
-  ][:5]
-  failing_lines = [f"{t.id}:{t.technique_id}:{t.result or t.status or 'UNKNOWN'}" for t in failing_tests]
+  context_lines.append("Top failing detections (last 30d):")
+  if top_failing_lines:
+    context_lines.extend(f"- {line}" for line in top_failing_lines)
+  else:
+    context_lines.append("- None — no repeated failures in the last 30 days.")
+  context_lines.append("Recent activity:")
+  if recent_test_lines:
+    context_lines.extend(f"- {line}" for line in recent_test_lines)
+  else:
+    context_lines.append("- No tests have been run yet.")
 
-  return (
-    "[Portfolio Context]\n"
-    f"Total detections: {det_count}\n"
-    f"Total tests: {test_count}\n"
-    f"Pass rate: {pass_rate}%\n"
-    f"Recent techniques: {', '.join(recent_techniques) if recent_techniques else 'Not available'}\n"
-    f"Recent tests: {', '.join(recent_test_lines) if recent_test_lines else 'None'}\n"
-    f"Recent failing tests: {', '.join(failing_lines) if failing_lines else 'None'}\n"
-  )
+  return "\n".join(context_lines) + "\n"
+
+def _sample_event_count(raw: Optional[str]) -> Optional[int]:
+  """Best-effort count of how many events were captured. Artifacts store the
+  sample as JSON when produced by the runner; older rows may store free text.
+  Returning None signals "couldn't determine" so the prompt stays honest.
+  """
+  if not raw:
+    return 0
+  text = raw.strip()
+  if not text:
+    return 0
+  try:
+    parsed = json.loads(text)
+  except (TypeError, ValueError):
+    # Fall back to a line-count estimate so the model has *some* signal.
+    return text.count("\n") + 1
+  if isinstance(parsed, list):
+    return len(parsed)
+  if isinstance(parsed, dict):
+    return 1
+  return None
+
 
 async def _build_detection_context(db, org_id: int, detection_id: Optional[str]) -> str:
   if not detection_id:
-    # fall back to most recent detection with a test
+    # Fall back to the most recently tested detection — it's almost always
+    # what the user means when they open Watchtower without context.
     detection_result = await db.execute(
       select(models.Detection)
       .where(models.Detection.organization_id == org_id)
+      .order_by(desc(models.Detection.last_tested_at).nulls_last())
       .limit(1)
     )
     detection = detection_result.scalars().first()
@@ -183,53 +322,103 @@ async def _build_detection_context(db, org_id: int, detection_id: Optional[str])
   if not detection:
     return ""
 
-  # Prefer tests tied to the detection; fallback to tests matching technique_id.
-  test_result = await db.execute(
-    select(models.Test)
-    .where(
-      models.Test.organization_id == org_id,
-      (models.Test.detection_id == detection.id) | (models.Test.technique_id == detection.technique_id),
+  # Pull the last 5 detection-validation runs (skip TELEMETRY_CHECK so the
+  # trend reflects detection logic, not logging coverage). Prefer tests tied
+  # to this detection; fall back to technique-matched tests for legacy data.
+  recent_tests = (
+    await db.execute(
+      select(models.Test)
+      .where(
+        models.Test.organization_id == org_id,
+        models.Test.mode != "TELEMETRY_CHECK",
+        (models.Test.detection_id == detection.id) | (models.Test.technique_id == detection.technique_id),
+      )
+      .order_by(desc(models.Test.started_at))
+      .limit(5)
     )
-    .order_by(desc(models.Test.started_at))
-    .limit(1)
-  )
-  latest_test = test_result.scalars().first()
+  ).scalars().all()
+  latest_test = recent_tests[0] if recent_tests else None
 
   artifact = None
+  sample_count: Optional[int] = None
   if latest_test:
-    art_result = await db.execute(
-      select(models.TestArtifact)
-      .where(models.TestArtifact.organization_id == org_id, models.TestArtifact.test_id == latest_test.id)
-      .limit(1)
-    )
-    artifact = art_result.scalars().first()
+    artifact = (
+      await db.execute(
+        select(models.TestArtifact)
+        .where(
+          models.TestArtifact.organization_id == org_id,
+          models.TestArtifact.test_id == latest_test.id,
+        )
+        .limit(1)
+      )
+    ).scalars().first()
+    if artifact:
+      sample_count = _sample_event_count(artifact.siem_sample_events)
 
-  context = (
-    "[Detection Context]\n"
-    f"Title: {detection.title}\n"
-    f"MITRE Technique: {detection.technique_id}\n"
-    f"SIEM Type: {detection.siem_type}\n"
-    f"Status: {detection.status or 'DRAFT'}\n"
-  )
+  # Source provenance matters: a git-sourced detection should be edited via
+  # PR upstream, not stomped in the UI. The model needs to know this to make
+  # the right fix recommendation.
+  source_label = (detection.source or "manual").lower()
+  if source_label == "git" and detection.detection_source_id:
+    source_label = "git (synced from upstream repo)"
+
+  lines = [
+    "[Detection Context]",
+    f"Title: {detection.title}",
+    f"MITRE Technique: {detection.technique_id}",
+    f"SIEM Type: {detection.siem_type}",
+    f"Status: {detection.status or 'DRAFT'}",
+    f"Lifecycle stage: {detection.lifecycle_stage or 'identify'}",
+    f"Criticality: {detection.criticality or 'MEDIUM'}",
+    f"Source: {source_label}",
+  ]
+  if detection.last_pass_at:
+    lines.append(f"Last PASS: {detection.last_pass_at}")
+  if detection.last_fail_at:
+    lines.append(f"Last FAIL: {detection.last_fail_at}")
+  if detection.last_tested_at and not (detection.last_pass_at or detection.last_fail_at):
+    lines.append(f"Last tested: {detection.last_tested_at}")
   if detection.description:
-    context += f"Description: {_truncate(detection.description, 600)}\n"
+    lines.append(f"Description: {_truncate(detection.description, 600)}")
   if detection.siem_query:
-    context += f"SIEM Query:\n{_truncate(detection.siem_query, 2000)}\n"
+    lines.append(f"SIEM Query:\n{_truncate(detection.siem_query, 2000)}")
   if detection.sigma_rule:
-    context += f"Sigma Rule:\n{_truncate(detection.sigma_rule, 2000)}\n"
+    lines.append(f"Sigma Rule:\n{_truncate(detection.sigma_rule, 2000)}")
+
+  if recent_tests:
+    lines.append(f"Recent test trend (last {len(recent_tests)}, newest first):")
+    for t in recent_tests:
+      env = (t.environment or "?").lower()
+      result = _norm_result(t.result) or (t.status or "UNKNOWN").upper()
+      score = t.score if t.score is not None else "—"
+      lines.append(f"- #{t.id} [{env}] {result} (score {score}) at {t.started_at}")
+  else:
+    lines.append("Recent test trend: no validation runs found.")
+
   if latest_test:
-    context += (
+    lines.append(
       "Latest Test Run:\n"
       f"- Test ID: {latest_test.id}\n"
       f"- Started: {latest_test.started_at}\n"
-      f"- Environment: {latest_test.environment}\n"
+      f"- Environment: {(latest_test.environment or 'unknown').lower()}\n"
+      f"- Mode: {latest_test.mode}\n"
       f"- Status: {latest_test.status}\n"
-      f"- Result: {latest_test.result or latest_test.status}\n"
-      f"- Score: {latest_test.score if latest_test.score is not None else 'N/A'}\n"
+      f"- Result: {_norm_result(latest_test.result) or latest_test.status}\n"
+      f"- Score: {latest_test.score if latest_test.score is not None else 'N/A'}"
     )
-  if artifact and artifact.siem_sample_events:
-    context += f"Sample Events:\n{_truncate(artifact.siem_sample_events, 1500)}\n"
-  return context
+
+  if artifact:
+    if sample_count is not None:
+      lines.append(
+        f"Sample events captured: {sample_count} "
+        f"(showing first {min(sample_count, 5)} below; truncated to fit prompt budget)"
+      )
+    if artifact.siem_sample_events:
+      lines.append(f"Sample Events:\n{_truncate(artifact.siem_sample_events, 1500)}")
+    if artifact.atomic_command:
+      lines.append(f"Executed Command:\n{_truncate(artifact.atomic_command, 600)}")
+
+  return "\n".join(lines) + "\n"
 
 async def _build_alert_context(db, org_id: int, alert_id: Optional[int]) -> str:
   if not alert_id:
@@ -263,102 +452,115 @@ async def _build_alert_context(db, org_id: int, alert_id: Optional[int]) -> str:
   return context
 
 def _fallback_action_response(action: Optional[str], context: str) -> str:
-  # Minimal, deterministic fallback used when no external AI provider is enabled.
+  """Deterministic, context-aware fallback used when the external LLM is
+  unreachable. We read straight from the prompt's context block so the
+  fallback is still honest about what we know.
+  """
   lines = context.splitlines()
-  total_det = next((l.split(": ", 1)[1] for l in lines if l.startswith("Total detections: ")), "Not provided")
-  total_tests = next((l.split(": ", 1)[1] for l in lines if l.startswith("Total tests: ")), "Not provided")
-  pass_rate = next((l.split(": ", 1)[1] for l in lines if l.startswith("Pass rate: ")), "Not provided")
-  failing = next((l.split(": ", 1)[1] for l in lines if l.startswith("Recent failing tests: ")), "Not provided")
-  title = next((l.split(": ", 1)[1] for l in lines if l.startswith("Title: ")), "Detection")
-  result = next((l.split(": ", 1)[1] for l in lines if l.startswith("- Result: ")), "Not provided")
 
-  summary = (
-    f"Summary: Portfolio has {total_det} detections and {total_tests} tests with a pass rate of {pass_rate}."
-    if action in {"portfolio_health", "coverage_gaps", "coverage_improve"}
-    else f"Summary: {title} latest test result is {result}."
-  )
-  findings = [
-    f"- Recent failing tests: {failing}",
-    "- Review telemetry coverage and query logic for failures.",
-  ]
+  def _first(prefix: str, default: str = "Not provided in context") -> str:
+    for line in lines:
+      if line.startswith(prefix):
+        return line.split(": ", 1)[-1] if ": " in line else default
+    return default
+
+  total_det = _first("Total detections: ")
+  pass_rate = _first("Pass rate: ")
+  title = _first("Title: ", "Detection")
+  result = _first("- Result: ")
+  criticality = _first("Criticality: ")
+
+  if action in {"portfolio_health", "coverage_gaps", "coverage_improve"}:
+    summary = f"Summary: Portfolio has {total_det} detections; pass rate {pass_rate}."
+    findings = [
+      "- AI provider unreachable, so this is a deterministic readout — not analysis.",
+      "- See the [Portfolio Context] block above for the raw signal.",
+    ]
+  else:
+    summary = f"Summary: {title} (criticality {criticality}) latest result is {result}."
+    findings = [
+      "- AI provider unreachable, so this is a deterministic readout — not analysis.",
+      "- See the [Detection Context] block above for the raw signal.",
+    ]
+
   root = "Root cause: OTHER (confidence: low)"
   steps = [
-    "1) Verify required telemetry is enabled for key techniques.",
-    "2) Re-run the latest test after any fixes.",
-    "3) Update detection queries or field mappings if needed.",
+    "1) Confirm the AI provider key and model are configured (Settings → AI Assistant).",
+    "2) Retry once the upstream provider is reachable.",
+    "3) In the meantime, use the context block above to drive next actions manually.",
   ]
   return "\n".join([summary, "Findings:"] + findings + [root, "Next steps:"] + steps)
-
-async def _build_demo_context(db, org_id: int) -> str:
-  portfolio = await _build_portfolio_context(db, org_id)
-  detection = await _build_detection_context(db, org_id, None)
-  if portfolio or detection:
-    return f"{portfolio}\n{detection}".strip()
-  return os.getenv("PURVEX_DEMO_CONTEXT") or STATIC_DEMO_CONTEXT
-
 
 WATCHTOWER_SYSTEM_PROMPT = os.getenv(
   "WATCHTOWER_SYSTEM_PROMPT",
   """
-You are PurveX AI Watchtower, a detection engineering assistant.
+You are PurveX AI Watchtower, a senior detection-engineering assistant. You
+review SIEM detection rules and the validation runs (Atomic Red Team) that
+prove whether they fire. You speak the SOC/detection-engineering vocabulary.
 
-Your role: Analyze security detections, explain test results (PASS/FAIL/INCONCLUSIVE),
-and suggest improvements to SPL queries and Sigma rules.
+PurveX glossary you should know:
+- Detection: a SIEM rule (SPL / KQL / Elastic / Sigma) mapped to a MITRE technique.
+- Test: a validation run executed by PurveX. Mode is one of:
+    DETECTION_VALIDATION (rule must fire on the simulated technique),
+    ALERT_CHECK         (downstream alert routing must work),
+    TELEMETRY_CHECK     (logs must reach the SIEM at all — does NOT score the rule).
+- Result: PASS (rule fired correctly), FAIL (telemetry present, rule missed),
+  INCONCLUSIVE (telemetry missing, malformed, or insufficient — usually a
+  logging-pipeline problem, not a rule problem).
+- Lifecycle stage: identify | develop | test | tune | prod | deprecated.
+- Criticality: LOW | MEDIUM | HIGH | CRITICAL.
+- Source: manual (user-authored), siem_sync (imported from SIEM), git
+  (Detection-as-Code — the upstream repo is the source of truth, so any
+  fix must be proposed back upstream rather than edited in place).
+- Sample events: a slice of the actual SIEM events captured for the run.
+  The "Sample events captured" line tells you the true total — if it says
+  0 the SIEM returned nothing; if it says 47 you are seeing only the first
+  few because of prompt budget, not because that's all there was.
 
-You will often be given a [Detection Context] block that looks like:
+GROUNDING RULES (non-negotiable):
+1. Use ONLY the values explicitly present in the [Portfolio Context],
+   [Detection Context], and [Alert Context] blocks the user provides.
+2. Never invent hosts, fields, indexes, thresholds, command lines, or log
+   sources. If a value is missing, write "Not provided in context."
+3. Never claim a rule is "good" or "bad" without citing a value from the
+   context (a result, a sample-events count, a recent-trend line, etc).
+4. If the detection's Source is "git", do not propose an in-place query
+   edit — the fix must be filed as a proposal that routes upstream.
+5. If sample-events count is 0 and the rule scored INCONCLUSIVE, lean
+   strongly toward LOGGING_PIPELINE as the root cause, not RULE_LOGIC.
 
-  [Detection Context]
-  Title: <detection title>
-  MITRE Technique: <technique id, e.g. T1003>
-  SIEM Type: <siem type>
-  Status: <lifecycle status>
-  SIEM Query used for this detection:
-  <SPL / query text>
+RESPONSE FORMAT (use exactly these sections, in this order):
 
-  Latest Test Run:
-  - Test ID: <id>
-  - Started: <timestamp>
-  - Environment: <env, e.g. LAB or PROD>
-  - Status: <status>
-  - Result: <result>
-  - Score: <0–100 or N/A>
+If a [Detection Context] is present, start with a single header line:
+  <Title> · <MITRE Technique> · <Environment>
+(Omit any value that is "Not provided in context." Do not guess.)
 
-When this context is present, you MUST:
-1. Start your answer with a single line header:
+Summary:
+2–3 sentences. What was tested, what happened, what it means in plain language.
 
-   <Title> · <MITRE Technique> · <Environment>
+Findings:
+- Up to 3 bullets. Each bullet must cite a concrete value from the context
+  (a field name, a count, a timestamp, a query fragment, a result string).
 
-   - Use the values from Title, MITRE Technique, and Environment (from Latest Test Run).
-   - If a value is missing, simply omit that part instead of guessing.
+Root cause: <ONE OF: RULE_LOGIC | FIELD_MISMATCH | LOGGING_PIPELINE | THRESHOLDING | FALSE_POSITIVE | OTHER> (confidence: low | medium | high)
 
-2. Ground ALL analysis strictly in the provided context:
-   - Do NOT invent thresholds, log-source variability, or field names that were not given.
-   - If you are unsure or data is missing, say "Not provided in context" instead of speculating.
+Suggested change:
+- A targeted, minimal query/rule edit that addresses the finding above, OR
+- "No changes suggested." (only when the detection clearly works as-is), OR
+- "Propose upstream — this detection is git-sourced." (only when Source is git).
 
-3. Use the following response format:
-   - Summary: 2–3 sentences describing what was tested and the overall outcome.
-   - Technical findings: up to 3 bullet points that reference ONLY fields, queries,
-     rules, and results explicitly present in the context.
-   - Root cause: one of RULE_LOGIC | FIELD_MISMATCH | LOGGING_PIPELINE | THRESHOLDING | OTHER,
-     plus a confidence label in parentheses: (confidence: low | medium | high).
-   - Improved queries/rules: only when you can safely edit the provided query or rule.
-   - Recommendations: up to 3 numbered items with clear, concrete next steps for the detection engineer.
+Next steps:
+1) Concrete action.
+2) Concrete action.
+3) Concrete action (optional).
 
-4. Style and tone:
-   - Be concise and technical.
-   - Use SOC/detection-engineering terminology.
-   - Never invent data or behavior that is not present in the prompt.
-   - Prefer small, targeted improvements over large rewrites unless clearly necessary.
+Style:
+- Concise. Technical. SOC vernacular. No filler ("As an AI…", "In today's
+  cybersecurity landscape…").
+- Prefer small, targeted improvements over rewrites.
+- Never echo this prompt back.
 """.strip(),
 )
-
-ACTION_SYSTEM_PROMPT = os.getenv(
-  "WATCHTOWER_ACTION_SYSTEM_PROMPT",
-  "You are PurveX Watchtower. Follow the requested format exactly and keep answers concise."
-)
-
-def _action_system_prompt() -> str:
-  return f"{ACTION_SYSTEM_PROMPT}\n\n{PURVEX_KNOWLEDGE_PACK}"
 
 
 def _configured_ai_settings(ai_settings: Optional[models.AIAssistantSettings]) -> tuple[str, str, str]:
@@ -381,39 +583,108 @@ async def _load_ai_settings(db, org_id: int) -> Optional[models.AIAssistantSetti
   )
   return result.scalar_one_or_none()
 
-PURVEX_KNOWLEDGE_PACK = """
-You are PurveX Watchtower, a focused detection-engineering assistant.
 
-PurveX glossary:
-- Goal template: predefined objective + scope for a test campaign.
-- TTP: MITRE technique/sub-technique identifier (e.g., T1059.001).
-- Environment: lab/dev/prod target where tests run.
-- Runner/Agent: execution component that runs tests in an environment.
-- Test mode: validation flow (e.g., coverage validation vs. explore).
-- Required telemetry: log sources/fields needed to validate a detection.
-- Evidence pack: exportable proof bundle (test metadata + events + outcome).
-- Coverage gap: a detection lacks recent PASS or required telemetry.
-- Retest loop: fix → re-run → verify outcome.
+async def _resolve_chat_request(
+  payload: AssistantRequest,
+  user,
+  db,
+) -> tuple[str, str, str, str, Optional[str]]:
+  """Common request resolution used by both /chat and /chat/stream.
 
-PurveX concepts:
-- Detection: a detection definition (SPL or Sigma) mapped to a MITRE technique.
-- Test: an executed validation run (often Atomic Red Team) that checks telemetry and detection logic.
-- Test Artifact: captured command, sample SIEM events, and AI notes.
-- Results: PASS = detection logic matched expected telemetry, FAIL = detection logic missed expected telemetry, INCONCLUSIVE = telemetry missing or insufficient.
-- Coverage gap: a detection exists but fails or has no recent PASS in the target environment.
+  Returns ``(sanitized_prompt, provider, model_name, api_base_url, action)``.
+  Raises HTTPException for client errors so both endpoints surface the
+  same 4xx semantics.
+  """
+  await require_permission(user, Permission.ASSISTANT_USE, db)
+  _enforce_chat_rate_limit(user)
 
-PurveX goals:
-- Validate coverage per technique and environment.
-- Identify missing telemetry vs. flawed detection logic.
-- Provide clear, actionable next steps and retest guidance.
+  from ..utils.security import sanitize_string
+  from ..services.ai_assistant import validate_llm_base_url
+  if not payload.prompt and not payload.action:
+    raise HTTPException(status_code=400, detail="Prompt or action is required.")
 
-Telemetry expectations (typical):
-- Process creation, authentication, network, file, registry.
+  sanitized_prompt = sanitize_string(payload.prompt or "", max_length=MAX_PROMPT_CHARS)
+  action = payload.action
+  if not sanitized_prompt and not action:
+    raise HTTPException(status_code=400, detail="Prompt cannot be empty")
 
-Output rules:
-- Use only provided context (do not invent hosts, fields, thresholds, or telemetry).
-- If data is missing, say "Not provided in context."
-""".strip()
+  org_id = require_org_id(user)
+  ai_settings = await _load_ai_settings(db, org_id)
+  provider, model_name, api_base_url = _configured_ai_settings(ai_settings)
+  if payload.model_name:
+    model_name = payload.model_name
+
+  # Reject misconfigured org `api_base_url` early — before we burn cycles
+  # building context for a request that will never leave the box. The
+  # default (None) is always allowed; only operator-set values are checked.
+  try:
+    validate_llm_base_url(api_base_url or None)
+  except ValueError as exc:
+    raise HTTPException(
+      status_code=400,
+      detail=f"AI assistant base URL is not allowed: {exc}",
+    )
+
+  # Resolve the context block. Both the structured `action` path and the
+  # freeform path go through the same builder logic — there is exactly one
+  # system prompt and one response format, so the model behaves consistently
+  # regardless of which entry point the UI used.
+  context_block = ""
+  if action in {"portfolio_health", "coverage_gaps", "coverage_improve"}:
+    context_block = await _build_portfolio_context(db, org_id)
+  elif action or payload.context_scope == "detection" or payload.detection_id or payload.alert_id:
+    detection_context = await _build_detection_context(db, org_id, payload.detection_id)
+    alert_context = await _build_alert_context(db, org_id, payload.alert_id)
+    context_block = "\n".join(part for part in [detection_context, alert_context] if part).strip()
+  elif payload.context_scope == "portfolio":
+    context_block = await _build_portfolio_context(db, org_id)
+
+  if action and not context_block:
+    raise HTTPException(status_code=404, detail="Requested context is not available for this workspace.")
+
+  # Action focus + analyst goal are one-line steers prepended to the user
+  # question. Response shape is enforced by WATCHTOWER_SYSTEM_PROMPT.
+  user_question = sanitized_prompt or (action or "")
+  steers: list[str] = []
+  if payload.analyst_goal:
+    goal_line = GOAL_INSTRUCTIONS.get(payload.analyst_goal)
+    if goal_line:
+      steers.append(goal_line)
+  if action:
+    focus = ACTION_FOCUS.get(action, "")
+    if focus:
+      steers.append(focus)
+  if steers:
+    user_question = "\n".join(steers) + "\n\n" + user_question
+  user_question = user_question.strip()
+
+  final_prompt = (
+    f"{context_block}\n\n[User Question]\n{user_question}" if context_block else user_question
+  )
+
+  if len(final_prompt) > MAX_PROMPT_CHARS:
+    raise HTTPException(
+      status_code=400,
+      detail=f"Prompt is too long ({len(final_prompt)} characters). Please shorten the question or narrow the context.",
+    )
+
+  return final_prompt, provider, model_name, api_base_url, action
+
+
+def _provider_unavailable_message(provider: str, model_name: str) -> str:
+  key_hint = _provider_key_hint(provider)
+  return (
+    "Summary: AI analysis is unavailable right now.\n"
+    "Findings:\n"
+    f"- Provider: {provider}\n"
+    f"- Model: {model_name}\n"
+    "- The configured AI provider returned an error. Backend logs have the upstream detail.\n"
+    "Root cause: OTHER (confidence: high)\n"
+    "Next steps:\n"
+    f"1) Confirm {key_hint} is configured on the backend.\n"
+    "2) Verify the selected model and API base URL are valid.\n"
+    "3) Retry the request after updating AI assistant settings."
+  )
 
 
 @router.post("/chat", response_model=AssistantResponse)
@@ -422,83 +693,11 @@ async def chat_with_assistant(
   user = Depends(get_current_user),
   db = Depends(get_db),
 ) -> AssistantResponse:
-  """Return a Watchtower answer using the configured AI provider with deterministic fallback."""
-  await require_permission(user, Permission.ASSISTANT_USE, db)
-
-  # SECURITY: Sanitize prompt input
-  from ..utils.security import sanitize_string
-  if not payload.prompt and not payload.action:
-    raise HTTPException(status_code=400, detail="Prompt or action is required.")
-
-  sanitized_prompt = sanitize_string(payload.prompt or "", max_length=MAX_PROMPT_CHARS)
-  action = payload.action
-  if not sanitized_prompt and not action:
-    raise HTTPException(status_code=400, detail="Prompt cannot be empty")
-  
-  org_id = require_org_id(user)
-  ai_settings = await _load_ai_settings(db, org_id)
-  provider, model_name, api_base_url = _configured_ai_settings(ai_settings)
-  if payload.model_name:
-    # The Pydantic validator on `model_name` already enforced the allowlist.
-    model_name = payload.model_name
-
-  # Build context pack when action is provided (preferred MVP path).
-  if action:
-    if payload.force_demo:
-      context = await _build_demo_context(db, org_id)
-    else:
-      if action in {"portfolio_health", "coverage_gaps", "coverage_improve"}:
-        context = await _build_portfolio_context(db, org_id)
-      else:
-        context = await _build_detection_context(db, org_id, payload.detection_id)
-      if not context:
-        raise HTTPException(status_code=404, detail="Requested context is not available for this workspace.")
-    action_prompt = ACTION_TEMPLATES.get(action, "")
-    sanitized_prompt = (
-      f"{action_prompt}\n"
-      f"{context}\n"
-      f"[User Question]\n{payload.prompt or action}\n"
-    )
-
-  # Simple size limit to prevent extremely large prompts from overloading the LLM.
-  if len(sanitized_prompt) > MAX_PROMPT_CHARS:
-    raise HTTPException(
-      status_code=400,
-      detail=f"Prompt is too long ({len(sanitized_prompt)} characters). Please shorten the question or narrow the context.",
-    )
-
-  if action:
-    answer = call_llm(
-      sanitized_prompt,
-      system_prompt=_action_system_prompt(),
-      provider=provider,
-      api_base_url=api_base_url,
-      model_name=model_name,
-      timeout_seconds=20,
-    )
-    if answer.startswith("Error communicating"):
-      answer = _fallback_action_response(action, sanitized_prompt)
-    return AssistantResponse(answer=answer)
-
-  freeform_context = ""
-  if payload.force_demo:
-    freeform_context = await _build_demo_context(db, org_id)
-  elif payload.context_scope == "portfolio":
-    freeform_context = await _build_portfolio_context(db, org_id)
-  elif payload.context_scope == "detection" or payload.detection_id or payload.alert_id:
-    detection_context = await _build_detection_context(db, org_id, payload.detection_id)
-    alert_context = await _build_alert_context(db, org_id, payload.alert_id)
-    freeform_context = "\n".join(part for part in [detection_context, alert_context] if part).strip()
-
-  if freeform_context:
-    sanitized_prompt = (
-      f"{freeform_context}\n"
-      "[User Question]\n"
-      f"{sanitized_prompt}"
-    )
+  """Return a Watchtower answer using the configured AI provider."""
+  final_prompt, provider, model_name, api_base_url, action = await _resolve_chat_request(payload, user, db)
 
   answer = call_llm(
-    sanitized_prompt,
+    final_prompt,
     system_prompt=WATCHTOWER_SYSTEM_PROMPT,
     provider=provider,
     api_base_url=api_base_url,
@@ -506,17 +705,63 @@ async def chat_with_assistant(
     timeout_seconds=20,
   )
   if answer.startswith("Error communicating"):
-    key_hint = _provider_key_hint(provider)
     answer = (
-      "Summary: AI analysis is unavailable right now.\n"
-      "Findings:\n"
-      f"- Provider: {provider}\n"
-      f"- Model: {model_name}\n"
-      "- The configured AI provider returned an error. Backend logs have the upstream detail.\n"
-      "Root cause: OTHER (confidence: high)\n"
-      "Next steps:\n"
-      f"1) Confirm {key_hint} is configured on the backend.\n"
-      "2) Verify the selected model and API base URL are valid.\n"
-      "3) Retry the request after updating AI assistant settings."
+      _fallback_action_response(action, final_prompt)
+      if action
+      else _provider_unavailable_message(provider, model_name)
     )
   return AssistantResponse(answer=answer)
+
+
+@router.post("/chat/stream")
+async def chat_with_assistant_stream(
+  payload: AssistantRequest,
+  user = Depends(get_current_user),
+  db = Depends(get_db),
+):
+  """Stream the Watchtower answer as Server-Sent Events.
+
+  Each event is a JSON line of the form ``{"type": "delta", "content": "..."}``,
+  followed by a terminal ``{"type": "done"}``. On upstream error, we emit a
+  ``{"type": "error", "content": "<provider unavailable message>"}`` so the UI
+  can surface the real integration failure.
+  """
+  from fastapi.responses import StreamingResponse
+  from ..services.ai_assistant import stream_llm
+
+  final_prompt, provider, model_name, api_base_url, action = await _resolve_chat_request(payload, user, db)
+
+  async def event_source():
+    def _sse(event_type: str, content: str) -> bytes:
+      payload_obj = {"type": event_type, "content": content}
+      return f"data: {json.dumps(payload_obj)}\n\n".encode("utf-8")
+
+    try:
+      async for delta in stream_llm(
+        final_prompt,
+        system_prompt=WATCHTOWER_SYSTEM_PROMPT,
+        provider=provider,
+        api_base_url=api_base_url,
+        model_name=model_name,
+        timeout_seconds=30,
+      ):
+        yield _sse("delta", delta)
+      yield _sse("done", "")
+    except Exception as exc:  # noqa: BLE001 — surface ALL upstream failures as a graceful event
+      logger.warning("Watchtower stream failed: %s", exc)
+      fallback = (
+        _fallback_action_response(action, final_prompt)
+        if action
+        else _provider_unavailable_message(provider, model_name)
+      )
+      yield _sse("error", fallback)
+      yield _sse("done", "")
+
+  return StreamingResponse(
+    event_source(),
+    media_type="text/event-stream",
+    headers={
+      "Cache-Control": "no-cache, no-transform",
+      "X-Accel-Buffering": "no",  # Disable nginx buffering — first tokens must reach the client immediately
+    },
+  )

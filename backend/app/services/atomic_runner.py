@@ -1,4 +1,7 @@
 import asyncio
+import base64
+import hashlib
+import hmac
 import json
 import logging
 import re
@@ -18,6 +21,7 @@ from ..services.scoring import validate_detection_for_test, validate_telemetry_f
 
 logger = logging.getLogger(__name__)
 _TECHNIQUE_ID_RE = r"^T\d{4}(?:\.\d{3})?$"
+_SSH_SHA256_RE = re.compile(r"(?:SHA256:)?([A-Za-z0-9+/]{32,}=*)")
 
 
 def generate_marker(environment: str, connection: Optional[models.SIEMConnection] = None) -> str:
@@ -48,8 +52,51 @@ def _runner_snapshot(runner: models.EnvironmentRunnerConfig) -> Dict[str, Any]:
         "username": runner.username,
         "auth_method": runner.auth_method,
         "key_path": runner.key_path,
+        "ssh_host_key_sha256": runner.ssh_host_key_sha256,
         "os": (runner.os or "").lower(),
     }
+
+
+def _ssh_host_key_sha256(key: paramiko.PKey) -> str:
+    digest = base64.b64encode(hashlib.sha256(key.asbytes()).digest()).decode("ascii").rstrip("=")
+    return f"SHA256:{digest}"
+
+
+def _normalize_ssh_host_key_sha256(value: Optional[str]) -> Optional[str]:
+    if not value:
+        return None
+    match = _SSH_SHA256_RE.search(value.strip())
+    if not match:
+        return None
+    return f"SHA256:{match.group(1).rstrip('=')}"
+
+
+class PinnedHostKeyPolicy(paramiko.MissingHostKeyPolicy):
+    def __init__(self, expected_sha256: str):
+        self.expected_sha256 = expected_sha256
+
+    def missing_host_key(self, client: paramiko.SSHClient, hostname: str, key: paramiko.PKey) -> None:
+        _verify_host_key_sha256(hostname, key, self.expected_sha256)
+        client.get_host_keys().add(hostname, key.get_name(), key)
+
+
+def _verify_host_key_sha256(hostname: str, key: paramiko.PKey, expected_sha256: str) -> None:
+    actual_sha256 = _ssh_host_key_sha256(key)
+    if not hmac.compare_digest(actual_sha256, expected_sha256):
+        raise paramiko.SSHException(
+            f"SSH host key fingerprint mismatch for {hostname}. "
+            f"Expected {expected_sha256}, got {actual_sha256}."
+        )
+
+
+def _verify_transport_host_key(client: paramiko.SSHClient, hostname: str, expected_sha256: str) -> None:
+    transport = client.get_transport()
+    if transport is None:
+        raise paramiko.SSHException(f"SSH transport was not established for {hostname}.")
+    key = transport.get_remote_server_key()
+    if key is None:
+        raise paramiko.SSHException(f"SSH host key was not presented by {hostname}.")
+    _verify_host_key_sha256(hostname, key, expected_sha256)
 
 
 def _atomic_selector(
@@ -118,6 +165,12 @@ def run_atomic_test(
         raise RuntimeError(f"Unsupported runner type: {runner.get('runner_type')}")
     if not runner.get("hostname") or not runner.get("username"):
         raise RuntimeError("Runner hostname and username are required for SSH execution.")
+    ssh_host_key_sha256 = _normalize_ssh_host_key_sha256(runner.get("ssh_host_key_sha256"))
+    if not ssh_host_key_sha256:
+        raise RuntimeError(
+            "Runner SSH host key SHA256 fingerprint is required for SSH execution. "
+            "Enroll it from a trusted path before running validations."
+        )
 
     command = _build_atomic_command(
         technique_id,
@@ -127,7 +180,7 @@ def run_atomic_test(
         atomic_test_name=atomic_test_name,
     )
     client = paramiko.SSHClient()
-    client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+    client.set_missing_host_key_policy(PinnedHostKeyPolicy(ssh_host_key_sha256))
 
     try:
         connect_kwargs: Dict[str, Any] = {
@@ -143,6 +196,7 @@ def run_atomic_test(
             connect_kwargs["key_filename"] = key_path
 
         client.connect(**connect_kwargs)
+        _verify_transport_host_key(client, runner["hostname"], ssh_host_key_sha256)
         _, stdout, stderr = client.exec_command(command, timeout=300)
         exit_status = stdout.channel.recv_exit_status()
         stderr_text = stderr.read().decode("utf-8", errors="ignore").strip()

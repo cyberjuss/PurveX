@@ -12,14 +12,21 @@ Design notes:
   assistant sees an explicit 4xx.
 * Self-approval is a separate check because it can only be evaluated with
   the reviewer user in hand, which the creation path doesn't have.
-* No external I/O here (no DB, no LLM) — keeps the policy fast and makes
-  unit-testing trivial.
+* The ``supersede_pending_for_*`` helpers are the *only* way to bulk-cancel
+  pending proposals when the upstream resource (a Detection or a
+  DetectionSource) gets removed. Callers must invoke them in the same
+  transaction as the parent delete to keep the inbox consistent.
+* No LLM I/O here. The supersede helpers do touch the DB; everything else
+  stays pure for fast unit testing.
 """
 from __future__ import annotations
 
-from typing import Any, Mapping, Optional
+from datetime import datetime, timezone
+from typing import Any, Iterable, List, Mapping, Optional
 
 from fastapi import HTTPException, status
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from .. import models
 from ..schemas import PROPOSAL_EDITABLE_FIELDS
@@ -53,10 +60,10 @@ def enforce_create_policy(
             detail=f"fields not allowed in proposals: {sorted(invalid)}",
         )
 
-    # 2. create/update require a non-empty patch; delete does not.
-    if action in {"create", "update"} and not target_fields and action != "create":
-        # "create" with empty payload is caught at the router level where
-        # we can consult the Detection schema; "update" must be non-empty.
+    # 2. update requires a non-empty patch. "create" with an empty payload
+    # is caught at the router layer (it consults the Detection schema for
+    # required fields); "delete" doesn't carry a patch.
+    if action == "update" and not target_fields:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="target_fields cannot be empty for update proposals",
@@ -141,3 +148,83 @@ def enforce_review_policy(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="You cannot review your own proposal.",
         )
+
+
+async def _supersede_proposals(
+    db: AsyncSession,
+    *,
+    proposals: Iterable[models.DetectionProposal],
+    note: str,
+) -> int:
+    """Mark a batch of pending proposals as superseded with a uniform note.
+    Returns the count actually transitioned (rows already in a terminal
+    state are left alone, so the helper is idempotent).
+    """
+    now = datetime.now(timezone.utc)
+    transitioned = 0
+    for proposal in proposals:
+        if proposal.status != "pending":
+            continue
+        proposal.status = "superseded"
+        proposal.reviewed_at = now
+        proposal.review_note = note
+        transitioned += 1
+    return transitioned
+
+
+async def supersede_pending_for_detection(
+    db: AsyncSession,
+    *,
+    organization_id: int,
+    detection_id: str,
+) -> int:
+    """Supersede every pending proposal targeting ``detection_id``.
+
+    Called immediately before a Detection delete so the inbox doesn't
+    show ghost rows pointing at a non-existent target. Idempotent — safe
+    to call even if no pending proposals exist.
+    """
+    res = await db.execute(
+        select(models.DetectionProposal).where(
+            models.DetectionProposal.organization_id == organization_id,
+            models.DetectionProposal.detection_id == detection_id,
+            models.DetectionProposal.status == "pending",
+        )
+    )
+    proposals: List[models.DetectionProposal] = list(res.scalars())
+    return await _supersede_proposals(
+        db,
+        proposals=proposals,
+        note="Target detection was deleted before this proposal was reviewed.",
+    )
+
+
+async def supersede_pending_for_source(
+    db: AsyncSession,
+    *,
+    organization_id: int,
+    detection_source_id: int,
+) -> int:
+    """Supersede every pending git-authored proposal whose target detection
+    came from a now-removed :class:`DetectionSource`. Run in the same
+    transaction as the source delete.
+    """
+    res = await db.execute(
+        select(models.DetectionProposal)
+        .join(
+            models.Detection,
+            models.Detection.id == models.DetectionProposal.detection_id,
+        )
+        .where(
+            models.DetectionProposal.organization_id == organization_id,
+            models.DetectionProposal.proposed_by_kind == "git",
+            models.DetectionProposal.status == "pending",
+            models.Detection.detection_source_id == detection_source_id,
+        )
+    )
+    proposals: List[models.DetectionProposal] = list(res.scalars())
+    return await _supersede_proposals(
+        db,
+        proposals=proposals,
+        note="Originating detection source was removed before this proposal was reviewed.",
+    )

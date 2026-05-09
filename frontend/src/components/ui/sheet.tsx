@@ -30,9 +30,9 @@ type SheetSide = "right" | "left" | "bottom" | "top"
 
 const sideClasses: Record<SheetSide, string> = {
   right:
-    "inset-y-0 right-0 h-full w-full max-w-xl border-l data-[state=open]:slide-in-from-right data-[state=closed]:slide-out-to-right",
+    "inset-y-0 right-0 h-full border-l w-1/2 min-w-[320px] data-[state=open]:slide-in-from-right data-[state=closed]:slide-out-to-right",
   left:
-    "inset-y-0 left-0 h-full w-full max-w-xl border-r data-[state=open]:slide-in-from-left data-[state=closed]:slide-out-to-left",
+    "inset-y-0 left-0 h-full border-r w-1/2 min-w-[320px] data-[state=open]:slide-in-from-left data-[state=closed]:slide-out-to-left",
   bottom:
     "inset-x-0 bottom-0 max-h-[85vh] w-full border-t rounded-t-2xl data-[state=open]:slide-in-from-bottom data-[state=closed]:slide-out-to-bottom",
   top:
@@ -53,14 +53,14 @@ const SheetContent = React.forwardRef<
     <DialogPrimitive.Content
       ref={ref}
       className={cn(
-        "fixed z-50 flex flex-col gap-0 border-slate-200 bg-white shadow-2xl outline-none data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:duration-200 data-[state=open]:duration-300",
+        "fixed z-50 flex flex-col gap-0 border-[var(--stroke-soft)] bg-[var(--surface-card)] text-[var(--foreground)] shadow-2xl outline-none data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:duration-200 data-[state=open]:duration-300",
         sideClasses[side],
         className
       )}
       {...props}
     >
       {children}
-      <DialogPrimitive.Close className="absolute right-4 top-4 rounded-full p-1.5 text-slate-500 transition hover:bg-slate-100 hover:text-slate-900 focus:outline-none focus:ring-2 focus:ring-slate-300">
+      <DialogPrimitive.Close className="absolute right-4 top-4 rounded-full p-1.5 text-slate-400 transition hover:bg-white/5 hover:text-[var(--foreground)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)]">
         <X className="h-4 w-4" />
         <span className="sr-only">Close</span>
       </DialogPrimitive.Close>
@@ -71,7 +71,7 @@ SheetContent.displayName = "SheetContent"
 
 const SheetHeader = ({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) => (
   <div
-    className={cn("flex flex-col gap-1 border-b border-slate-100 px-6 py-5", className)}
+    className={cn("flex flex-col gap-1 border-b border-[var(--stroke-soft)] px-6 py-5", className)}
     {...props}
   />
 )
@@ -85,7 +85,7 @@ SheetBody.displayName = "SheetBody"
 const SheetFooter = ({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) => (
   <div
     className={cn(
-      "flex items-center justify-end gap-2 border-t border-slate-100 bg-slate-50/60 px-6 py-4",
+      "flex items-center justify-end gap-2 border-t border-[var(--stroke-soft)] bg-[var(--surface-elevated)] px-6 py-4",
       className
     )}
     {...props}
@@ -99,7 +99,7 @@ const SheetTitle = React.forwardRef<
 >(({ className, ...props }, ref) => (
   <DialogPrimitive.Title
     ref={ref}
-    className={cn("text-lg font-semibold tracking-tight text-slate-900", className)}
+    className={cn("text-lg font-semibold tracking-tight text-[var(--foreground)]", className)}
     {...props}
   />
 ))
@@ -111,7 +111,7 @@ const SheetDescription = React.forwardRef<
 >(({ className, ...props }, ref) => (
   <DialogPrimitive.Description
     ref={ref}
-    className={cn("text-sm text-slate-600", className)}
+    className={cn("text-sm text-slate-400", className)}
     {...props}
   />
 ))

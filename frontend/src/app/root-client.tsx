@@ -179,11 +179,6 @@ export default function RootClientLayout({
       "/reports": "PurveX | Reports",
       "/run-test": "PurveX | Run Validation",
       "/agent": "PurveX | Watchtower",
-      "/about": "PurveX | About",
-      "/contact": "PurveX | Contact",
-      "/creators": "PurveX | Creators",
-      "/developers": "PurveX | Developers",
-      "/press": "PurveX | Press",
       "/mitre": "PurveX | MITRE",
       "/notifications": "PurveX | Notifications",
       "/legal": "PurveX | Legal",
@@ -408,26 +403,13 @@ export default function RootClientLayout({
                 </div>
               </main>
               <footer className="border-t border-[var(--stroke-soft)] bg-[var(--surface-elevated)] text-[var(--surface-elevated-foreground)]">
-                <div className="flex h-24 w-full flex-col items-center justify-center gap-1 px-4 text-[11px] leading-tight text-slate-600 dark:text-slate-400 sm:px-6 lg:px-10">
+                <div className="flex h-20 w-full flex-col items-center justify-center gap-1 px-4 text-[11px] leading-tight text-slate-600 dark:text-slate-400 sm:px-6 lg:px-10">
                   <span className="text-center font-semibold text-slate-800">© 2025 PurveX</span>
                   <div className="flex flex-wrap items-center justify-center gap-x-3 gap-y-1 text-[11px] text-slate-600 dark:text-slate-400">
-                    <Link href="/about" className="hover:text-indigo-600 hover:underline underline-offset-4">About</Link>
-                    <Link href="/press" className="hover:text-indigo-600 hover:underline underline-offset-4">Press</Link>
-                    <Link href="/legal/copyright" className="hover:text-indigo-600 hover:underline underline-offset-4">Copyright</Link>
-                    <Link href="/contact" className="hover:text-indigo-600 hover:underline underline-offset-4">Contact</Link>
-                    <Link href="/creators" className="hover:text-indigo-600 hover:underline underline-offset-4">Creators</Link>
-                    <Link href="/legal/ads" className="hover:text-indigo-600 hover:underline underline-offset-4">Advertise</Link>
-                    <Link href="/developers" className="hover:text-indigo-600 hover:underline underline-offset-4">Developers</Link>
-                    <span className="text-slate-400">•</span>
                     <Link href="/legal/terms" className="hover:text-indigo-600 hover:underline underline-offset-4">Terms</Link>
                     <Link href="/legal/privacy" className="hover:text-indigo-600 hover:underline underline-offset-4">Privacy</Link>
-                    <Link href="/legal/safety" className="hover:text-indigo-600 hover:underline underline-offset-4">Safety</Link>
                     <Link href="/legal/how-it-works" className="hover:text-indigo-600 hover:underline underline-offset-4">How PurveX works</Link>
-                  </div>
-                  <div className="flex flex-wrap items-center justify-center gap-x-2 text-[10px] text-slate-500">
                     <Link href="/legal/attribution" className="hover:text-indigo-600 hover:underline underline-offset-4">Attribution &amp; Licenses</Link>
-                    <span className="text-slate-400">•</span>
-                    <span>All rights reserved.</span>
                   </div>
                 </div>
               </footer>

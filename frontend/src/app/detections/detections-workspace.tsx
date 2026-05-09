@@ -16,13 +16,11 @@ import {
   Radar,
   Search,
   Shield,
-  X,
   XCircle,
 } from "lucide-react";
 import { getDetections, type Detection } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { SourceBadge } from "@/components/detections/source-badge";
-import { ExportYamlButton } from "@/components/detections/export-yaml-button";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -38,6 +36,15 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetBody,
+  SheetFooter,
+  SheetTitle,
+  SheetDescription,
+} from "@/components/ui/sheet";
 
 type WorkspaceView = "queue" | "library";
 type HealthStateKey = "HEALTHY" | "DETECTION_FAILED" | "TELEMETRY_MISSING" | "UNKNOWN";
@@ -66,11 +73,11 @@ const HEALTH_META: Record<
   }
 > = {
   HEALTHY: {
-    label: "Trusted",
+    label: "Ready",
     tone: "text-emerald-600 dark:text-emerald-300",
     bg: "bg-emerald-500",
     border: "border-emerald-200 dark:border-emerald-500/30",
-    headline: "Detection validated end to end.",
+    headline: "Detection is ready for steady-state operations.",
     detail: "Telemetry arrived, the rule fired, and PurveX has current evidence for trust.",
   },
   DETECTION_FAILED: {
@@ -82,7 +89,7 @@ const HEALTH_META: Record<
     detail: "This usually points to rule logic drift, bad field mappings, or thresholds that now miss the signal.",
   },
   TELEMETRY_MISSING: {
-    label: "Telemetry gap",
+    label: "No logs",
     tone: "text-amber-600 dark:text-amber-300",
     bg: "bg-amber-400",
     border: "border-amber-200 dark:border-amber-500/30",
@@ -117,6 +124,12 @@ function normalizeStage(stage?: string | null): LifecycleStage {
   const value = (stage || "DRAFT").toUpperCase();
   if (value === "ACTIVE" || value === "NEEDS_IMPROVEMENT" || value === "RETIRED") return value;
   return "DRAFT";
+}
+
+function formatLifecycleStage(detection: Detection) {
+  const lifecycleStage = detection.lifecycle_stage?.replaceAll("_", " ").trim();
+  if (lifecycleStage) return lifecycleStage.toLowerCase();
+  return normalizeStage(detection.status).replaceAll("_", " ").toLowerCase();
 }
 
 function isStaleDetection(detection: Detection) {
@@ -380,7 +393,7 @@ export function DetectionsWorkspace({ initialDetections }: DetectionsWorkspacePr
               <LegendDot color="bg-emerald-500" label="Trusted" />
               {counts.stale > 0 && <LegendDot color="bg-emerald-300" label="Stale" />}
               <LegendDot color="bg-rose-400" label="Needs tuning" />
-              <LegendDot color="bg-amber-400" label="Telemetry gap" />
+              <LegendDot color="bg-amber-400" label="No logs" />
               <LegendDot color="bg-slate-300 dark:bg-slate-600" label="Untested" />
             </div>
           </div>
@@ -403,7 +416,7 @@ export function DetectionsWorkspace({ initialDetections }: DetectionsWorkspacePr
                     : "text-slate-500 hover:text-[var(--foreground)] dark:text-slate-400"
                 )}
               >
-                {v === "queue" ? "Queue" : "Library"}
+                {v === "queue" ? "Review" : "Library"}
               </button>
             ))}
           </div>
@@ -446,11 +459,11 @@ export function DetectionsWorkspace({ initialDetections }: DetectionsWorkspacePr
         <div className="rounded-2xl border border-[var(--stroke-soft)] bg-[var(--surface-card)] px-5 py-5 shadow-[var(--shadow-soft)]">
           <div className="grid gap-6 lg:grid-cols-2">
             <div className="space-y-3">
-              <h4 className="text-xs font-bold uppercase tracking-wider text-slate-400">Trust blockers</h4>
+              <h4 className="text-xs font-bold uppercase tracking-wider text-slate-400">Readiness blockers</h4>
               <CoverageRow label="Untested" count={counts.untested} total={counts.total} color="bg-slate-400" />
-              <CoverageRow label="Telemetry gap" count={counts.telemetryGap} total={counts.total} color="bg-amber-400" />
+              <CoverageRow label="No logs" count={counts.telemetryGap} total={counts.total} color="bg-amber-400" />
               <CoverageRow label="Needs tuning" count={counts.needsTuning} total={counts.total} color="bg-rose-400" />
-              <CoverageRow label="Stale trust" count={counts.stale} total={counts.total} color="bg-emerald-300" />
+              <CoverageRow label="Stale readiness" count={counts.stale} total={counts.total} color="bg-emerald-300" />
             </div>
             <div className="space-y-3">
               <h4 className="text-xs font-bold uppercase tracking-wider text-slate-400">Operational gaps</h4>
@@ -485,7 +498,7 @@ export function DetectionsWorkspace({ initialDetections }: DetectionsWorkspacePr
                 <div className="flex-1 space-y-2 overflow-y-auto p-3" style={{ maxHeight: "520px" }}>
                   {items.length === 0 ? (
                     <p className="px-2 py-6 text-center text-xs text-slate-400 dark:text-slate-500">
-                      {key === "HEALTHY" ? "No trusted detections yet" : "No items in queue"}
+                      {key === "HEALTHY" ? "No ready detections yet" : "No items in queue"}
                     </p>
                   ) : (
                     items.map((d) => (
@@ -529,7 +542,7 @@ export function DetectionsWorkspace({ initialDetections }: DetectionsWorkspacePr
           <div className="rounded-2xl border border-[var(--stroke-soft)] bg-[var(--surface-card)] p-5 shadow-[var(--shadow-soft)]">
             <h2 className="text-base font-semibold text-[var(--foreground)]">Detection library</h2>
             <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-              Browse the full set by trust state, lifecycle, ownership, and latest validation evidence.
+              Browse the full set by readiness, lifecycle, ownership, and latest validation evidence.
             </p>
           </div>
           <div className="rounded-2xl border border-[var(--stroke-soft)] bg-[var(--surface-card)] shadow-[var(--shadow-soft)] overflow-hidden">
@@ -537,7 +550,7 @@ export function DetectionsWorkspace({ initialDetections }: DetectionsWorkspacePr
             <TableHeader>
               <TableRow className="border-[var(--stroke-soft)]">
                 <TableHead>Detection</TableHead>
-                <TableHead>Trust state</TableHead>
+                <TableHead>Readiness</TableHead>
                 <TableHead>Lifecycle</TableHead>
                 <TableHead>Next action</TableHead>
                 <TableHead>Owner</TableHead>
@@ -568,7 +581,7 @@ export function DetectionsWorkspace({ initialDetections }: DetectionsWorkspacePr
                     </TableCell>
                     <TableCell><Chip tone={HEALTH_TONE[health]}>{meta.label}</Chip></TableCell>
                     <TableCell className="text-sm text-slate-600 dark:text-slate-300">
-                      {normalizeStage(detection.status || detection.lifecycle_stage).replaceAll("_", " ").toLowerCase()}
+                      {formatLifecycleStage(detection)}
                     </TableCell>
                     <TableCell className="text-sm text-slate-600 dark:text-slate-300">{getNextAction(detection)}</TableCell>
                     <TableCell className="text-sm text-slate-600 dark:text-slate-300">{detection.owner || "Unassigned"}</TableCell>
@@ -585,7 +598,14 @@ export function DetectionsWorkspace({ initialDetections }: DetectionsWorkspacePr
         </div>
       )}
 
-      {opened && <DetailPanel detection={opened} onClose={() => setOpened(null)} />}
+      <Sheet open={!!opened} onOpenChange={(open) => { if (!open) setOpened(null); }}>
+        <SheetContent
+          side="right"
+          className="border-[var(--stroke-soft)] bg-[var(--surface-card)] text-[var(--foreground)]"
+        >
+          {opened && <DetailPanel detection={opened} />}
+        </SheetContent>
+      </Sheet>
     </PageContainer>
   );
 }
@@ -624,14 +644,7 @@ function GapRow({ label, value, detail }: { label: string; value: number; detail
   );
 }
 
-function DetailPanel({
-  detection,
-  onClose,
-}: {
-  detection: Detection;
-  onClose: () => void;
-}) {
-  const [visible, setVisible] = useState(false);
+function DetailPanel({ detection }: { detection: Detection }) {
   const health = deriveHealthState(detection);
   const meta = HEALTH_META[health];
   const Icon =
@@ -643,81 +656,49 @@ function DetailPanel({
           ? AlertTriangle
           : Clock3;
 
-  useEffect(() => {
-    const frame = window.requestAnimationFrame(() => setVisible(true));
-    return () => window.cancelAnimationFrame(frame);
-  }, []);
-
-  function handleClose() {
-    setVisible(false);
-    window.setTimeout(onClose, 220);
-  }
-
   return (
     <>
-      <div
-        className={cn("fixed inset-0 z-40 bg-black/35 backdrop-blur-sm transition-opacity duration-200", visible ? "opacity-100" : "opacity-0")}
-        onClick={handleClose}
-      />
-      <aside
-        className={cn(
-          "fixed bottom-3 right-3 top-3 z-50 flex w-[min(calc(100vw-1.5rem),720px)] flex-col overflow-hidden rounded-3xl border border-[var(--stroke-soft)] bg-[var(--surface-card)] shadow-2xl transition-transform duration-300 ease-out sm:bottom-4 sm:right-4 sm:top-4 sm:w-[min(42vw,680px)] sm:min-w-[500px]",
-          visible ? "translate-x-0" : "translate-x-full"
-        )}
-      >
-        <div className="flex items-start justify-between gap-4 border-b border-[var(--stroke-soft)] p-6">
-          <div className="space-y-2">
-            <div className="flex items-center gap-3">
-              <div className={cn("flex h-11 w-11 items-center justify-center rounded-2xl border bg-[var(--surface-elevated)]", meta.border, meta.tone)}>
-                <Icon className="h-5 w-5" />
-              </div>
-              <div>
-                <h3 className="text-lg font-semibold text-[var(--foreground)]">{detection.title}</h3>
-                <p className="text-sm text-slate-600 dark:text-slate-400">{meta.headline}</p>
-              </div>
-            </div>
-            <div className="flex flex-wrap gap-2">
-              <Chip tone={HEALTH_TONE[health]}>{meta.label}</Chip>
-              {detection.technique_id && <Badge variant="outline">{detection.technique_id}</Badge>}
-              {detection.siem_type && <Badge variant="outline">{detection.siem_type.toUpperCase()}</Badge>}
-              <SourceBadge source={detection.source} size="md" />
-            </div>
+      <SheetHeader className="border-[var(--stroke-soft)]">
+        <div className="flex items-start gap-3 pr-8">
+          <div className={cn("flex h-11 w-11 items-center justify-center rounded-2xl border bg-[var(--surface-elevated)]", meta.border, meta.tone)}>
+            <Icon className="h-5 w-5" />
           </div>
-          <Button variant="ghost" size="icon" onClick={handleClose}><X className="h-4 w-4" /></Button>
+          <div className="min-w-0 flex-1 space-y-1">
+            <SheetTitle className="text-[var(--foreground)]">{detection.title}</SheetTitle>
+            <SheetDescription>{meta.headline}</SheetDescription>
+          </div>
         </div>
+        <div className="mt-3 flex flex-wrap gap-2">
+          <Chip tone={HEALTH_TONE[health]}>{meta.label}</Chip>
+          {detection.technique_id && <Badge variant="outline">{detection.technique_id}</Badge>}
+          {detection.siem_type && <Badge variant="outline">{detection.siem_type.toUpperCase()}</Badge>}
+          <SourceBadge source={detection.source} size="md" />
+        </div>
+      </SheetHeader>
 
-        <div className="flex-1 space-y-4 overflow-y-auto p-4 sm:p-6">
-          <div className="grid gap-3 sm:grid-cols-2">
-            <DetailStat label="Trust state" value={meta.label} />
-            <DetailStat label="Next action" value={getNextAction(detection)} />
-            <DetailStat label="Owner" value={detection.owner || "Unassigned"} />
-            <DetailStat label="Last validated" value={getRelativeDate(detection.last_tested_at)} />
-            <DetailStat label="Last alert seen" value={getRelativeDate(detection.last_alert_at)} />
-            <DetailStat label="Lifecycle stage" value={normalizeStage(detection.status || detection.lifecycle_stage).replaceAll("_", " ").toLowerCase()} />
-          </div>
-          <div className="rounded-2xl border border-[var(--stroke-soft)] bg-[var(--surface-elevated)] p-5">
-            <p className="text-xs font-semibold uppercase tracking-[0.24em] text-slate-500 dark:text-slate-400">Why it matters</p>
-            <p className="mt-3 text-sm leading-6 text-slate-600 dark:text-slate-300">{meta.detail}</p>
-          </div>
+      <SheetBody className="space-y-4">
+        <div className="grid gap-3 sm:grid-cols-2">
+          <DetailStat label="Readiness" value={meta.label} />
+          <DetailStat label="Next action" value={getNextAction(detection)} />
+          <DetailStat label="Owner" value={detection.owner || "Unassigned"} />
+          <DetailStat label="Last validated" value={getRelativeDate(detection.last_tested_at)} />
+          <DetailStat label="Last alert seen" value={getRelativeDate(detection.last_alert_at)} />
+          <DetailStat label="Lifecycle stage" value={formatLifecycleStage(detection)} />
         </div>
+        <div className="rounded-2xl border border-[var(--stroke-soft)] bg-[var(--surface-elevated)] p-5">
+          <p className="text-xs font-semibold uppercase tracking-[0.24em] text-slate-500 dark:text-slate-400">Why it matters</p>
+          <p className="mt-3 text-sm leading-6 text-slate-600 dark:text-slate-300">{meta.detail}</p>
+        </div>
+      </SheetBody>
 
-        <div className="grid grid-cols-2 gap-2 border-t border-[var(--stroke-soft)] p-4">
-          <Link href={`/detections/${detection.id}`} className="col-span-2">
-            <Button variant="outline" className="w-full"><Eye className="mr-2 h-4 w-4" />Open trust record</Button>
-          </Link>
-          <Link href={`/run-test?detectionId=${detection.id}`}>
-            <Button variant="outline" className="w-full"><Play className="mr-2 h-4 w-4" />Validate</Button>
-          </Link>
-          <Link href={`/agent?detectionId=${detection.id}`}>
-            <Button variant="outline" className="w-full">Ask Watchtower</Button>
-          </Link>
-          <ExportYamlButton
-            detectionId={detection.id}
-            detectionTitle={detection.title}
-            className="w-full"
-          />
-        </div>
-      </aside>
+      <SheetFooter className="border-[var(--stroke-soft)]">
+        <Link href={`/detections/${detection.id}`} className="w-full">
+          <Button variant="outline" className="w-full">
+            <Eye className="mr-2 h-4 w-4" />
+            Open trust record
+          </Button>
+        </Link>
+      </SheetFooter>
     </>
   );
 }

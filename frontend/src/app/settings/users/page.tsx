@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useEffect, useMemo } from "react";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
 import { Chip } from "@/components/ui/chip";
@@ -18,8 +17,11 @@ import {
 } from "lucide-react";
 import { format, formatRelative } from "date-fns";
 import { cn } from "@/lib/utils";
-import { PageContainer } from "@/components/layout/page-container";
-import { PageHeader } from "@/components/layout/page-header";
+import {
+  SettingsPageShell,
+  SettingsSection,
+  SettingsBanner,
+} from "@/components/settings/settings-section";
 import { PageSkeleton } from "@/components/ui/skeleton";
 import { FieldError, FormError } from "@/components/ui/form-error";
 import { z } from "zod";
@@ -333,263 +335,250 @@ export default function UserManagementPage() {
 
   if (!hasPermission(Permission.SETTINGS_USERS_MANAGE)) {
     return (
-      <PageContainer>
-        <Card className="border border-[var(--stroke-soft)] bg-[var(--surface-card)] shadow-sm dark:border-slate-800 dark:bg-slate-950">
-          <CardContent className="pt-6">
-            <p className="text-slate-600 dark:text-slate-300">You don&apos;t have permission to manage members.</p>
-          </CardContent>
-        </Card>
-      </PageContainer>
+      <SettingsPageShell eyebrow="Access control" title="Users" width="wide">
+        <SettingsBanner tone="warning" title="Read-only">
+          You don't have permission to manage members.
+        </SettingsBanner>
+      </SettingsPageShell>
     );
   }
 
   if (loading && users.length === 0) {
     return (
-      <PageContainer>
+      <SettingsPageShell eyebrow="Access control" title="Users" width="wide" divided={false}>
         <PageSkeleton withEyebrow withActions variant="table" rows={6} />
-      </PageContainer>
+      </SettingsPageShell>
     );
   }
 
+  const summaryRows: Array<{ label: string; value: string; icon: typeof Users }> = [
+    { label: "Members", value: stats.total.toString(), icon: Users },
+    { label: "Active", value: stats.active.toString(), icon: CheckCircle2 },
+    { label: "Administrators", value: stats.admins.toString(), icon: Shield },
+  ];
+
+  const filteringActive =
+    Boolean(searchQuery) || statusFilter !== "all" || roleFilter !== "all";
+
   return (
-    <PageContainer>
-      <div className="w-full pl-0.5 pr-0 sm:pr-0 mb-4">
-        <PageHeader
-          className="mb-4"
-          eyebrow="Access control"
-          title="Users"
-          subtitle="Manage workspace members, role assignments, and password access so the right people can operate PurveX."
-          icon={<Users className="h-5 w-5" />}
-          actions={
-            <div className="flex flex-wrap items-center justify-end gap-2">
-              <Dialog open={createUserOpen} onOpenChange={setCreateUserOpen}>
-                <DialogTrigger asChild>
-                  <Button className="whitespace-nowrap">
-                    <UserPlus className="h-4 w-4 mr-2" />
-                    Add member
-                  </Button>
-                </DialogTrigger>
-                <DialogContent className="w-full max-w-xl px-8 py-6">
-                <DialogHeader>
-                  <DialogTitle className="flex items-center gap-2">
-                  <UserPlus className="h-5 w-5" />
-                  Add member
-                </DialogTitle>
-                <DialogDescription>
-                  Create a workspace account and set the initial password for that member.
-                </DialogDescription>
-              </DialogHeader>
-              <div className="space-y-4 py-4">
-                <div className="space-y-2">
-                  <Label htmlFor="new-email">Email</Label>
-                  <Input
-                    id="new-email"
-                    type="email"
-                    value={newUserEmail}
-                    onChange={(e) => {
-                      setNewUserEmail(e.target.value);
-                      if (inviteFieldErrors.email)
-                        setInviteFieldErrors((prev) => ({ ...prev, email: undefined }));
-                    }}
-                    placeholder="user@example.com"
-                    className="bg-[var(--surface-card)] border-[var(--stroke-soft)] text-[var(--foreground)]"
-                    aria-invalid={!!inviteFieldErrors.email}
-                    aria-describedby="new-email-error"
-                  />
-                  <FieldError id="new-email-error" message={inviteFieldErrors.email} />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="new-password">Password</Label>
-                  <Input
-                    id="new-password"
-                    type="password"
-                    value={newUserPassword}
-                    onChange={(e) => {
-                      setNewUserPassword(e.target.value);
-                      if (inviteFieldErrors.password)
-                        setInviteFieldErrors((prev) => ({ ...prev, password: undefined }));
-                    }}
-                    placeholder="Enter password"
-                    className="bg-[var(--surface-card)] border-[var(--stroke-soft)] text-[var(--foreground)]"
-                    aria-invalid={!!inviteFieldErrors.password}
-                    aria-describedby="new-password-error"
-                  />
-                  <PasswordStrengthIndicator password={newUserPassword} />
-                  <FieldError id="new-password-error" message={inviteFieldErrors.password} />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="new-confirm">Confirm Password</Label>
-                  <Input
-                    id="new-confirm"
-                    type="password"
-                    value={newUserConfirmPassword}
-                    onChange={(e) => {
-                      setNewUserConfirmPassword(e.target.value);
-                      if (inviteFieldErrors.confirm)
-                        setInviteFieldErrors((prev) => ({ ...prev, confirm: undefined }));
-                    }}
-                    placeholder="Confirm password"
-                    className="bg-[var(--surface-card)] border-[var(--stroke-soft)] text-[var(--foreground)]"
-                    aria-invalid={!!inviteFieldErrors.confirm}
-                    aria-describedby="new-confirm-error"
-                  />
-                  <FieldError id="new-confirm-error" message={inviteFieldErrors.confirm} />
-                </div>
-                <FormError message={error} />
+    <SettingsPageShell
+      eyebrow="Access control"
+      title="Users"
+      description="Manage workspace members, role assignments, and password access so the right people can operate PurveX."
+      width="wide"
+      status={
+        <span className="text-xs text-[var(--surface-subtle-foreground)]">
+          {stats.total} member{stats.total === 1 ? "" : "s"}
+        </span>
+      }
+      actions={
+        <Dialog open={createUserOpen} onOpenChange={setCreateUserOpen}>
+          <DialogTrigger asChild>
+            <Button size="sm" className="whitespace-nowrap">
+              <UserPlus className="mr-2 h-4 w-4" />
+              Add member
+            </Button>
+          </DialogTrigger>
+          <DialogContent className="w-[min(calc(100vw-2rem),28rem)] px-6 py-6">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2">
+                <UserPlus className="h-5 w-5" />
+                Add member
+              </DialogTitle>
+              <DialogDescription>
+                Create a workspace account and set the initial password for that member.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4 py-4">
+              <div className="space-y-1.5">
+                <Label htmlFor="new-email">Email</Label>
+                <Input
+                  id="new-email"
+                  type="email"
+                  value={newUserEmail}
+                  onChange={(e) => {
+                    setNewUserEmail(e.target.value);
+                    if (inviteFieldErrors.email)
+                      setInviteFieldErrors((prev) => ({ ...prev, email: undefined }));
+                  }}
+                  placeholder="user@example.com"
+                  aria-invalid={!!inviteFieldErrors.email}
+                  aria-describedby="new-email-error"
+                />
+                <FieldError id="new-email-error" message={inviteFieldErrors.email} />
               </div>
-              <DialogFooter className="gap-2">
-                <Button variant="outline" onClick={() => setCreateUserOpen(false)} className="flex-1">
-                  Cancel
-                </Button>
-                <Button onClick={handleCreateUser} disabled={creatingUser} className="flex-1">
-                  {creatingUser ? (
-                    <>
-                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                      Creating...
-                    </>
-                  ) : (
-                    <>
-                      <UserPlus className="h-4 w-4 mr-2" />
-                      Add member
-                    </>
-                  )}
-                </Button>
-                </DialogFooter>
-                </DialogContent>
-              </Dialog>
-            </div>
-          }
-        />
-      </div>
-
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-        <Card className="border border-[var(--stroke-soft)] bg-[var(--surface-card)] shadow-sm dark:border-slate-800 dark:bg-slate-950">
-          <CardContent className="pt-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-muted-foreground">Members</p>
-                <p className="text-2xl font-bold mt-1">{stats.total}</p>
+              <div className="space-y-1.5">
+                <Label htmlFor="new-password">Password</Label>
+                <Input
+                  id="new-password"
+                  type="password"
+                  value={newUserPassword}
+                  onChange={(e) => {
+                    setNewUserPassword(e.target.value);
+                    if (inviteFieldErrors.password)
+                      setInviteFieldErrors((prev) => ({ ...prev, password: undefined }));
+                  }}
+                  placeholder="Enter password"
+                  aria-invalid={!!inviteFieldErrors.password}
+                  aria-describedby="new-password-error"
+                />
+                <PasswordStrengthIndicator password={newUserPassword} />
+                <FieldError id="new-password-error" message={inviteFieldErrors.password} />
               </div>
-              <Users className="h-8 w-8 text-slate-400" />
-            </div>
-          </CardContent>
-        </Card>
-        <Card className="border border-[var(--stroke-soft)] bg-[var(--surface-card)] shadow-sm dark:border-slate-800 dark:bg-slate-950">
-          <CardContent className="pt-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-muted-foreground">Active members</p>
-                <p className="text-2xl font-bold mt-1">{stats.active}</p>
+              <div className="space-y-1.5">
+                <Label htmlFor="new-confirm">Confirm password</Label>
+                <Input
+                  id="new-confirm"
+                  type="password"
+                  value={newUserConfirmPassword}
+                  onChange={(e) => {
+                    setNewUserConfirmPassword(e.target.value);
+                    if (inviteFieldErrors.confirm)
+                      setInviteFieldErrors((prev) => ({ ...prev, confirm: undefined }));
+                  }}
+                  placeholder="Confirm password"
+                  aria-invalid={!!inviteFieldErrors.confirm}
+                  aria-describedby="new-confirm-error"
+                />
+                <FieldError id="new-confirm-error" message={inviteFieldErrors.confirm} />
               </div>
-              <CheckCircle2 className="h-8 w-8 text-slate-400" />
+              <FormError message={error} />
             </div>
-          </CardContent>
-        </Card>
-        <Card className="border border-[var(--stroke-soft)] bg-[var(--surface-card)] shadow-sm dark:border-slate-800 dark:bg-slate-950">
-          <CardContent className="pt-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-muted-foreground">Administrators</p>
-                <p className="text-2xl font-bold mt-1">{stats.admins}</p>
-              </div>
-              <Shield className="h-8 w-8 text-slate-400" />
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Main Users Table Card */}
-      <Card className="border border-[var(--stroke-soft)] bg-[var(--surface-card)] shadow-sm dark:border-slate-800 dark:bg-slate-950">
-        <CardHeader className="border-b border-[var(--stroke-soft)] dark:border-slate-800">
-          <div className="flex items-center justify-between">
-          <div>
-              <CardTitle className="text-2xl font-display font-semibold flex items-center gap-2">
-                <Users className="h-5 w-5" />
-                Members
-              </CardTitle>
-              <CardDescription className="mt-1">
-                {selectedUsers.size > 0 && (
-                  <span className="text-blue-400 font-medium">
-                    {selectedUsers.size} selected
-                  </span>
-                )}
-                {selectedUsers.size === 0 && (
+            <DialogFooter className="gap-2">
+              <Button
+                variant="outline"
+                onClick={() => setCreateUserOpen(false)}
+                className="flex-1"
+              >
+                Cancel
+              </Button>
+              <Button
+                onClick={handleCreateUser}
+                disabled={creatingUser}
+                className="flex-1"
+              >
+                {creatingUser ? (
                   <>
-                    {filteredUsers.length} of {users.length} users
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Creating…
+                  </>
+                ) : (
+                  <>
+                    <UserPlus className="mr-2 h-4 w-4" />
+                    Add member
                   </>
                 )}
-            </CardDescription>
-            </div>
-            {selectedUsers.size > 0 && (
-              <div className="flex items-center gap-2">
-                <Button variant="outline" size="sm" onClick={() => setSelectedUsers(new Set())}>
-                  <X className="h-4 w-4 mr-2" />
-                  Clear Selection
-                </Button>
-                <Button variant="outline" size="sm">
-                  <Download className="h-4 w-4 mr-2" />
-                  Export Selected
-                </Button>
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      }
+      banner={
+        error && !passwordDialogOpen && !createUserOpen ? (
+          <SettingsBanner tone="danger" icon={<AlertCircle className="h-4 w-4" />}>
+            {error}
+          </SettingsBanner>
+        ) : undefined
+      }
+    >
+
+      <SettingsSection title="At a glance" stacked>
+        <div className="grid gap-3 sm:grid-cols-3">
+          {summaryRows.map((row) => {
+            const Icon = row.icon;
+            return (
+              <div
+                key={row.label}
+                className="flex items-start justify-between rounded-lg border border-[var(--stroke-soft)] bg-[var(--surface-elevated)] px-4 py-3"
+              >
+                <div>
+                  <p className="text-[10px] font-semibold uppercase tracking-wider text-[var(--surface-subtle-foreground)]">
+                    {row.label}
+                  </p>
+                  <p className="mt-1 text-xl font-semibold text-[var(--surface-card-foreground)]">
+                    {row.value}
+                  </p>
+                </div>
+                <Icon className="h-5 w-5 text-[var(--surface-subtle-foreground)]" />
               </div>
-            )}
-          </div>
-          
-          {/* Filters */}
-          <div className="flex items-center gap-4 mt-4">
-            <div className="relative flex-1 max-w-sm">
-              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+            );
+          })}
+        </div>
+      </SettingsSection>
+
+      <SettingsSection
+        title="Members"
+        description={
+          selectedUsers.size > 0
+            ? `${selectedUsers.size} selected`
+            : `${filteredUsers.length} of ${users.length} member${users.length === 1 ? "" : "s"}`
+        }
+        stacked
+      >
+        <div className="space-y-4">
+          <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
+            <div className="relative flex-1 sm:max-w-sm">
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--surface-subtle-foreground)]" />
               <Input
-                placeholder="Search users by email..."
+                placeholder="Search by email…"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="pl-10"
+                className="pl-9"
+                aria-label="Search members"
               />
             </div>
-            <Select value={statusFilter} onValueChange={(value: "all" | "active" | "inactive") => setStatusFilter(value)}>
-              <SelectTrigger className="w-[140px]">
-                <Filter className="h-4 w-4 mr-2" />
+            <Select
+              value={statusFilter}
+              onValueChange={(value: "all" | "active" | "inactive") => setStatusFilter(value)}
+            >
+              <SelectTrigger className="sm:w-[140px]" aria-label="Filter by status">
+                <Filter className="mr-2 h-4 w-4" />
                 <SelectValue placeholder="Status" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="all">All Status</SelectItem>
+                <SelectItem value="all">All status</SelectItem>
                 <SelectItem value="active">Active</SelectItem>
                 <SelectItem value="inactive">Inactive</SelectItem>
               </SelectContent>
             </Select>
             <Select value={roleFilter} onValueChange={setRoleFilter}>
-              <SelectTrigger className="w-[180px]">
-                <SelectValue placeholder="All Roles" />
+              <SelectTrigger className="sm:w-[180px]" aria-label="Filter by role">
+                <SelectValue placeholder="All roles" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="all">All Roles</SelectItem>
-                {availableRoles.map(role => (
+                <SelectItem value="all">All roles</SelectItem>
+                {availableRoles.map((role) => (
                   <SelectItem key={role.id} value={role.name}>
                     {role.name}
                   </SelectItem>
                 ))}
               </SelectContent>
             </Select>
+            {selectedUsers.size > 0 ? (
+              <div className="flex items-center gap-2 sm:ml-auto">
+                <Button variant="outline" size="sm" onClick={() => setSelectedUsers(new Set())}>
+                  <X className="mr-2 h-4 w-4" />
+                  Clear selection
+                </Button>
+                <Button variant="outline" size="sm">
+                  <Download className="mr-2 h-4 w-4" />
+                  Export selected
+                </Button>
+              </div>
+            ) : null}
           </div>
-        </CardHeader>
-        <CardContent className="pt-6">
-          {error && !passwordDialogOpen && !createUserOpen && (
-            <div className="mb-4 p-3 bg-red-500/10 border border-red-500/20 rounded-lg flex items-center gap-2">
-              <AlertCircle className="h-4 w-4 text-red-400" />
-              <p className="text-sm text-red-400">{error}</p>
-            </div>
-          )}
-          
+
           {filteredUsers.length === 0 ? (
-            <div className="text-center py-12">
-              <Users className="h-12 w-12 text-muted-foreground mx-auto mb-4 opacity-50" />
-              <p className="text-muted-foreground">
-                {searchQuery || statusFilter !== "all" || roleFilter !== "all"
-                  ? "No users match your filters."
-                  : "No users found. Create your first user to get started."}
+            <div className="flex flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-[var(--stroke-soft)] bg-[var(--surface-elevated)] py-12 text-center">
+              <Users className="h-8 w-8 text-[var(--surface-subtle-foreground)] opacity-60" />
+              <p className="text-sm text-[var(--surface-subtle-foreground)]">
+                {filteringActive
+                  ? "No members match your filters."
+                  : "No members yet. Add your first member to get started."}
               </p>
             </div>
           ) : (
-            <div className="overflow-x-auto">
+            <div className="overflow-x-auto rounded-lg border border-[var(--stroke-soft)]">
             <Table>
               <TableHeader>
                 <TableRow>
@@ -740,7 +729,7 @@ export default function UserManagementPage() {
                                   Password
                                 </Button>
                               </DialogTrigger>
-                              <DialogContent className="w-[480px] max-w-[480px] sm:max-w-[480px] h-[480px] flex flex-col items-center justify-between px-6 py-5">
+                              <DialogContent className="w-[min(calc(100vw-2rem),30rem)] h-[480px] flex flex-col items-center justify-between px-6 py-5">
                                 <div className="w-full">
                                   <DialogTitle className="text-lg font-semibold">Set Password for {user.email}</DialogTitle>
                                   <DialogDescription className="text-sm mt-1">
@@ -828,13 +817,13 @@ export default function UserManagementPage() {
             </Table>
             </div>
           )}
-        </CardContent>
-      </Card>
+        </div>
+      </SettingsSection>
 
       {/* User Details Sidebar */}
       {selectedUser && (
         <Dialog open={viewUserDetails !== null} onOpenChange={(open) => !open && setViewUserDetails(null)}>
-          <DialogContent className="sm:max-w-[600px] max-h-[90vh] overflow-y-auto">
+          <DialogContent className="w-[min(calc(100vw-2rem),38rem)] max-h-[90vh] overflow-y-auto">
             <DialogHeader>
               <DialogTitle className="flex items-center gap-2">
                 <div className="h-10 w-10 rounded-full bg-gradient-to-br from-blue-500/20 to-purple-500/20 border border-blue-500/30 flex items-center justify-center">
@@ -908,55 +897,71 @@ export default function UserManagementPage() {
         </Dialog>
       )}
 
-      {/* Available Roles Info */}
-      {availableRoles.length > 0 && (
-        <Card className="border border-[var(--stroke-soft)] bg-[var(--surface-card)] shadow-sm dark:border-slate-800 dark:bg-slate-950">
-          <CardHeader className="border-b border-[var(--stroke-soft)] dark:border-slate-800">
-            <CardTitle className="text-2xl font-display font-semibold flex items-center gap-2">
-              <Shield className="h-5 w-5" />
-              Available roles
-            </CardTitle>
-              <CardDescription>
-              Review the role names available in this workspace before assigning access to a member.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="pt-6">
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-              {availableRoles.map(role => (
-                <div key={role.id} className="rounded-2xl border border-[var(--stroke-soft)] bg-slate-50 p-4 transition-colors dark:border-slate-800 dark:bg-slate-900">
-                  <div className="font-medium text-sm mb-1 flex items-center gap-2">
-                    <Shield className="h-4 w-4 text-slate-500" />
-                    {ROLE_GUIDANCE[role.name as Role]?.label || role.name}
+      {availableRoles.length > 0 ? (
+        <SettingsSection
+          title="Available roles"
+          description="Reference for what each role grants. Assign roles per member from the list above."
+          stacked
+        >
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            {availableRoles.map((role) => {
+              const guidance = ROLE_GUIDANCE[role.name as Role];
+              return (
+                <div
+                  key={role.id}
+                  className="rounded-lg border border-[var(--stroke-soft)] bg-[var(--surface-elevated)] p-4"
+                >
+                  <div className="flex items-center gap-2">
+                    <Shield className="h-4 w-4 text-[var(--surface-subtle-foreground)]" />
+                    <p className="text-sm font-semibold text-[var(--surface-card-foreground)]">
+                      {guidance?.label || role.name}
+                    </p>
                   </div>
-                  {role.description && (
-                    <div className="text-xs text-muted-foreground mt-2">{role.description}</div>
-                  )}
-                  {ROLE_GUIDANCE[role.name as Role] && (
-                    <div className="mt-4 grid gap-3 text-xs">
+                  {role.description ? (
+                    <p className="mt-1.5 text-xs text-[var(--surface-subtle-foreground)]">
+                      {role.description}
+                    </p>
+                  ) : null}
+                  {guidance ? (
+                    <dl className="mt-3 grid gap-2 text-xs">
                       <div>
-                        <p className="mb-1 font-semibold text-emerald-600 dark:text-emerald-300">Can do</p>
-                        <ul className="space-y-1 text-muted-foreground">
-                          {ROLE_GUIDANCE[role.name as Role].can.map((item) => (
-                            <li key={item}>- {item}</li>
-                          ))}
-                        </ul>
+                        <dt className="font-semibold text-emerald-700 dark:text-emerald-300">
+                          Can
+                        </dt>
+                        <dd className="mt-0.5 text-[var(--surface-subtle-foreground)]">
+                          <ul className="space-y-0.5">
+                            {guidance.can.map((item) => (
+                              <li key={item} className="flex gap-1.5">
+                                <span aria-hidden>·</span>
+                                <span>{item}</span>
+                              </li>
+                            ))}
+                          </ul>
+                        </dd>
                       </div>
                       <div>
-                        <p className="mb-1 font-semibold text-rose-600 dark:text-rose-300">Cannot do</p>
-                        <ul className="space-y-1 text-muted-foreground">
-                          {ROLE_GUIDANCE[role.name as Role].cannot.map((item) => (
-                            <li key={item}>- {item}</li>
-                          ))}
-                        </ul>
+                        <dt className="font-semibold text-rose-700 dark:text-rose-300">
+                          Can't
+                        </dt>
+                        <dd className="mt-0.5 text-[var(--surface-subtle-foreground)]">
+                          <ul className="space-y-0.5">
+                            {guidance.cannot.map((item) => (
+                              <li key={item} className="flex gap-1.5">
+                                <span aria-hidden>·</span>
+                                <span>{item}</span>
+                              </li>
+                            ))}
+                          </ul>
+                        </dd>
                       </div>
-                    </div>
-                  )}
+                    </dl>
+                  ) : null}
                 </div>
-              ))}
-    </div>
-          </CardContent>
-        </Card>
-      )}
-    </PageContainer>
+              );
+            })}
+          </div>
+        </SettingsSection>
+      ) : null}
+    </SettingsPageShell>
   );
 }

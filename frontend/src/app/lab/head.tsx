@@ -1,3 +1,3 @@
 export default function Head() {
-  return <title>PurveX | Lab</title>;
+  return <title>PurveX | Endpoints</title>;
 }

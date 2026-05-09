@@ -138,8 +138,8 @@ def _load_mitre_catalog() -> List[MitreTechnique]:
     """Load the full MITRE ATT&CK Enterprise catalog from enterprise-attack.json.
 
     The file is expected at backend/data/enterprise-attack.json relative to the
-    backend package root. If the file is missing or cannot be parsed, we fall
-    back to a small built-in sample so the UI still works.
+    backend package root. If the file is missing or cannot be parsed, return
+    an empty catalog so integration issues remain visible to the operator.
     """
 
     backend_root = Path(__file__).resolve().parents[2]  # .../backend
@@ -150,7 +150,7 @@ def _load_mitre_catalog() -> List[MitreTechnique]:
             "MITRE ATT&CK JSON not found at %s – using small built-in sample catalog.",
             attack_path,
         )
-        return _sample_catalog()
+        return []
 
     try:
         with attack_path.open("r", encoding="utf-8") as f:
@@ -160,7 +160,7 @@ def _load_mitre_catalog() -> List[MitreTechnique]:
             "Failed to load MITRE ATT&CK catalog from %s – falling back to sample.",
             attack_path,
         )
-        return _sample_catalog()
+        return []
 
     objects: List[Dict[str, Any]] = data.get("objects", [])
 
@@ -560,4 +560,3 @@ async def get_coverage_trend(
         )
 
     return CoverageTrend(days=days, points=points)
-

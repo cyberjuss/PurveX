@@ -3,8 +3,9 @@ Unit tests for security features.
 """
 import pytest
 from fastapi.testclient import TestClient
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 import os
+from types import SimpleNamespace
 
 # Import the app after setting up test environment
 os.environ["PURVEX_ENV"] = "test"
@@ -142,16 +143,28 @@ class TestCSRFProtection:
         """Create test client."""
         return TestClient(app)
     
-    def test_csrf_token_endpoint(self, client):
-        """Test that CSRF token endpoint exists."""
-        # First login to get auth
-        login_response = client.post(
-            "/api/v1/auth/login",
-            data={"username": "admin", "password": "admin"}
-        )
-        # CSRF token endpoint should be accessible
-        # Note: This may require authentication in real implementation
-        pass  # Placeholder - actual test depends on auth setup
+    def test_csrf_token_endpoint_returns_token_for_authenticated_user(self, client):
+        """Authenticated callers should receive a usable CSRF token."""
+        from app.routers.auth import get_current_user
+        from app.utils.csrf import validate_csrf_token
+
+        fake_user = SimpleNamespace(id=4242, email="csrf@example.test")
+
+        async def override_current_user():
+            return fake_user
+
+        app.dependency_overrides[get_current_user] = override_current_user
+        try:
+            response = client.get("/auth/csrf-token")
+        finally:
+            app.dependency_overrides.pop(get_current_user, None)
+
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["header_name"] == "X-CSRF-Token"
+        assert isinstance(payload["csrf_token"], str)
+        assert len(payload["csrf_token"]) >= 32
+        assert validate_csrf_token(fake_user.id, payload["csrf_token"]) is True
 
 
 class TestInputValidation:
@@ -162,12 +175,33 @@ class TestInputValidation:
         """Create test client."""
         return TestClient(app)
     
-    def test_path_parameter_validation(self, client):
-        """Test that path parameters are validated."""
-        # Test with invalid ID (negative)
-        # This should return 400 Bad Request
-        # Note: Actual endpoint may require auth
-        pass  # Placeholder - actual test depends on endpoint implementation
+    def test_path_parameter_validation_rejects_invalid_detection_id(self, client, monkeypatch):
+        """Detection detail should reject malformed UUID path parameters."""
+        from app.routers import detections as detections_router
+        from app.routers.auth import get_current_user
+
+        fake_user = SimpleNamespace(
+            id=7,
+            email="analyst@example.test",
+            organization_id=1,
+            is_admin=True,
+        )
+
+        async def override_current_user():
+            return fake_user
+
+        async def allow_detection_read(_current_user, _db):
+            return None
+
+        app.dependency_overrides[get_current_user] = override_current_user
+        monkeypatch.setattr(detections_router, "require_detection_read", allow_detection_read)
+        try:
+            response = client.get("/detections/not-a-uuid")
+        finally:
+            app.dependency_overrides.pop(get_current_user, None)
+
+        assert response.status_code == 400
+        assert response.json()["detail"] == "Invalid detection ID format"
 
 
 if __name__ == "__main__":

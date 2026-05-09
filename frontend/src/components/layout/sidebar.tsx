@@ -11,6 +11,7 @@ import {
   FileText,
   HardDrive,
   Inbox,
+  Target,
 } from "lucide-react";
 import Link from "next/link";
 import Image from "next/image";
@@ -28,6 +29,7 @@ const links = [
   { href: "/dashboard", label: "Dashboard", icon: Activity },
   { href: "/detections", label: "Detections", icon: Shield },
   { href: "/tests", label: "Tests", icon: Activity },
+  { href: "/mitre", label: "MITRE Coverage", icon: Target },
   { href: "/lab", label: "Endpoints", icon: HardDrive },
   { href: "/reports", label: "Reports", icon: FileText },
   { href: "/agent", label: "Watchtower", icon: Bot },
@@ -148,8 +150,8 @@ export function Sidebar({ open, onClose, onToggle }: SidebarProps) {
             className="flex items-center gap-3"
             onClick={onClose}
           >
-            <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-[var(--surface-elevated)] ring-1 ring-[var(--stroke-soft)]">
-              <Image src="/logo.png" alt="PurveX Logo" width={30} height={30} className="h-[30px] w-[30px] object-contain" />
+            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[var(--surface-elevated)] ring-1 ring-[var(--stroke-soft)]">
+              <Image src="/logo.png" alt="PurveX Logo" width={26} height={26} className="h-[26px] w-[26px] object-contain" />
             </div>
             <span className="text-[21px] font-semibold font-display text-[var(--surface-shell-foreground)] tracking-tight">PurveX</span>
           </Link>
@@ -169,9 +171,9 @@ export function Sidebar({ open, onClose, onToggle }: SidebarProps) {
           <Link
             href="/dashboard"
             aria-label="Go to PurveX home"
-            className="flex h-[52px] w-[52px] items-center justify-center rounded-xl bg-[var(--surface-elevated)] ring-1 ring-[var(--stroke-soft)]"
+            className="flex h-[46px] w-[46px] items-center justify-center rounded-xl bg-[var(--surface-elevated)] ring-1 ring-[var(--stroke-soft)]"
           >
-            <Image src="/logo.png" alt="PurveX Logo" width={34} height={34} className="h-[34px] w-[34px] object-contain" />
+            <Image src="/logo.png" alt="PurveX Logo" width={28} height={28} className="h-[28px] w-[28px] object-contain" />
           </Link>
           <div className="flex items-center flex-1">
             <span className="text-[22px] font-semibold font-display text-[var(--surface-shell-foreground)] tracking-tight">PurveX</span>
@@ -188,7 +190,8 @@ export function Sidebar({ open, onClose, onToggle }: SidebarProps) {
               (href === "/settings" && pathname.startsWith("/settings")) ||
               (href === "/tests" && pathname.startsWith("/tests")) ||
               (href === "/detections" && pathname.startsWith("/detections")) ||
-              (href === "/lab" && pathname.startsWith("/lab"));
+              (href === "/lab" && pathname.startsWith("/lab")) ||
+              (href === "/mitre" && pathname.startsWith("/mitre"));
 
             return (
               <Link

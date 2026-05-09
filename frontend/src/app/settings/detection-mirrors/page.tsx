@@ -1,22 +1,24 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import Link from "next/link";
 import {
   GitCommitHorizontal,
   Plus,
   Trash2,
   AlertTriangle,
   CheckCircle2,
-  ArrowLeft,
   KeyRound,
   Loader2,
   Link2,
   Link2Off,
   Upload,
 } from "lucide-react";
-import { PageContainer } from "@/components/layout/page-container";
-import { PageHeader } from "@/components/layout/page-header";
+import {
+  SettingsPageShell,
+  SettingsSection,
+  SettingsBanner,
+  SettingsStatusPill,
+} from "@/components/settings/settings-section";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -160,56 +162,45 @@ export default function DetectionMirrorsPage() {
   }
 
   return (
-    <PageContainer maxWidth="full">
-      <div className="mx-auto max-w-6xl px-8 py-8 space-y-6">
-        <div>
-          <Link
-            href="/settings"
-            className="inline-flex items-center gap-1 text-xs text-[var(--surface-subtle-foreground)] hover:text-[var(--foreground)]"
-          >
-            <ArrowLeft className="h-3 w-3" />
-            Back to settings
-          </Link>
-        </div>
-        <PageHeader
-          eyebrow="Audit"
-          title="Audit Mirror Repo"
-          subtitle="Mirror SIEM-owned detections into a git repository. Every upstream rule change becomes one commit — auditable, diffable, reviewable."
-          icon={<GitCommitHorizontal className="h-5 w-5" />}
-          actions={
-            <Button onClick={() => setAddOpen(true)}>
-              <Plus className="mr-2 h-4 w-4" /> Add mirror
-            </Button>
-          }
-        />
-
-        {error && (
-          <div className="rounded-xl border border-rose-500/40 bg-rose-500/10 p-4 text-sm text-rose-200">
+    <SettingsPageShell
+      eyebrow="Audit"
+      title="Audit Mirror Repo"
+      description="Mirror SIEM-owned detections into a git repository. Every upstream rule change becomes one commit — auditable, diffable, reviewable."
+      width="wide"
+      status={
+        <SettingsStatusPill tone={mirrors.length > 0 ? "ok" : "muted"}>
+          {mirrors.length > 0
+            ? `${mirrors.length} mirror${mirrors.length === 1 ? "" : "s"}`
+            : "Not configured"}
+        </SettingsStatusPill>
+      }
+      actions={
+        <Button size="sm" onClick={() => setAddOpen(true)}>
+          <Plus className="mr-2 h-4 w-4" /> Add mirror
+        </Button>
+      }
+      banner={
+        error ? (
+          <SettingsBanner tone="danger" title="Couldn't load mirrors">
             {error}
-          </div>
-        )}
-
-        {lastPublish && (
-          <div
-            className={cn(
-              "rounded-xl border p-4 text-sm",
-              lastPublish.kind === "ok"
-                ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-200"
-                : "border-amber-500/40 bg-amber-500/10 text-amber-200",
-            )}
+          </SettingsBanner>
+        ) : lastPublish ? (
+          <SettingsBanner
+            tone={lastPublish.kind === "ok" ? "success" : "warning"}
+            title={
+              <>
+                {lastPublish.kind === "ok"
+                  ? "Bootstrap complete"
+                  : "Bootstrap reported issues"}
+                <span className="ml-2 font-normal text-[var(--surface-subtle-foreground)]">
+                  {lastPublish.name}
+                </span>
+              </>
+            }
           >
-            <p className="font-semibold">
-              {lastPublish.kind === "ok"
-                ? "Bootstrap complete"
-                : "Bootstrap reported issues"}
-              <span className="ml-2 font-normal text-[var(--surface-subtle-foreground)]">
-                {lastPublish.name}
-              </span>
-            </p>
-            <p className="mt-1">
+            <p>
               Wrote {lastPublish.files_written} file
-              {lastPublish.files_written === 1 ? "" : "s"} in{" "}
-              {lastPublish.commits} commit
+              {lastPublish.files_written === 1 ? "" : "s"} in {lastPublish.commits} commit
               {lastPublish.commits === 1 ? "" : "s"}.
               {lastPublish.commit_sha
                 ? ` HEAD ${lastPublish.commit_sha.slice(0, 7)}.`
@@ -224,10 +215,16 @@ export default function DetectionMirrorsPage() {
                 ))}
               </ul>
             )}
-          </div>
-        )}
-
-        <div className="rounded-2xl border border-[var(--stroke-soft)] bg-[var(--surface-card)] p-6 shadow-[var(--shadow-soft)]">
+          </SettingsBanner>
+        ) : undefined
+      }
+    >
+      <SettingsSection
+        title="Connected mirrors"
+        description="One mirror per repository — link it to SIEM connections to bootstrap and keep them in sync."
+        stacked
+      >
+        <div>
           {loading ? (
             <div className="flex items-center gap-2 text-sm text-[var(--surface-subtle-foreground)]">
               <Loader2 className="h-4 w-4 animate-spin" /> Loading mirrors…
@@ -264,7 +261,7 @@ export default function DetectionMirrorsPage() {
             </ul>
           )}
         </div>
-      </div>
+      </SettingsSection>
 
       <AddMirrorDialog
         open={addOpen}
@@ -273,7 +270,7 @@ export default function DetectionMirrorsPage() {
           if (!open) load();
         }}
       />
-    </PageContainer>
+    </SettingsPageShell>
   );
 }
 
@@ -597,7 +594,7 @@ function AddMirrorDialog({ open, onOpenChange }: AddMirrorDialogProps) {
         onOpenChange(o);
       }}
     >
-      <DialogContent className="max-w-xl">
+      <DialogContent className="w-[min(calc(100vw-2rem),32rem)]">
         <DialogHeader>
           <DialogTitle>Add audit mirror</DialogTitle>
         </DialogHeader>

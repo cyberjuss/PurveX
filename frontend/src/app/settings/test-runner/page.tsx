@@ -13,8 +13,12 @@ import { usePermissions } from "@/hooks/usePermissions";
 import { Permission } from "@/lib/permissions";
 import { useToast } from "@/components/ui/toast";
 import { cn } from "@/lib/utils";
-import { PageContainer } from "@/components/layout/page-container";
-import { PageHeader } from "@/components/layout/page-header";
+import {
+  SettingsPageShell,
+  SettingsSection,
+  SettingsBanner,
+  SettingsStatusPill,
+} from "@/components/settings/settings-section";
 
 interface EnvironmentRunnerConfig {
   id: number;
@@ -25,6 +29,7 @@ interface EnvironmentRunnerConfig {
   username?: string;
   auth_method: string;
   key_path?: string;
+  ssh_host_key_sha256?: string;
   allowed_test_types: string; // JSON string
   max_concurrent_tests: number;
   heartbeat_interval_seconds: number;
@@ -858,6 +863,7 @@ export default function TestRunnerSettingsPage() {
     alert_offline_minutes: 5,
     owner_name: "",
     owner_email: "",
+    ssh_host_key_sha256: "",
   });
   const [isSaving, setIsSaving] = useState(false);
   const { toast } = useToast();
@@ -941,6 +947,10 @@ export default function TestRunnerSettingsPage() {
       setError("Please fill in all required fields.");
       return;
     }
+    if ((formData.runner_type || "").toUpperCase() === "SSH" && !formData.ssh_host_key_sha256?.trim()) {
+      setError("SSH host key SHA256 fingerprint is required before this runner can execute validations.");
+      return;
+    }
 
     setIsSaving(true);
     setError(null);
@@ -993,6 +1003,7 @@ export default function TestRunnerSettingsPage() {
         alert_offline_minutes: 5,
         owner_name: "",
         owner_email: "",
+        ssh_host_key_sha256: "",
       });
       setShowAddForm(false);
       setEditingConfig(null);
@@ -1006,9 +1017,9 @@ export default function TestRunnerSettingsPage() {
 
   if (loading) {
     return (
-      <PageContainer maxWidth="xl" className="space-y-8">
+      <SettingsPageShell eyebrow="Validation execution" title="Agents" divided={false}>
         <PageSkeleton withEyebrow withActions variant="list" rows={4} />
-      </PageContainer>
+      </SettingsPageShell>
     );
   }
   if (error) {
@@ -1019,67 +1030,134 @@ export default function TestRunnerSettingsPage() {
     );
   }
 
+  const checklistItems = [
+    {
+      label: "API endpoint",
+      done: Boolean(publicApiUrl.trim()),
+      detail: publicApiUrl || "Set the URL the remote agent can reach.",
+    },
+    {
+      label: "Registration token",
+      done: Boolean(userToken),
+      detail: userToken
+        ? "Token generated and ready to use."
+        : "Generate a token before downloading the installer.",
+    },
+    {
+      label: "Agent registered",
+      done: configs.length > 0,
+      detail:
+        configs.length > 0
+          ? `${configs.length} agent configuration${configs.length === 1 ? "" : "s"} found.`
+          : "No agent configuration has been registered yet.",
+    },
+    {
+      label: "Execution path",
+      done: connectionType === "agent" || Boolean(formData.hostname),
+      detail:
+        connectionType === "agent"
+          ? "The installer will register the environment automatically."
+          : formData.hostname
+            ? `SSH target ${formData.hostname}:${formData.port || 22}`
+            : "Enter the SSH host that will execute validations.",
+    },
+    {
+      label: "Trust pin",
+      done:
+        connectionType === "agent" || Boolean(formData.ssh_host_key_sha256?.trim()),
+      detail:
+        connectionType === "agent"
+          ? "Agent registration uses a scoped runner token."
+          : formData.ssh_host_key_sha256
+            ? "SSH host key fingerprint enrolled."
+            : "Paste the runner host SHA256 fingerprint.",
+    },
+  ];
+  const checklistDone = checklistItems.filter((c) => c.done).length;
+
   return (
-    <PageContainer maxWidth="xl" className="space-y-8">
-      <PageHeader
-        eyebrow="Validation execution"
-        title="Agents"
-        subtitle="Configure the agents that run validations in each environment so PurveX can execute validations and collect evidence."
-        icon={<ServerCog className="h-5 w-5" />}
-      />
-      {!permissionsLoading && !canManageAgents && (
-        <div className="flex items-center gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-300">
-          <Lock className="h-4 w-4 shrink-0" />
-          You have read-only access. Contact an administrator to configure agents.
+    <SettingsPageShell
+      eyebrow="Validation execution"
+      title="Agents"
+      description="Register the agents that run validations in each environment. PurveX uses them to execute validations and collect evidence."
+      status={
+        <SettingsStatusPill tone={configs.length > 0 ? "ok" : "muted"}>
+          {configs.length > 0
+            ? `${configs.length} agent${configs.length === 1 ? "" : "s"}`
+            : "Not configured"}
+        </SettingsStatusPill>
+      }
+      banner={
+        !permissionsLoading && !canManageAgents ? (
+          <SettingsBanner tone="warning" icon={<Lock className="h-4 w-4" />}>
+            You have read-only access. Contact an administrator to configure agents.
+          </SettingsBanner>
+        ) : undefined
+      }
+    >
+      <SettingsSection
+        title="Agent API endpoint"
+        description="The address remote agents will call. Override it if you use a tunnel, reverse proxy, VPN hostname, or public domain."
+      >
+        <div className="space-y-1.5">
+          <Label htmlFor="public_api_url" className="sr-only">
+            Agent API endpoint
+          </Label>
+          <Input
+            id="public_api_url"
+            value={publicApiUrl}
+            onChange={(e) => setPublicApiUrl(e.target.value)}
+            placeholder="https://purvex.company.com/api"
+          />
+          <p className="text-xs text-[var(--surface-subtle-foreground)]">
+            Saved alongside agent registrations and shipped into the installer.
+          </p>
         </div>
-      )}
-      <Card className="border border-[var(--stroke-soft)] bg-[var(--surface-card)] shadow-sm rounded-2xl">
-        <CardContent className="p-6">
-          <div className="grid gap-4 lg:grid-cols-[1.3fr_0.7fr]">
-            <div className="space-y-4">
-              <div>
-                <h2 className="text-lg font-semibold text-[var(--foreground)]">Agent onboarding checklist</h2>
-                <p className="text-sm text-slate-600">
-                  Set a reachable API endpoint, generate a registration token, install the agent, and confirm the environment can run validations.
+      </SettingsSection>
+
+      <SettingsSection
+        title="Onboarding checklist"
+        description={`Track what's left before this environment can run validations. ${checklistDone} of ${checklistItems.length} complete.`}
+        stacked
+      >
+        <ul className="grid gap-2 sm:grid-cols-2">
+          {checklistItems.map((item) => (
+            <li
+              key={item.label}
+              className="flex items-start gap-3 rounded-lg border border-[var(--stroke-soft)] bg-[var(--surface-elevated)] px-3 py-2.5"
+            >
+              <div
+                className={cn(
+                  "mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border",
+                  item.done
+                    ? "border-emerald-200 bg-emerald-50 text-emerald-600 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-300"
+                    : "border-amber-200 bg-amber-50 text-amber-600 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-300"
+                )}
+              >
+                {item.done ? (
+                  <CheckCircle2 className="h-3.5 w-3.5" />
+                ) : (
+                  <Info className="h-3.5 w-3.5" />
+                )}
+              </div>
+              <div className="min-w-0">
+                <p className="text-sm font-medium text-[var(--surface-card-foreground)]">
+                  {item.label}
+                </p>
+                <p className="mt-0.5 truncate text-xs text-[var(--surface-subtle-foreground)]">
+                  {item.detail}
                 </p>
               </div>
-              <div className="grid gap-3 sm:grid-cols-2">
-                {[
-                  { label: "API endpoint", done: Boolean(publicApiUrl.trim()), detail: publicApiUrl || "Set the URL the remote agent can reach." },
-                  { label: "Registration token", done: Boolean(userToken), detail: userToken ? "Token generated and ready to use." : "Generate a token before downloading the installer." },
-                  { label: "Agent registered", done: configs.length > 0, detail: configs.length > 0 ? `${configs.length} agent configuration${configs.length === 1 ? "" : "s"} found.` : "No agent configuration has been registered yet." },
-                  { label: "Execution path", done: connectionType === "agent" || Boolean(formData.hostname), detail: connectionType === "agent" ? "The installer will register the environment automatically." : formData.hostname ? `SSH target ${formData.hostname}:${formData.port || 22}` : "Enter the SSH host that will execute validations." },
-                ].map((item) => (
-                  <div key={item.label} className="rounded-xl border border-[var(--stroke-soft)] bg-[var(--surface-elevated)] p-4">
-                    <div className="flex items-start gap-3">
-                      <div className={cn("mt-0.5 h-5 w-5 rounded-full border flex items-center justify-center", item.done ? "border-emerald-200 bg-emerald-50 text-emerald-600" : "border-amber-200 bg-amber-50 text-amber-600")}>
-                        {item.done ? <CheckCircle2 className="h-3.5 w-3.5" /> : <Info className="h-3.5 w-3.5" />}
-                      </div>
-                      <div>
-                        <p className="text-sm font-semibold text-[var(--foreground)]">{item.label}</p>
-                        <p className="text-xs text-slate-600 mt-1">{item.detail}</p>
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-            <div className="rounded-2xl border border-[var(--stroke-soft)] bg-[var(--surface-elevated)] p-4">
-              <Label htmlFor="public_api_url" className="text-sm font-semibold text-[var(--foreground)]">Agent API endpoint</Label>
-              <p className="text-xs text-slate-600 mt-1 mb-3">
-                This is the address remote agents will call. Override it if you are using a tunnel, reverse proxy, VPN hostname, or public domain.
-              </p>
-              <Input
-                id="public_api_url"
-                value={publicApiUrl}
-                onChange={(e) => setPublicApiUrl(e.target.value)}
-                placeholder="https://purvex.company.com/api"
-                className="bg-[var(--surface-card)] border-[var(--stroke-soft)] text-[var(--foreground)]"
-              />
-            </div>
-          </div>
-        </CardContent>
-      </Card>
+            </li>
+          ))}
+        </ul>
+      </SettingsSection>
+
+      <SettingsSection
+        title="Onboarding wizard"
+        description="Walk through connection method, platform, installer, and run."
+        stacked
+      >
       {/* Step Progress Indicator */}
       <div className="flex justify-center">
         {(() => {
@@ -1214,6 +1292,7 @@ export default function TestRunnerSettingsPage() {
                     max_concurrent_tests: 1,
                     heartbeat_interval_seconds: 5,
                     alert_offline_minutes: 5,
+                    ssh_host_key_sha256: "",
                   });
                   if (currentStep === 1) {
                     setCurrentStep(2);
@@ -1691,6 +1770,18 @@ export default function TestRunnerSettingsPage() {
                         <Label htmlFor="port">Port</Label>
                         <Input id="port" type="number" value={formData.port || 22} onChange={handleFormChange} />
                       </div>
+                      <div className="space-y-2 md:col-span-3">
+                        <Label htmlFor="ssh_host_key_sha256">SSH host key SHA256 fingerprint</Label>
+                        <Input
+                          id="ssh_host_key_sha256"
+                          value={formData.ssh_host_key_sha256 || ""}
+                          onChange={handleFormChange}
+                          placeholder="SHA256:AbCdEf..."
+                        />
+                        <p className="text-[11px] text-muted-foreground">
+                          Capture from a trusted path with ssh-keyscan and ssh-keygen before saving.
+                        </p>
+                      </div>
                     </div>
                   </div>
 
@@ -1772,7 +1863,7 @@ export default function TestRunnerSettingsPage() {
           </div>
         </CardContent>
       </Card>
-
-    </PageContainer>
+      </SettingsSection>
+    </SettingsPageShell>
   );
 }

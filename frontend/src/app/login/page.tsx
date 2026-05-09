@@ -6,7 +6,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { z } from "zod";
 import TwoFactorVerify from "@/components/auth/TwoFactorVerify";
 import { getApiBaseCandidates, getBootstrapStatus } from "@/lib/api";
-import { AlertCircle, ArrowRight, Eye, EyeOff, Loader2, RefreshCw, ShieldCheck, Zap, Lock } from "lucide-react";
+import { AlertCircle, ArrowRight, CheckCircle2, Eye, EyeOff, Loader2, RefreshCw, ShieldCheck, Zap } from "lucide-react";
 import { FieldError } from "@/components/ui/form-error";
 
 // Login accepts whatever the backend will accept (existing accounts may pre-date
@@ -302,74 +302,61 @@ function LoginPageContent() {
 
   return (
     <div className="relative grid min-h-screen grid-cols-1 bg-white lg:grid-cols-2">
-      {/* LEFT — brand showcase */}
-      <div className="relative hidden overflow-hidden bg-slate-950 lg:flex lg:flex-col lg:justify-between lg:p-12">
-        {/* Aurora glow */}
+      {/* LEFT — brand */}
+      <div className="relative hidden overflow-hidden bg-[#05070d] lg:flex lg:flex-col lg:justify-between lg:px-14 lg:py-12">
+        {/* Soft glow */}
         <div
           aria-hidden
           className="pointer-events-none absolute inset-0"
           style={{
             background:
-              "radial-gradient(ellipse 60% 50% at 30% 20%, rgba(34,211,238,0.22) 0%, transparent 60%), radial-gradient(ellipse 50% 50% at 80% 80%, rgba(129,140,248,0.20) 0%, transparent 60%)",
-          }}
-        />
-        {/* Grid overlay */}
-        <div
-          aria-hidden
-          className="pointer-events-none absolute inset-0 opacity-[0.12]"
-          style={{
-            backgroundImage:
-              "linear-gradient(rgba(255,255,255,0.6) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.6) 1px, transparent 1px)",
-            backgroundSize: "56px 56px",
-            maskImage: "radial-gradient(ellipse 70% 70% at 50% 50%, #000 30%, transparent 90%)",
-            WebkitMaskImage: "radial-gradient(ellipse 70% 70% at 50% 50%, #000 30%, transparent 90%)",
+              "radial-gradient(ellipse 60% 50% at 25% 20%, rgba(34,211,238,0.18) 0%, transparent 65%)",
           }}
         />
 
-          <div className="relative z-10 flex items-center gap-3">
-            <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-white/5 ring-1 ring-white/10 backdrop-blur">
-              <Image src="/logo.png" alt="PurveX" width={28} height={28} className="h-7 w-7 object-contain" />
-            </div>
-            <span className="text-[17px] font-semibold tracking-tight text-white">PurveX</span>
+        {/* Brand */}
+        <div className="relative z-10 flex items-center gap-3">
+          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-white/[0.06] ring-1 ring-white/10">
+            <Image src="/logo.png" alt="PurveX" width={26} height={26} className="h-[26px] w-[26px] object-contain" />
           </div>
+          <span className="text-[16px] font-semibold tracking-tight text-white">PurveX</span>
+        </div>
 
+        {/* Headline + bullets */}
         <div className="relative z-10 max-w-md">
-          <h2 className="text-4xl font-semibold leading-[1.1] tracking-[-0.02em] text-white">
-            Red meets blue.{" "}
-            <span className="bg-gradient-to-r from-cyan-300 to-indigo-300 bg-clip-text text-transparent">
-              In one workspace.
-            </span>
+          <h2 className="text-[40px] font-semibold leading-[1.1] tracking-[-0.02em] text-white">
+            Know your detections fire.{" "}
+            <span className="text-cyan-300">Before attackers do.</span>
           </h2>
           <p className="mt-5 text-[15px] leading-relaxed text-slate-400">
-            Test detections. Measure coverage. Ship fixes faster.
+            PurveX validates SIEM detections against real attack behavior and shows
+            where coverage, telemetry, or tuning will fail.
           </p>
 
-          <ul className="mt-8 space-y-3.5">
+          <ul className="mt-8 space-y-3">
             {[
-              { icon: ShieldCheck, text: "Track detection lifecycle & coverage" },
-              { icon: Zap, text: "Run Atomic tests with live telemetry" },
-              { icon: Lock, text: "Audit-ready logs, 2FA built in" },
+              { icon: ShieldCheck, text: "See which detections are trusted, stale, or broken" },
+              { icon: Zap, text: "Run Atomic Red Team tests against live SIEM coverage" },
+              { icon: CheckCircle2, text: "Keep proof for tuning, audits, and leadership" },
             ].map(({ icon: Icon, text }) => (
-              <li key={text} className="flex items-center gap-3 text-sm text-slate-300">
-                <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-white/5 ring-1 ring-white/10">
-                  <Icon className="h-3.5 w-3.5 text-cyan-300" />
-                </span>
+              <li key={text} className="flex items-center gap-3 text-[14px] text-slate-300">
+                <Icon className="h-4 w-4 shrink-0 text-cyan-300" />
                 {text}
               </li>
             ))}
           </ul>
         </div>
 
-        <p className="relative z-10 text-xs text-slate-500">
-          © {new Date().getFullYear()} PurveX. All rights reserved.
+        <p className="relative z-10 text-[11px] text-slate-500">
+          &copy; {new Date().getFullYear()} PurveX
         </p>
       </div>
 
       {/* RIGHT — form */}
       <div className="relative flex items-center justify-center px-6 py-12 sm:px-10">
-        <div className="w-full max-w-[400px]">
+        <div className="w-full max-w-[404px]">
           {/* Mobile brand header */}
-            <div className="mb-8 flex items-center gap-3 lg:hidden">
+            <div className="mb-10 flex items-center gap-3 lg:hidden">
               <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-slate-950 ring-1 ring-slate-900">
                 <Image src="/logo.png" alt="PurveX" width={28} height={28} className="h-7 w-7 object-contain" />
               </div>
@@ -377,13 +364,13 @@ function LoginPageContent() {
             </div>
 
           <div className="mb-8">
-            <h1 className="text-[28px] font-semibold leading-tight tracking-[-0.02em] text-slate-950">
-              {isReturning ? "Sign in" : "Sign in"}
+            <h1 className="text-[28px] font-semibold leading-[1.1] tracking-[-0.02em] text-slate-950">
+              {isReturning ? "Welcome back" : "Sign in"}
             </h1>
             <p className="mt-2 text-sm text-slate-500">
               {isReturning
-                ? "Enter your credentials to access your workspace."
-                : "Access your PurveX workspace with your username and password."}
+                ? "Get back to your detections."
+                : "Access the PurveX workspace."}
             </p>
           </div>
 
@@ -517,7 +504,7 @@ function LoginPageContent() {
               <button
                 type="submit"
                 disabled={phase === "auth" || isLocked}
-                className="group relative flex h-11 w-full items-center justify-center gap-2 overflow-hidden rounded-xl border border-black bg-black text-sm font-semibold text-white transition hover:bg-white hover:text-black hover:shadow-[0_14px_30px_-18px_rgba(15,23,42,0.25)] disabled:cursor-not-allowed disabled:opacity-40"
+                className="group relative flex h-11 w-full items-center justify-center gap-2 overflow-hidden rounded-xl bg-slate-950 text-sm font-semibold text-white shadow-[0_10px_24px_-12px_rgba(15,23,42,0.45)] ring-1 ring-slate-950 transition hover:bg-slate-900 hover:shadow-[0_18px_36px_-16px_rgba(15,23,42,0.5)] focus:outline-none focus:ring-2 focus:ring-cyan-400/40 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-40"
               >
                 <span
                   aria-hidden
@@ -544,10 +531,10 @@ function LoginPageContent() {
             <span
               className={`inline-block h-1.5 w-1.5 rounded-full ${
                 backendStatus === "online"
-                  ? "bg-emerald-400"
+                  ? "bg-emerald-500"
                   : backendStatus === "offline"
-                    ? "bg-red-400"
-                    : "animate-pulse bg-slate-500"
+                    ? "bg-red-500"
+                    : "animate-pulse bg-slate-400"
               }`}
             />
             {backendStatus === "online"
@@ -569,3 +556,4 @@ export default function LoginPage() {
     </Suspense>
   );
 }
+

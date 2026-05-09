@@ -24,8 +24,9 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+from collections import defaultdict
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Dict, Optional
 
 from sqlalchemy import select
 
@@ -38,6 +39,18 @@ logger = logging.getLogger("purvex.services.mirror_scheduler")
 
 _scheduler_task: Optional[asyncio.Task] = None
 _stop_event: Optional[asyncio.Event] = None
+
+# Per-connection asyncio locks. A second sweep tick that arrives before the
+# previous one finished its work for a given connection will wait here
+# instead of double-cloning, double-committing, and racing the writeback
+# push. Single-replica beta installs only need an in-process lock; a
+# multi-replica deployment will need a Redis/Postgres advisory lock —
+# tracked in the production-readiness checklist.
+_connection_locks: Dict[int, asyncio.Lock] = defaultdict(asyncio.Lock)
+
+
+def _lock_for_connection(connection_id: int) -> asyncio.Lock:
+    return _connection_locks[connection_id]
 
 
 def _default_interval_seconds() -> int:
@@ -81,7 +94,19 @@ async def _sweep_once() -> None:
 
     for conn in connections:
         try:
-            async with async_sessionmaker() as session:
+            # Per-connection lock prevents two overlapping sweeps from
+            # syncing + writing back to the same mirror simultaneously.
+            # ``acquire(... timeout=0)`` would skip; we'd rather wait so
+            # the next tick still completes the work — interval is 15min
+            # by default, plenty of headroom.
+            lock = _lock_for_connection(conn.id)
+            if lock.locked():
+                logger.info(
+                    "mirror sweep: connection %s already in flight, skipping this tick",
+                    conn.id,
+                )
+                continue
+            async with lock, async_sessionmaker() as session:
                 # Reload the connection in this session so it's attached
                 # and we can commit updates to its telemetry fields.
                 live_conn = await session.get(models.SIEMConnection, conn.id)

@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..db import async_sessionmaker
 from .. import models
 from .atomic_runner import execute_test_pipeline
+from .detection_versioning import maybe_compute_version_hash
 
 logger = logging.getLogger("purvex.scheduler")
 
@@ -102,6 +103,18 @@ async def execute_scheduled_test(schedule: models.TestSchedule, session: AsyncSe
         except Exception:
             initiated_email = None
 
+    # Snapshot the rule's version hash at run time. Scenario-only schedules
+    # (no detection_id) skip the load and store NULL, matching /tests/run.
+    scheduled_detection: Optional[models.Detection] = None
+    if schedule.detection_id:
+        det_result = await session.execute(
+            select(models.Detection).where(
+                models.Detection.id == schedule.detection_id,
+                models.Detection.organization_id == org_id,
+            )
+        )
+        scheduled_detection = det_result.scalar_one_or_none()
+
     db_test = models.Test(
         organization_id=org_id,
         detection_id=schedule.detection_id,
@@ -115,6 +128,7 @@ async def execute_scheduled_test(schedule: models.TestSchedule, session: AsyncSe
         initiated_by_username=initiated_username,
         initiated_by_role=initiated_role,
         started_at=datetime.utcnow(),
+        detection_version_hash=maybe_compute_version_hash(scheduled_detection),
     )
     session.add(db_test)
     await session.commit()

@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { useParams } from "next/navigation";
+import { useParams, useSearchParams } from "next/navigation";
 import { format, formatDistanceToNow } from "date-fns";
 import {
   Activity,
@@ -19,11 +19,13 @@ import {
   type Detection,
   type DetectionAlert,
   type DetectionLifecycleStage,
+  type DetectionVersionKPIResponse,
   type TestWithDetectionTitle,
   DETECTION_LIFECYCLE_STAGES,
   apiFetch,
   getDetection,
   getDetectionAlerts,
+  getDetectionVersionKPIs,
   getTests,
   getUsers,
   updateDetection,
@@ -47,6 +49,7 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
+import { Sheet, SheetBody, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
   Table,
@@ -101,7 +104,7 @@ const HEALTH_META: Record<
   HEALTHY: {
     label: "Trusted",
     headline: "Rule fired and telemetry was present in the last validation.",
-    nextAction: "Revalidate on schedule before events data becomes stale.",
+    nextAction: "Revalidate on schedule before evidence becomes stale.",
     icon: CheckCircle2,
     tone: "success",
     borderLeftClass: "border-l-emerald-500",
@@ -112,7 +115,7 @@ const HEALTH_META: Record<
   FAILED: {
     label: "Needs tuning",
     headline: "Telemetry arrived but the rule did not fire.",
-    nextAction: "Inspect events, tune the rule, then rerun the validation.",
+    nextAction: "Review the captured evidence, tune the rule, then rerun the validation.",
     icon: XCircle,
     tone: "danger",
     borderLeftClass: "border-l-rose-500",
@@ -121,7 +124,7 @@ const HEALTH_META: Record<
     bar: "bg-rose-500",
   },
   TELEMETRY_GAP: {
-    label: "Telemetry gap",
+    label: "No logs",
     headline: "Validation ran without usable telemetry in the SIEM.",
     nextAction: "Fix the telemetry path before retesting the rule.",
     icon: AlertTriangle,
@@ -133,7 +136,7 @@ const HEALTH_META: Record<
   },
   UNTESTED: {
     label: "Untested",
-    headline: "No validation events exist for this detection yet.",
+    headline: "No validation evidence exists for this detection yet.",
     nextAction: "Run the first validation to establish a trust baseline.",
     icon: Clock3,
     tone: "neutral",
@@ -185,6 +188,7 @@ function scoreTone(score?: number | null) {
 
 export default function DetectionDetailPage() {
   const params = useParams();
+  const searchParams = useSearchParams();
   const detectionId = (params as { id?: string }).id;
   const { hasPermission } = usePermissions();
   const { toast } = useToast();
@@ -192,6 +196,8 @@ export default function DetectionDetailPage() {
   const [detection, setDetection] = useState<Detection | null>(null);
   const [tests, setTests] = useState<TestWithDetectionTitle[]>([]);
   const [events, setEvents] = useState<DetectionAlert[]>([]);
+  const [versionKpis, setVersionKpis] = useState<DetectionVersionKPIResponse | null>(null);
+  const [showLegacyVersions, setShowLegacyVersions] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [assignOwnerOpen, setAssignOwnerOpen] = useState(false);
@@ -199,6 +205,7 @@ export default function DetectionDetailPage() {
   const [selectedOwner, setSelectedOwner] = useState("unassigned");
   const [assigningOwner, setAssigningOwner] = useState(false);
   const [updatingLifecycle, setUpdatingLifecycle] = useState(false);
+  const [selectedEvidenceId, setSelectedEvidenceId] = useState<number | null>(null);
 
   const canAssignOwner = hasPermission(Permission.DETECTIONS_UPDATE);
   const canUpdateLifecycle = hasPermission(Permission.DETECTIONS_UPDATE);
@@ -210,10 +217,11 @@ export default function DetectionDetailPage() {
     async function load() {
       try {
         setLoading(true);
-        const [detail, allTests, detailEvents] = await Promise.all([
+        const [detail, allTests, detailEvents, kpis] = await Promise.all([
           getDetection(id),
           getTests(),
           getDetectionAlerts(id).catch(() => []),
+          getDetectionVersionKPIs(id).catch(() => null),
         ]);
 
         if (!detail) {
@@ -235,8 +243,8 @@ export default function DetectionDetailPage() {
               const bt = new Date(b.time || b.created_at || 0).getTime();
               return bt - at;
             })
-            .slice(0, 3)
         );
+        setVersionKpis(kpis);
         setError(null);
       } catch (err: unknown) {
         setError(err instanceof Error ? err.message : "Failed to load detection details.");
@@ -247,6 +255,13 @@ export default function DetectionDetailPage() {
 
     load();
   }, [detectionId]);
+
+  useEffect(() => {
+    const evidenceId = Number(searchParams.get("evidence"));
+    if (!Number.isNaN(evidenceId) && evidenceId > 0) {
+      setSelectedEvidenceId(evidenceId);
+    }
+  }, [searchParams]);
 
   useEffect(() => {
     if (!assignOwnerOpen || !canAssignOwner) return;
@@ -268,6 +283,10 @@ export default function DetectionDetailPage() {
   }, [detection, tests]);
 
   const meta = HEALTH_META[health];
+  const selectedEvidence = useMemo(
+    () => (selectedEvidenceId == null ? null : events.find((event) => event.id === selectedEvidenceId) || null),
+    [events, selectedEvidenceId]
+  );
   async function handleAssignOwner() {
     if (!detectionId || !canAssignOwner) return;
     try {
@@ -364,13 +383,10 @@ export default function DetectionDetailPage() {
 
   return (
     <PageContainer maxWidth="xl" className="space-y-6">
-      {/* Header strip Ã¢â‚¬â€ title, identity chips, primary action */}
+      {/* Header strip: title, identity chips, primary action */}
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="min-w-0 flex-1">
-          <Link href="/detections" className="text-xs font-medium text-slate-500 dark:text-slate-400 hover:text-[var(--foreground)]">
-            Back to detections
-          </Link>
-          <h1 className="mt-2 truncate text-2xl font-display font-semibold text-[var(--foreground)]">
+          <h1 className="truncate text-2xl font-display font-semibold text-[var(--foreground)]">
             {detection.title}
           </h1>
           <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
@@ -389,7 +405,12 @@ export default function DetectionDetailPage() {
                   Stage
                 </span>
                 <Select
-                  value={activeLifecycleStage ?? ""}
+                  // Radix Select treats empty-string values as malformed
+                  // and silently drops onValueChange events. When the
+                  // stored stage isn't one of the enum values (legacy
+                  // "active", etc.), we want "no selection" — and the
+                  // sentinel for that is `undefined`, not `""`.
+                  value={activeLifecycleStage ?? undefined}
                   onValueChange={(value) =>
                     void handleLifecycleChange(value as DetectionLifecycleStage)
                   }
@@ -431,7 +452,7 @@ export default function DetectionDetailPage() {
         </div>
       </div>
 
-      {/* Hero status Ã¢â‚¬â€ replaces 4 KPI cards + trust card + 3 mini cards */}
+      {/* Hero status */}
       <div className={cn("rounded-2xl border-l-4 border border-[var(--stroke-soft)] bg-[var(--surface-card)] p-6 shadow-[var(--shadow-soft)]", meta.borderLeftClass)}>
         <div className="flex flex-wrap items-start justify-between gap-6">
           <div className="flex items-start gap-4">
@@ -458,7 +479,7 @@ export default function DetectionDetailPage() {
               valueClassName={scoreTone(detection.last_score)}
             />
             <Stat label="Validations" value={String(tests.length)} />
-            <Stat label="Events" value={String(events.length)} />
+            <Stat label="Evidence" value={String(events.length)} />
           </div>
         </div>
       </div>
@@ -466,6 +487,130 @@ export default function DetectionDetailPage() {
       <div className="grid gap-6 lg:grid-cols-[2fr_1fr]">
         {/* Left column: history + source */}
         <div className="space-y-6">
+          <section className="rounded-2xl border border-[var(--stroke-soft)] bg-[var(--surface-card)]">
+            <header className="border-b border-[var(--stroke-soft)]/60 px-5 py-4">
+              <h2 className="text-sm font-semibold text-[var(--foreground)]">Version history</h2>
+              <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
+                Pass / fail rates grouped by rule version. A new version starts whenever the SIEM query, sigma rule, technique, or SIEM type changes.
+              </p>
+            </header>
+            {!versionKpis || (versionKpis.versions.length === 0 && !versionKpis.legacy) ? (
+              <div className="px-5 py-6 text-sm text-slate-600 dark:text-slate-300">
+                No version data yet. Run a validation to start a version trail.
+              </div>
+            ) : (
+              <>
+                <ul className="divide-y divide-[var(--stroke-soft)]/60">
+                  {[...versionKpis.versions].reverse().map((v) => {
+                    const isEmptyCurrent = v.is_current && v.runs === 0;
+                    return (
+                      <li
+                        key={v.version_hash ?? v.version_label}
+                        className="flex flex-col gap-2 px-5 py-4 sm:flex-row sm:items-center sm:justify-between"
+                      >
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2">
+                            <span className="font-mono text-sm font-semibold text-[var(--foreground)]">
+                              {v.version_label}
+                            </span>
+                            {v.is_current ? (
+                              <span className="rounded-full border border-[var(--stroke-soft)] px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                                current
+                              </span>
+                            ) : null}
+                          </div>
+                          <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                            {v.first_seen
+                              ? `first seen ${formatDistanceToNow(new Date(v.first_seen))} ago · last seen ${v.last_seen ? formatDistanceToNow(new Date(v.last_seen)) : "—"} ago`
+                              : "no validation runs on this version yet"}
+                          </p>
+                        </div>
+                        {isEmptyCurrent ? (
+                          // The whole point of landing here after editing a
+                          // rule is to ask "is my edit OK?" — silence is
+                          // the wrong answer. Give the user the next move.
+                          <Link href={`/run-test?detection_id=${detection.id}`}>
+                            <Button size="sm" variant="outline">
+                              <Play className="mr-1.5 h-3.5 w-3.5" />
+                              Run a validation
+                            </Button>
+                          </Link>
+                        ) : v.runs > 0 ? (
+                          <div className="flex flex-wrap items-center gap-x-5 gap-y-1 text-sm">
+                            <span className="text-slate-600 dark:text-slate-300">
+                              <span className="font-semibold text-[var(--foreground)]">{v.runs}</span>{" "}
+                              {v.runs === 1 ? "run" : "runs"}
+                            </span>
+                            <span className="text-emerald-600 dark:text-emerald-400">
+                              pass {Math.round(v.pass_rate * 100)}%
+                            </span>
+                            <span className="text-rose-600 dark:text-rose-400">
+                              fail {Math.round(v.fail_rate * 100)}%
+                            </span>
+                            {v.inconclusive_rate > 0 ? (
+                              <span className="text-amber-600 dark:text-amber-400">
+                                inconclusive {Math.round(v.inconclusive_rate * 100)}%
+                              </span>
+                            ) : null}
+                            {/* The delta line — the panel's whole value
+                                prop. Server pre-computes, signed integer,
+                                already null-guarded for v1 and zero-run
+                                cases so a "▼ 0 pts" never shows up. */}
+                            {v.delta_pass_pct !== null && v.compared_to_label ? (
+                              <span
+                                className={cn(
+                                  "inline-flex items-center gap-0.5 rounded-md border px-1.5 py-0.5 text-xs font-medium",
+                                  v.delta_pass_pct < 0 &&
+                                    "border-rose-500/30 bg-rose-500/10 text-rose-700 dark:text-rose-300",
+                                  v.delta_pass_pct > 0 &&
+                                    "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
+                                  v.delta_pass_pct === 0 &&
+                                    "border-[var(--stroke-soft)] text-slate-500 dark:text-slate-400",
+                                )}
+                                title={`Pass rate compared to ${v.compared_to_label}`}
+                              >
+                                {v.delta_pass_pct < 0
+                                  ? `▼ ${Math.abs(v.delta_pass_pct)} pts`
+                                  : v.delta_pass_pct > 0
+                                    ? `▲ ${v.delta_pass_pct} pts`
+                                    : "no change"}
+                                <span className="opacity-70">vs {v.compared_to_label}</span>
+                              </span>
+                            ) : null}
+                          </div>
+                        ) : null}
+                      </li>
+                    );
+                  })}
+                </ul>
+                {versionKpis.legacy ? (
+                  <div className="border-t border-[var(--stroke-soft)]/60 px-5 py-3">
+                    <button
+                      type="button"
+                      onClick={() => setShowLegacyVersions((v) => !v)}
+                      className="text-xs text-slate-500 dark:text-slate-400 hover:text-[var(--foreground)]"
+                    >
+                      {showLegacyVersions ? "− Hide" : "+ Show"} {versionKpis.legacy.runs} earlier untracked{" "}
+                      {versionKpis.legacy.runs === 1 ? "run" : "runs"}
+                    </button>
+                    {showLegacyVersions ? (
+                      <div className="mt-3 flex flex-wrap items-center gap-x-5 gap-y-1 text-sm text-slate-500 dark:text-slate-400">
+                        <span>
+                          <span className="font-semibold text-[var(--foreground)]">
+                            {versionKpis.legacy.runs}
+                          </span>{" "}
+                          {versionKpis.legacy.runs === 1 ? "run" : "runs"} ran before version tracking was enabled
+                        </span>
+                        <span>pass {Math.round(versionKpis.legacy.pass_rate * 100)}%</span>
+                        <span>fail {Math.round(versionKpis.legacy.fail_rate * 100)}%</span>
+                      </div>
+                    ) : null}
+                  </div>
+                ) : null}
+              </>
+            )}
+          </section>
+
           <section className="rounded-2xl border border-[var(--stroke-soft)] bg-[var(--surface-card)]">
             <header className="flex items-center justify-between border-b border-[var(--stroke-soft)]/60 px-5 py-4">
               <h2 className="text-sm font-semibold text-[var(--foreground)]">Validation history</h2>
@@ -478,7 +623,7 @@ export default function DetectionDetailPage() {
             </header>
             {tests.length === 0 ? (
               <div className="px-5 py-8 text-sm text-slate-600 dark:text-slate-300">
-                No validation events exist for this detection yet. Run the first validation to establish trust.
+                No validation evidence exists for this detection yet. Run the first validation to establish trust.
               </div>
             ) : (
               <Table>
@@ -540,7 +685,7 @@ export default function DetectionDetailPage() {
           </section>
         </div>
 
-        {/* Right column: sidebar Ã¢â‚¬â€ facts, owner, links */}
+        {/* Right column: facts, owner, links */}
         <div className="space-y-6">
           <section className="rounded-2xl border border-[var(--stroke-soft)] bg-[var(--surface-card)] p-5">
             <div className="space-y-5">
@@ -552,7 +697,7 @@ export default function DetectionDetailPage() {
                 </div>
                 <p className="mt-3 text-sm font-medium text-[var(--foreground)]">{meta.nextAction}</p>
                 <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
-                  This is the current recommendation based on the latest validation events and trust state.
+                  This is the current recommendation based on the latest validation evidence and trust state.
                 </p>
               </div>
 
@@ -563,7 +708,7 @@ export default function DetectionDetailPage() {
                   <FactRow label="Last validated" value={absolute(detection.last_tested_at)} />
                   <FactRow label="Last pass" value={absolute(detection.last_pass_at)} />
                   <FactRow label="Last fail" value={absolute(detection.last_fail_at)} />
-                  <FactRow label="Last event" value={relative(detection.last_alert_at)} />
+                  <FactRow label="Last evidence" value={relative(detection.last_alert_at)} />
                   <FactRow label="Updated" value={absolute(detection.last_updated_at)} />
                 </dl>
               </div>
@@ -611,48 +756,56 @@ export default function DetectionDetailPage() {
             )}
           </section>
 
-          {events.length > 0 && (
-            <section className="rounded-2xl border border-[var(--stroke-soft)] bg-[var(--surface-card)] p-5">
+          <section id="validation-evidence" className="rounded-2xl border border-[var(--stroke-soft)] bg-[var(--surface-card)] p-5">
               <div className="flex items-center justify-between">
-                <h2 className="text-sm font-semibold text-[var(--foreground)]">Recent events</h2>
-                <Link
-                  href={`/detections/${detection.id}/events`}
-                  className="text-xs font-medium text-slate-500 dark:text-slate-400 hover:text-[var(--foreground)]"
-                >
-                  Open queue
-                </Link>
+                <h2 className="text-sm font-semibold text-[var(--foreground)]">Validation evidence</h2>
+                <span className="text-xs font-medium text-slate-500 dark:text-slate-400">
+                  Latest {Math.min(3, events.length)} of {events.length}
+                </span>
               </div>
               <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
-                Review the latest event records that support or challenge this trust state.
+                Representative SIEM records from validation runs. Use them to support the trust decision while the SIEM remains the system of record.
               </p>
-              <ul className="mt-3 space-y-2.5">
-                {events.map((event) => (
+              {events.length === 0 ? (
+                <div className="mt-3 rounded-xl border border-dashed border-[var(--stroke-soft)] bg-[var(--surface-elevated)] px-3 py-4 text-xs text-slate-500 dark:text-slate-400">
+                  No validation evidence has been captured yet. Run a validation to attach representative SIEM records to this trust decision.
+                </div>
+              ) : (
+                <ul className="mt-3 space-y-2.5">
+                  {events.slice(0, 3).map((event) => (
                   <li key={event.id} className="rounded-xl border border-[var(--stroke-soft)]/60 bg-[var(--surface-elevated)] px-3 py-2.5">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
                     <p className="truncate text-sm font-medium text-[var(--foreground)]">
-                      {event.name || event.message || "Detection event"}
+                      {event.name || event.message || "Captured evidence"}
                     </p>
                     <p className="mt-0.5 text-[11px] text-slate-500 dark:text-slate-400">
                       {relative(event.time || event.created_at)}
                       {event.host ? ` · ${event.host}` : ""}
                     </p>
+                      </div>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="h-7 shrink-0 px-2 text-xs"
+                        onClick={() => setSelectedEvidenceId(event.id)}
+                      >
+                        Raw
+                      </Button>
+                    </div>
                   </li>
-                ))}
-              </ul>
-            </section>
-          )}
+                  ))}
+                </ul>
+              )}
+          </section>
 
           <section className="rounded-2xl border border-[var(--stroke-soft)] bg-[var(--surface-card)] p-2">
             <div className="px-3 pt-3">
               <h2 className="text-sm font-semibold text-[var(--foreground)]">Next steps</h2>
-              <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
-                Use the trust record, events queue, and validation history to resolve the next blocker.
-              </p>
             </div>
             <SidebarLink href={`/agent?detectionId=${detection.id}`} icon={Shield}>
               Ask Watchtower
-            </SidebarLink>
-            <SidebarLink href={`/detections/${detection.id}/events`} icon={Activity}>
-              Review events queue
             </SidebarLink>
             <SidebarLink href={`/tests?detectionId=${detection.id}`} icon={Clock3}>
               Open validation history
@@ -660,6 +813,54 @@ export default function DetectionDetailPage() {
           </section>
         </div>
       </div>
+
+      <Sheet open={selectedEvidence != null} onOpenChange={(open) => !open && setSelectedEvidenceId(null)}>
+        <SheetContent side="right">
+          <SheetHeader>
+            <SheetTitle>{selectedEvidence?.name || selectedEvidence?.message || "Validation evidence"}</SheetTitle>
+            <SheetDescription>
+              Raw evidence captured during validation. The SIEM remains the system of record.
+            </SheetDescription>
+          </SheetHeader>
+          <SheetBody className="space-y-4">
+            {selectedEvidence && (
+              <>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <EvidenceFact label="Observed" value={absolute(selectedEvidence.time || selectedEvidence.created_at)} />
+                  <EvidenceFact label="Host" value={selectedEvidence.host || "Unknown host"} />
+                  <EvidenceFact label="Source" value={selectedEvidence.source || "SIEM"} />
+                  <EvidenceFact label="Linked test" value={selectedEvidence.test_id ? `#${selectedEvidence.test_id}` : "Not linked"} />
+                </div>
+                <div className="rounded-2xl border border-[var(--stroke-soft)] bg-[var(--surface-elevated)] p-4 text-sm text-slate-700 dark:text-slate-300">
+                  {selectedEvidence.message || "No message text was captured for this evidence record."}
+                </div>
+                <div className="space-y-2">
+                  <p className="text-xs font-semibold uppercase tracking-[0.24em] text-slate-500 dark:text-slate-400">Query context</p>
+                  <pre className="max-h-44 overflow-auto rounded-2xl border border-[var(--stroke-soft)] bg-[var(--surface-elevated)] p-3 text-xs text-[var(--foreground)]">
+{selectedEvidence.query || "--"}
+                  </pre>
+                </div>
+                <div className="space-y-2">
+                  <p className="text-xs font-semibold uppercase tracking-[0.24em] text-slate-500 dark:text-slate-400">Raw payload</p>
+                  <pre className="max-h-[24rem] overflow-auto rounded-2xl border border-[var(--stroke-soft)] bg-[var(--surface-elevated)] p-3 text-xs text-[var(--foreground)]">
+{formatRawEvidence(selectedEvidence.raw_event)}
+                  </pre>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <Link href={`/run-test?detectionId=${detection.id}`}>
+                    <Button size="sm">Revalidate</Button>
+                  </Link>
+                  <Link href={`/agent?detectionId=${detection.id}&alertId=${selectedEvidence.id}`}>
+                    <Button size="sm" variant="outline">
+                      Ask Watchtower
+                    </Button>
+                  </Link>
+                </div>
+              </>
+            )}
+          </SheetBody>
+        </SheetContent>
+      </Sheet>
     </PageContainer>
   );
 }
@@ -688,6 +889,24 @@ function FactRow({ label, value }: { label: string; value: string }) {
       <dd className="truncate text-sm font-medium text-slate-800 dark:text-slate-200">{value}</dd>
     </div>
   );
+}
+
+function EvidenceFact({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-xl border border-[var(--stroke-soft)] bg-[var(--surface-card)] p-3">
+      <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">{label}</p>
+      <p className="mt-1 truncate text-sm font-medium text-[var(--foreground)]">{value}</p>
+    </div>
+  );
+}
+
+function formatRawEvidence(rawEvent?: string) {
+  if (!rawEvent) return "No raw payload stored for this validation evidence.";
+  try {
+    return JSON.stringify(JSON.parse(rawEvent), null, 2);
+  } catch {
+    return rawEvent;
+  }
 }
 
 function SidebarLink({

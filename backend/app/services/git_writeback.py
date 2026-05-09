@@ -147,6 +147,16 @@ async def publish_events(
         outcome.commit_sha = commit_sha
         outcome.commits = 1
         _apply_telemetry(mirror, outcome, status="success")
+    except git.NonFastForwardError as exc:
+        # The remote tip moved between clone and push (someone committed
+        # to the branch externally, or a parallel writeback already
+        # landed). This is recoverable: re-running the sync rebases on
+        # the new tip. Surface it under a distinct telemetry status so
+        # the UI can show "click to retry" instead of "git error".
+        message = str(exc)
+        logger.warning("Mirror %s skipped publish: %s", mirror.id, message)
+        outcome.errors.append(message)
+        _apply_telemetry(mirror, outcome, status="diverged", error=message)
     except git.GitCommandError as exc:
         outcome.errors.append(str(exc))
         _apply_telemetry(mirror, outcome, status="error", error=str(exc))

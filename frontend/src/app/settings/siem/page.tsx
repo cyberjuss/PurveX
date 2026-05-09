@@ -1,18 +1,37 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { Card, CardContent } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Database, PlusCircle, Edit, Trash, PlugZap, Server, CheckCircle2, AlertCircle } from "lucide-react";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  PlusCircle,
+  Edit,
+  Trash,
+  PlugZap,
+  Server,
+  CheckCircle2,
+  AlertCircle,
+  ShieldCheck,
+} from "lucide-react";
 import { apiFetch } from "@/lib/api";
 import { usePermissions } from "@/hooks/usePermissions";
 import { Permission } from "@/lib/permissions";
 import { useToast } from "@/components/ui/toast";
-import { PageContainer } from "@/components/layout/page-container";
-import { PageHeader } from "@/components/layout/page-header";
+import { cn } from "@/lib/utils";
+import {
+  SettingsPageShell,
+  SettingsSection,
+  SettingsBanner,
+  SettingsStatusPill,
+} from "@/components/settings/settings-section";
 import { PageSkeleton } from "@/components/ui/skeleton";
 import { FieldError, FormError } from "@/components/ui/form-error";
 import { z } from "zod";
@@ -379,371 +398,755 @@ export default function SiemSettingsPage() {
 
   if (loading) {
     return (
-      <PageContainer maxWidth="xl">
+      <SettingsPageShell eyebrow="Configuration" title="SIEM" divided={false}>
         <PageSkeleton withEyebrow withActions variant="list" rows={3} />
-      </PageContainer>
+      </SettingsPageShell>
     );
   }
 
   const canManage = hasPermission(Permission.SETTINGS_SIEM_MANAGE);
 
   return (
-    <PageContainer maxWidth="xl" className="space-y-6">
-      <PageHeader
-        eyebrow="Configuration"
-        title="SIEM"
-        subtitle="Connect your SIEM for detection validation and evidence collection."
-        icon={<Database className="h-5 w-5" />}
-        actions={
-          canManage && connections.length > 0 ? (
-            <Button onClick={handleToggleForm}>
-              <PlusCircle className="mr-2 h-4 w-4" />
-              {showAddForm ? "Cancel" : "Add connection"}
-            </Button>
-          ) : undefined
-        }
-      />
-
-      {error && (
-        <div className="flex items-center gap-2 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700 dark:border-rose-500/30 dark:bg-rose-500/10 dark:text-rose-300">
-          <AlertCircle className="h-4 w-4 shrink-0" />
-          {error}
-        </div>
-      )}
-
-      {/* Connection form */}
-      {showAddForm && (
-        <Card className="border border-[var(--stroke-soft)] bg-[var(--surface-card)] shadow-[var(--shadow-soft)]">
-          <CardContent className="pt-5 space-y-4">
-            <div className="flex items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50/60 px-3 py-2 text-xs text-emerald-700 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-300">
-              <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
-              Read-only access only. PurveX does not ingest raw logs.
+    <SettingsPageShell
+      eyebrow="Configuration"
+      title="SIEM"
+      description="Connect your SIEM so PurveX can validate detections and pull evidence on demand. Read-only access only — raw logs never leave your environment."
+      status={
+        <SettingsStatusPill tone={connections.length > 0 ? "ok" : "muted"}>
+          {connections.length > 0
+            ? `${connections.length} connected`
+            : "Not configured"}
+        </SettingsStatusPill>
+      }
+      actions={
+        canManage && connections.length > 0 && !showAddForm ? (
+          <Button size="sm" onClick={handleToggleForm}>
+            <PlusCircle className="mr-2 h-4 w-4" />
+            Add connection
+          </Button>
+        ) : undefined
+      }
+      banner={
+        error ? (
+          <SettingsBanner tone="danger" icon={<AlertCircle className="h-4 w-4" />}>
+            {error}
+          </SettingsBanner>
+        ) : undefined
+      }
+    >
+      {showAddForm ? (
+        <SiemForm
+          editing={!!editingConnection}
+          isSaving={isSaving}
+          siemType={formData.siem_type || ""}
+          isSplunk={isSplunk}
+          isElastic={isElastic}
+          isSentinel={isSentinel}
+          formData={formData}
+          fieldErrors={fieldErrors}
+          onFormChange={handleFormChange}
+          onSelectChange={handleSelectChange}
+          onSubmit={handleFormSubmit}
+          onCancel={() => {
+            setShowAddForm(false);
+            setEditingConnection(null);
+            resetForm();
+          }}
+          splunkToken={splunkToken}
+          setSplunkToken={setSplunkToken}
+          splunkWebUrl={splunkWebUrl}
+          setSplunkWebUrl={setSplunkWebUrl}
+          verifySsl={verifySsl}
+          setVerifySsl={setVerifySsl}
+          notableIndex={notableIndex}
+          setNotableIndex={setNotableIndex}
+          alertsMode={alertsMode}
+          setAlertsMode={setAlertsMode}
+          alertsIndex={alertsIndex}
+          setAlertsIndex={setAlertsIndex}
+          hostField={hostField}
+          setHostField={setHostField}
+          userField={userField}
+          setUserField={setUserField}
+          destField={destField}
+          setDestField={setDestField}
+          srcField={srcField}
+          setSrcField={setSrcField}
+          signatureField={signatureField}
+          setSignatureField={setSignatureField}
+          esApp={esApp}
+          setEsApp={setEsApp}
+          elasticApiKey={elasticApiKey}
+          setElasticApiKey={setElasticApiKey}
+          elasticSignalsIndex={elasticSignalsIndex}
+          setElasticSignalsIndex={setElasticSignalsIndex}
+          elasticEventsIndex={elasticEventsIndex}
+          setElasticEventsIndex={setElasticEventsIndex}
+          sentinelTenantId={sentinelTenantId}
+          setSentinelTenantId={setSentinelTenantId}
+          sentinelClientId={sentinelClientId}
+          setSentinelClientId={setSentinelClientId}
+          sentinelClientSecret={sentinelClientSecret}
+          setSentinelClientSecret={setSentinelClientSecret}
+          sentinelWorkspaceId={sentinelWorkspaceId}
+          setSentinelWorkspaceId={setSentinelWorkspaceId}
+          sentinelSubscriptionId={sentinelSubscriptionId}
+          setSentinelSubscriptionId={setSentinelSubscriptionId}
+          sentinelResourceGroup={sentinelResourceGroup}
+          setSentinelResourceGroup={setSentinelResourceGroup}
+          sentinelWorkspaceName={sentinelWorkspaceName}
+          setSentinelWorkspaceName={setSentinelWorkspaceName}
+        />
+      ) : connections.length === 0 ? (
+        <SettingsSection
+          title="No connections yet"
+          description="Add a SIEM so PurveX can read evidence for detection validation."
+          stacked
+        >
+          <div className="flex flex-col items-center justify-center rounded-lg border border-dashed border-[var(--stroke-soft)] bg-[var(--surface-elevated)] py-10 text-center">
+            <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-[var(--surface-card)]">
+              <PlugZap className="h-5 w-5 text-[var(--surface-subtle-foreground)]" />
             </div>
-            <form onSubmit={handleFormSubmit} className="space-y-4">
-              <div className="grid gap-3 md:grid-cols-2">
-                <div className="space-y-2">
-                  <Label htmlFor="name">Connection name</Label>
-                  <Input
-                    id="name"
-                    value={formData.name || ""}
-                    onChange={handleFormChange}
-                    required
-                    placeholder="e.g. Production Splunk"
-                    aria-invalid={!!fieldErrors.name}
-                    aria-describedby="siem-name-error"
-                  />
-                  <FieldError id="siem-name-error" message={fieldErrors.name} />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="siem_type">SIEM type</Label>
-                  <Select onValueChange={(v: string) => handleSelectChange("siem_type", v)} value={formData.siem_type}>
-                    <SelectTrigger><SelectValue placeholder="Select SIEM type" /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="Splunk">Splunk</SelectItem>
-                      <SelectItem value="Elastic">Elastic Security</SelectItem>
-                      <SelectItem value="Sentinel">Microsoft Sentinel</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-2 md:col-span-2">
-                  <Label htmlFor="url">
-                    {isSplunk && "Management URL (port 8089)"}
-                    {isElastic && "Kibana base URL"}
-                    {isSentinel && "Portal URL (optional)"}
-                  </Label>
-                  <Input
-                    id="url"
-                    value={formData.url || ""}
-                    onChange={handleFormChange}
-                    required={!isSentinel}
-                    placeholder={
-                      isSplunk
-                        ? "https://splunk.company.com:8089"
-                        : isElastic
-                          ? "https://kibana.company.com"
-                          : "https://portal.azure.com"
-                    }
-                    aria-invalid={!!fieldErrors.url}
-                    aria-describedby="siem-url-error"
-                  />
-                  <FieldError id="siem-url-error" message={fieldErrors.url} />
-                </div>
-              </div>
-
-              {fieldErrors.credential && (
-                <FormError message={fieldErrors.credential} />
-              )}
-
-              {isSplunk && (
-                <div className="grid gap-3 md:grid-cols-2">
-                  <div className="space-y-2">
-                    <Label htmlFor="auth_type">Authentication</Label>
-                    <Select onValueChange={(v: string) => handleSelectChange("auth_type", v)} value={formData.auth_type}>
-                      <SelectTrigger><SelectValue placeholder="Select auth type" /></SelectTrigger>
-                      <SelectContent><SelectItem value="Token">Token</SelectItem></SelectContent>
-                    </Select>
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="credentials">Splunk token</Label>
-                    <Input
-                      id="credentials"
-                      type="password"
-                      value={splunkToken}
-                      onChange={(e) => setSplunkToken(e.target.value)}
-                      placeholder={editingConnection ? "Leave blank to keep current" : "Paste token"}
-                    />
-                  </div>
-                </div>
-              )}
-
-              {isElastic && (
-                <div className="grid gap-3 md:grid-cols-2">
-                  <div className="space-y-2">
-                    <Label htmlFor="auth_type">Authentication</Label>
-                    <Select onValueChange={(v: string) => handleSelectChange("auth_type", v)} value={formData.auth_type}>
-                      <SelectTrigger><SelectValue placeholder="Select auth type" /></SelectTrigger>
-                      <SelectContent><SelectItem value="ApiKey">API key</SelectItem></SelectContent>
-                    </Select>
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="elastic_api_key">Elastic API key</Label>
-                    <Input
-                      id="elastic_api_key"
-                      type="password"
-                      value={elasticApiKey}
-                      onChange={(e) => setElasticApiKey(e.target.value)}
-                      placeholder={editingConnection ? "Leave blank to keep current" : "Paste base64 API key"}
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Signals index</Label>
-                    <Input value={elasticSignalsIndex} onChange={(e) => setElasticSignalsIndex(e.target.value)} placeholder=".alerts-security.alerts-default" />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Events index pattern</Label>
-                    <Input value={elasticEventsIndex} onChange={(e) => setElasticEventsIndex(e.target.value)} placeholder="logs-*" />
-                  </div>
-                </div>
-              )}
-
-              {isSentinel && (
-                <div className="grid gap-3 md:grid-cols-2">
-                  <div className="space-y-2">
-                    <Label htmlFor="auth_type">Authentication</Label>
-                    <Select onValueChange={(v: string) => handleSelectChange("auth_type", v)} value={formData.auth_type}>
-                      <SelectTrigger><SelectValue placeholder="Select auth type" /></SelectTrigger>
-                      <SelectContent><SelectItem value="ServicePrincipal">Service principal</SelectItem></SelectContent>
-                    </Select>
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Tenant ID</Label>
-                    <Input value={sentinelTenantId} onChange={(e) => setSentinelTenantId(e.target.value)} placeholder="00000000-0000-0000-0000-000000000000" />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Client ID</Label>
-                    <Input value={sentinelClientId} onChange={(e) => setSentinelClientId(e.target.value)} placeholder="App registration client ID" />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Client secret</Label>
-                    <Input
-                      type="password"
-                      value={sentinelClientSecret}
-                      onChange={(e) => setSentinelClientSecret(e.target.value)}
-                      placeholder={editingConnection ? "Leave blank to keep current" : "Client secret value"}
-                    />
-                  </div>
-                  <div className="space-y-2 md:col-span-2">
-                    <Label>Log Analytics workspace ID</Label>
-                    <Input value={sentinelWorkspaceId} onChange={(e) => setSentinelWorkspaceId(e.target.value)} placeholder="Workspace (customer) ID" />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Subscription ID (optional, for rules)</Label>
-                    <Input value={sentinelSubscriptionId} onChange={(e) => setSentinelSubscriptionId(e.target.value)} />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Resource group (optional)</Label>
-                    <Input value={sentinelResourceGroup} onChange={(e) => setSentinelResourceGroup(e.target.value)} />
-                  </div>
-                  <div className="space-y-2 md:col-span-2">
-                    <Label>Workspace name (optional)</Label>
-                    <Input value={sentinelWorkspaceName} onChange={(e) => setSentinelWorkspaceName(e.target.value)} />
-                  </div>
-                </div>
-              )}
-
-              <div className="space-y-2">
-                <Label htmlFor="log_marker_pattern">Log marker pattern</Label>
-                <Input id="log_marker_pattern" value={formData.log_marker_pattern || ""} onChange={handleFormChange} required placeholder="purvex_*" />
-              </div>
-
-              {isSplunk && (
-              <details className="rounded-xl border border-[var(--stroke-soft)] bg-[var(--surface-elevated)] p-4">
-                <summary className="cursor-pointer text-sm font-medium text-[var(--foreground)]">Advanced evidence mapping</summary>
-                <div className="mt-4 grid gap-3 md:grid-cols-2">
-                  <div className="space-y-2">
-                    <Label>Splunk Web URL</Label>
-                    <Input value={splunkWebUrl} onChange={(e) => setSplunkWebUrl(e.target.value)} placeholder="https://splunk.company.com:8000" />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Verify SSL</Label>
-                    <Select value={verifySsl} onValueChange={(v: string) => setVerifySsl(v)}>
-                      <SelectTrigger><SelectValue /></SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="true">true</SelectItem>
-                        <SelectItem value="false">false</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Alerts source</Label>
-                    <Select value={alertsMode} onValueChange={(v: string) => setAlertsMode(v)}>
-                      <SelectTrigger><SelectValue /></SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="alerts_fired">Alerts fired</SelectItem>
-                        <SelectItem value="alerts_index">Custom alert index</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  {alertsMode === "alerts_index" && (
-                    <div className="space-y-2">
-                      <Label>Alert index</Label>
-                      <Input value={alertsIndex} onChange={(e) => setAlertsIndex(e.target.value)} placeholder="alerts" />
-                    </div>
-                  )}
-                  <div className="space-y-2">
-                    <Label>Fallback index</Label>
-                    <Input value={notableIndex} onChange={(e) => setNotableIndex(e.target.value)} placeholder="notable" />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>ES app name</Label>
-                    <Input value={esApp} onChange={(e) => setEsApp(e.target.value)} placeholder="SplunkEnterpriseSecurity" />
-                  </div>
-                  <div className="space-y-2 md:col-span-2">
-                    <Label>Field mapping</Label>
-                    <div className="grid gap-3 md:grid-cols-3">
-                      <Input value={hostField} onChange={(e) => setHostField(e.target.value)} placeholder="host" />
-                      <Input value={userField} onChange={(e) => setUserField(e.target.value)} placeholder="user" />
-                      <Input value={destField} onChange={(e) => setDestField(e.target.value)} placeholder="dest" />
-                      <Input value={srcField} onChange={(e) => setSrcField(e.target.value)} placeholder="src" />
-                      <Input value={signatureField} onChange={(e) => setSignatureField(e.target.value)} placeholder="signature" />
-                    </div>
-                  </div>
-                </div>
-              </details>
-              )}
-
-              <div className="flex gap-2 pt-2">
-                <Button type="submit" disabled={isSaving}>
-                  {isSaving ? "Saving..." : "Save connection"}
-                </Button>
-                <Button type="button" variant="outline" onClick={() => { setShowAddForm(false); setEditingConnection(null); resetForm(); }}>
-                  Cancel
-                </Button>
-              </div>
-            </form>
-          </CardContent>
-        </Card>
-      )}
-
-      {/* Empty state */}
-      {connections.length === 0 && !showAddForm && (
-        <Card className="border border-[var(--stroke-soft)] bg-[var(--surface-card)] shadow-[var(--shadow-soft)]">
-          <CardContent className="flex flex-col items-center justify-center py-12 text-center">
-            <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-[var(--surface-elevated)] mb-4">
-              <PlugZap className="h-6 w-6 text-[var(--surface-subtle-foreground)]" />
-            </div>
-            <p className="text-base font-semibold text-[var(--foreground)]">No SIEM connections</p>
-            <p className="mt-1 text-sm text-[var(--surface-subtle-foreground)]">Add a connection to start validating detections.</p>
-            {canManage && (
-              <Button onClick={handleToggleForm} className="mt-4">
+            <p className="mt-3 text-sm font-medium text-[var(--surface-card-foreground)]">
+              Connect your first SIEM
+            </p>
+            <p className="mx-auto mt-1 max-w-sm text-xs text-[var(--surface-subtle-foreground)]">
+              We support Splunk, Elastic Security, and Microsoft Sentinel. The
+              account only needs read access.
+            </p>
+            {canManage ? (
+              <Button size="sm" onClick={handleToggleForm} className="mt-4">
                 <PlusCircle className="mr-2 h-4 w-4" />
                 Add connection
               </Button>
-            )}
-          </CardContent>
-        </Card>
-      )}
-
-      {/* Connection cards */}
-      {connections.length > 0 && (
-        <div className="grid gap-4 md:grid-cols-2">
-          {connections.map((conn) => {
-            const health = healthById[conn.id];
-            const isConnected = health?.status === "connected";
-            const isConfigured = conn.credentials_present;
-            return (
-              <Card key={conn.id} className="border border-[var(--stroke-soft)] bg-[var(--surface-card)] shadow-[var(--shadow-soft)] transition hover:shadow-md">
-                <CardContent className="pt-5 pb-5 space-y-4">
-                  <div className="flex items-start justify-between gap-4">
-                    <div className="flex items-start gap-3">
-                      <div className="h-10 w-10 rounded-xl border border-[var(--stroke-soft)] bg-[var(--surface-elevated)] flex items-center justify-center">
-                        <Server className="h-5 w-5 text-[var(--surface-subtle-foreground)]" />
+            ) : null}
+          </div>
+        </SettingsSection>
+      ) : (
+        <SettingsSection
+          title="Connections"
+          description="Each connection is one SIEM PurveX can validate detections against."
+          stacked
+        >
+          <ul className="divide-y divide-[var(--stroke-soft)] overflow-hidden rounded-lg border border-[var(--stroke-soft)]">
+            {connections.map((conn) => {
+              const health = healthById[conn.id];
+              const isConnected = health?.status === "connected";
+              const isConfigured = conn.credentials_present;
+              const tone = isConnected
+                ? "ok"
+                : isConfigured
+                  ? "muted"
+                  : "warn";
+              return (
+                <li
+                  key={conn.id}
+                  className="flex flex-col gap-3 bg-[var(--surface-card)] p-4 sm:flex-row sm:items-start sm:justify-between"
+                >
+                  <div className="flex min-w-0 items-start gap-3">
+                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-[var(--stroke-soft)] bg-[var(--surface-elevated)]">
+                      <Server className="h-4 w-4 text-[var(--surface-subtle-foreground)]" />
+                    </div>
+                    <div className="min-w-0 space-y-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <p className="truncate text-sm font-semibold text-[var(--surface-card-foreground)]">
+                          {conn.name}
+                        </p>
+                        <SettingsStatusPill tone={tone}>
+                          <span
+                            className={cn(
+                              "h-1.5 w-1.5 rounded-full bg-current",
+                              isConnected && "animate-pulse"
+                            )}
+                          />
+                          {isConnected
+                            ? "Connected"
+                            : isConfigured
+                              ? "Configured"
+                              : "Not configured"}
+                        </SettingsStatusPill>
                       </div>
-                      <div>
-                        <h4 className="text-base font-semibold text-[var(--foreground)]">{conn.name}</h4>
-                        <p className="text-xs text-[var(--surface-subtle-foreground)]">{conn.siem_type}</p>
-                      </div>
-                    </div>
-                    <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-medium ${
-                      isConnected
-                        ? "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-300"
-                        : isConfigured
-                          ? "border-sky-200 bg-sky-50 text-sky-700 dark:border-sky-500/30 dark:bg-sky-500/10 dark:text-sky-300"
-                          : "border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-300"
-                    }`}>
-                      <span className={`h-1.5 w-1.5 rounded-full bg-current ${isConnected ? "animate-pulse" : ""}`} />
-                      {isConnected ? "Connected" : isConfigured ? "Configured" : "Not configured"}
-                    </span>
-                  </div>
-
-                  <div className="grid gap-3 rounded-xl border border-[var(--stroke-soft)] bg-[var(--surface-elevated)] p-3 text-xs md:grid-cols-3">
-                    <div>
-                      <p className="text-[10px] uppercase tracking-wider text-[var(--surface-subtle-foreground)]">URL</p>
-                      <p className="mt-1 font-mono text-[11px] text-[var(--foreground)] truncate">{conn.url}</p>
-                    </div>
-                    <div>
-                      <p className="text-[10px] uppercase tracking-wider text-[var(--surface-subtle-foreground)]">Auth</p>
-                      <p className="mt-1 text-[11px] text-[var(--foreground)]">{conn.auth_type}</p>
-                    </div>
-                    <div>
-                      <p className="text-[10px] uppercase tracking-wider text-[var(--surface-subtle-foreground)]">Last validated</p>
-                      <p className="mt-1 text-[11px] text-[var(--foreground)]">
-                        {conn.last_validated_at ? new Date(conn.last_validated_at).toLocaleString() : "Not yet"}
+                      <p className="truncate font-mono text-xs text-[var(--surface-subtle-foreground)]">
+                        {conn.url || "—"}
+                      </p>
+                      <p className="text-xs text-[var(--surface-subtle-foreground)]">
+                        {conn.siem_type} · {conn.auth_type} · last validated{" "}
+                        {conn.last_validated_at
+                          ? new Date(conn.last_validated_at).toLocaleString()
+                          : "never"}
                       </p>
                     </div>
                   </div>
-
-                  <div className="flex flex-wrap items-center gap-2">
-                    <Button variant="outline" size="sm" onClick={() => handleTestConnection(conn.id)}>
-                      Test connection
+                  <div className="flex shrink-0 flex-wrap items-center gap-2 sm:justify-end">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => handleTestConnection(conn.id)}
+                    >
+                      <ShieldCheck className="mr-1.5 h-3.5 w-3.5" />
+                      Test
                     </Button>
                     <Button
                       variant="outline"
                       size="sm"
                       onClick={() => handleEdit(conn)}
                       disabled={!canManage}
-                      title={!canManage ? "You don't have permission to edit SIEM connections" : ""}
+                      title={
+                        !canManage
+                          ? "You don't have permission to edit SIEM connections"
+                          : ""
+                      }
                     >
-                      <Edit className="h-3.5 w-3.5 mr-1.5" />
+                      <Edit className="mr-1.5 h-3.5 w-3.5" />
                       Edit
                     </Button>
                     <Button
-                      variant="destructive"
+                      variant="ghost"
                       size="sm"
                       onClick={() => handleDelete(conn.id)}
                       disabled={!canManage}
-                      title={!canManage ? "You don't have permission to delete SIEM connections" : ""}
+                      title={
+                        !canManage
+                          ? "You don't have permission to delete SIEM connections"
+                          : ""
+                      }
+                      className="text-rose-600 hover:bg-rose-50 hover:text-rose-700 dark:text-rose-300 dark:hover:bg-rose-500/10"
                     >
-                      <Trash className="h-3.5 w-3.5 mr-1.5" />
-                      Remove
+                      <Trash className="h-3.5 w-3.5" />
                     </Button>
                   </div>
-                </CardContent>
-              </Card>
-            );
-          })}
-        </div>
+                </li>
+              );
+            })}
+          </ul>
+        </SettingsSection>
       )}
-    </PageContainer>
+    </SettingsPageShell>
+  );
+}
+
+interface SiemFormProps {
+  editing: boolean;
+  isSaving: boolean;
+  siemType: string;
+  isSplunk: boolean;
+  isElastic: boolean;
+  isSentinel: boolean;
+  formData: Partial<SIEMConnection>;
+  fieldErrors: { name?: string; url?: string; credential?: string };
+  onFormChange: (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => void;
+  onSelectChange: (id: keyof SIEMConnection, value: string) => void;
+  onSubmit: (e: React.FormEvent) => void;
+  onCancel: () => void;
+
+  splunkToken: string;
+  setSplunkToken: (v: string) => void;
+  splunkWebUrl: string;
+  setSplunkWebUrl: (v: string) => void;
+  verifySsl: string;
+  setVerifySsl: (v: string) => void;
+  notableIndex: string;
+  setNotableIndex: (v: string) => void;
+  alertsMode: string;
+  setAlertsMode: (v: string) => void;
+  alertsIndex: string;
+  setAlertsIndex: (v: string) => void;
+  hostField: string;
+  setHostField: (v: string) => void;
+  userField: string;
+  setUserField: (v: string) => void;
+  destField: string;
+  setDestField: (v: string) => void;
+  srcField: string;
+  setSrcField: (v: string) => void;
+  signatureField: string;
+  setSignatureField: (v: string) => void;
+  esApp: string;
+  setEsApp: (v: string) => void;
+
+  elasticApiKey: string;
+  setElasticApiKey: (v: string) => void;
+  elasticSignalsIndex: string;
+  setElasticSignalsIndex: (v: string) => void;
+  elasticEventsIndex: string;
+  setElasticEventsIndex: (v: string) => void;
+
+  sentinelTenantId: string;
+  setSentinelTenantId: (v: string) => void;
+  sentinelClientId: string;
+  setSentinelClientId: (v: string) => void;
+  sentinelClientSecret: string;
+  setSentinelClientSecret: (v: string) => void;
+  sentinelWorkspaceId: string;
+  setSentinelWorkspaceId: (v: string) => void;
+  sentinelSubscriptionId: string;
+  setSentinelSubscriptionId: (v: string) => void;
+  sentinelResourceGroup: string;
+  setSentinelResourceGroup: (v: string) => void;
+  sentinelWorkspaceName: string;
+  setSentinelWorkspaceName: (v: string) => void;
+}
+
+function SiemForm(props: SiemFormProps) {
+  const {
+    editing,
+    isSaving,
+    isSplunk,
+    isElastic,
+    isSentinel,
+    formData,
+    fieldErrors,
+    onFormChange,
+    onSelectChange,
+    onSubmit,
+    onCancel,
+  } = props;
+
+  return (
+    <form onSubmit={onSubmit}>
+      <SettingsSection
+        title="Identity"
+        description="What this connection is and where to reach it."
+      >
+        <div className="space-y-4">
+          <div className="space-y-1.5">
+            <Label htmlFor="name">Connection name</Label>
+            <Input
+              id="name"
+              value={formData.name || ""}
+              onChange={onFormChange}
+              required
+              placeholder="e.g. Production Splunk"
+              aria-invalid={!!fieldErrors.name}
+              aria-describedby="siem-name-error"
+            />
+            <FieldError id="siem-name-error" message={fieldErrors.name} />
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="siem_type">SIEM type</Label>
+            <Select
+              onValueChange={(v: string) => onSelectChange("siem_type", v)}
+              value={formData.siem_type}
+            >
+              <SelectTrigger>
+                <SelectValue placeholder="Select SIEM type" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="Splunk">Splunk</SelectItem>
+                <SelectItem value="Elastic">Elastic Security</SelectItem>
+                <SelectItem value="Sentinel">Microsoft Sentinel</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="url">
+              {isSplunk && "Management URL (port 8089)"}
+              {isElastic && "Kibana base URL"}
+              {isSentinel && "Portal URL (optional)"}
+            </Label>
+            <Input
+              id="url"
+              value={formData.url || ""}
+              onChange={onFormChange}
+              required={!isSentinel}
+              placeholder={
+                isSplunk
+                  ? "https://splunk.company.com:8089"
+                  : isElastic
+                    ? "https://kibana.company.com"
+                    : "https://portal.azure.com"
+              }
+              aria-invalid={!!fieldErrors.url}
+              aria-describedby="siem-url-error"
+            />
+            <FieldError id="siem-url-error" message={fieldErrors.url} />
+          </div>
+        </div>
+      </SettingsSection>
+
+      <SettingsSection
+        title="Authentication"
+        description="Read-only credentials. PurveX never ingests raw logs."
+      >
+        <div className="space-y-4">
+          {fieldErrors.credential ? <FormError message={fieldErrors.credential} /> : null}
+
+          {isSplunk ? (
+            <SplunkAuthFields
+              authType={formData.auth_type || "Token"}
+              onAuthChange={(v) => onSelectChange("auth_type", v)}
+              token={props.splunkToken}
+              setToken={props.setSplunkToken}
+              editing={editing}
+            />
+          ) : null}
+
+          {isElastic ? (
+            <ElasticAuthFields
+              authType={formData.auth_type || "ApiKey"}
+              onAuthChange={(v) => onSelectChange("auth_type", v)}
+              apiKey={props.elasticApiKey}
+              setApiKey={props.setElasticApiKey}
+              signalsIndex={props.elasticSignalsIndex}
+              setSignalsIndex={props.setElasticSignalsIndex}
+              eventsIndex={props.elasticEventsIndex}
+              setEventsIndex={props.setElasticEventsIndex}
+              editing={editing}
+            />
+          ) : null}
+
+          {isSentinel ? (
+            <SentinelAuthFields
+              authType={formData.auth_type || "ServicePrincipal"}
+              onAuthChange={(v) => onSelectChange("auth_type", v)}
+              tenantId={props.sentinelTenantId}
+              setTenantId={props.setSentinelTenantId}
+              clientId={props.sentinelClientId}
+              setClientId={props.setSentinelClientId}
+              clientSecret={props.sentinelClientSecret}
+              setClientSecret={props.setSentinelClientSecret}
+              workspaceId={props.sentinelWorkspaceId}
+              setWorkspaceId={props.setSentinelWorkspaceId}
+              subscriptionId={props.sentinelSubscriptionId}
+              setSubscriptionId={props.setSentinelSubscriptionId}
+              resourceGroup={props.sentinelResourceGroup}
+              setResourceGroup={props.setSentinelResourceGroup}
+              workspaceName={props.sentinelWorkspaceName}
+              setWorkspaceName={props.setSentinelWorkspaceName}
+              editing={editing}
+            />
+          ) : null}
+        </div>
+      </SettingsSection>
+
+      <SettingsSection
+        title="Evidence"
+        description="How PurveX recognises its own validation traffic in your SIEM."
+      >
+        <div className="space-y-4">
+          <div className="space-y-1.5">
+            <Label htmlFor="log_marker_pattern">Log marker pattern</Label>
+            <Input
+              id="log_marker_pattern"
+              value={formData.log_marker_pattern || ""}
+              onChange={onFormChange}
+              required
+              placeholder="purvex_*"
+            />
+            <p className="text-xs text-[var(--surface-subtle-foreground)]">
+              Used to filter validation activity from real alerts in queries.
+            </p>
+          </div>
+
+          {isSplunk ? (
+            <details className="rounded-lg border border-[var(--stroke-soft)] bg-[var(--surface-elevated)] px-4 py-3">
+              <summary className="cursor-pointer text-xs font-semibold uppercase tracking-wider text-[var(--surface-subtle-foreground)]">
+                Advanced Splunk mapping
+              </summary>
+              <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                <div className="space-y-1.5">
+                  <Label>Splunk Web URL</Label>
+                  <Input
+                    value={props.splunkWebUrl}
+                    onChange={(e) => props.setSplunkWebUrl(e.target.value)}
+                    placeholder="https://splunk.company.com:8000"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label>Verify SSL</Label>
+                  <Select
+                    value={props.verifySsl}
+                    onValueChange={(v: string) => props.setVerifySsl(v)}
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="true">true</SelectItem>
+                      <SelectItem value="false">false</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1.5">
+                  <Label>Alerts source</Label>
+                  <Select
+                    value={props.alertsMode}
+                    onValueChange={(v: string) => props.setAlertsMode(v)}
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="alerts_fired">Alerts fired</SelectItem>
+                      <SelectItem value="alerts_index">Custom alert index</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                {props.alertsMode === "alerts_index" ? (
+                  <div className="space-y-1.5">
+                    <Label>Alert index</Label>
+                    <Input
+                      value={props.alertsIndex}
+                      onChange={(e) => props.setAlertsIndex(e.target.value)}
+                      placeholder="alerts"
+                    />
+                  </div>
+                ) : null}
+                <div className="space-y-1.5">
+                  <Label>Fallback index</Label>
+                  <Input
+                    value={props.notableIndex}
+                    onChange={(e) => props.setNotableIndex(e.target.value)}
+                    placeholder="notable"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label>ES app name</Label>
+                  <Input
+                    value={props.esApp}
+                    onChange={(e) => props.setEsApp(e.target.value)}
+                    placeholder="SplunkEnterpriseSecurity"
+                  />
+                </div>
+                <div className="space-y-1.5 sm:col-span-2">
+                  <Label>Field mapping</Label>
+                  <div className="grid gap-2 sm:grid-cols-3">
+                    <Input
+                      value={props.hostField}
+                      onChange={(e) => props.setHostField(e.target.value)}
+                      placeholder="host"
+                    />
+                    <Input
+                      value={props.userField}
+                      onChange={(e) => props.setUserField(e.target.value)}
+                      placeholder="user"
+                    />
+                    <Input
+                      value={props.destField}
+                      onChange={(e) => props.setDestField(e.target.value)}
+                      placeholder="dest"
+                    />
+                    <Input
+                      value={props.srcField}
+                      onChange={(e) => props.setSrcField(e.target.value)}
+                      placeholder="src"
+                    />
+                    <Input
+                      value={props.signatureField}
+                      onChange={(e) => props.setSignatureField(e.target.value)}
+                      placeholder="signature"
+                    />
+                  </div>
+                </div>
+              </div>
+            </details>
+          ) : null}
+        </div>
+      </SettingsSection>
+
+      <div className="flex items-center justify-end gap-2 border-t border-[var(--stroke-soft)] py-4">
+        <Button type="button" variant="ghost" size="sm" onClick={onCancel}>
+          Cancel
+        </Button>
+        <Button type="submit" size="sm" disabled={isSaving}>
+          <CheckCircle2 className="mr-1.5 h-4 w-4" />
+          {isSaving ? "Saving…" : editing ? "Save changes" : "Save connection"}
+        </Button>
+      </div>
+    </form>
+  );
+}
+
+function SplunkAuthFields({
+  authType,
+  onAuthChange,
+  token,
+  setToken,
+  editing,
+}: {
+  authType: string;
+  onAuthChange: (v: string) => void;
+  token: string;
+  setToken: (v: string) => void;
+  editing: boolean;
+}) {
+  return (
+    <div className="grid gap-3 sm:grid-cols-2">
+      <div className="space-y-1.5">
+        <Label htmlFor="auth_type">Auth method</Label>
+        <Select onValueChange={onAuthChange} value={authType}>
+          <SelectTrigger>
+            <SelectValue placeholder="Select auth type" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="Token">Token</SelectItem>
+          </SelectContent>
+        </Select>
+      </div>
+      <div className="space-y-1.5">
+        <Label htmlFor="splunk_token">Splunk token</Label>
+        <Input
+          id="splunk_token"
+          type="password"
+          value={token}
+          onChange={(e) => setToken(e.target.value)}
+          placeholder={editing ? "Leave blank to keep current" : "Paste token"}
+        />
+      </div>
+    </div>
+  );
+}
+
+function ElasticAuthFields({
+  authType,
+  onAuthChange,
+  apiKey,
+  setApiKey,
+  signalsIndex,
+  setSignalsIndex,
+  eventsIndex,
+  setEventsIndex,
+  editing,
+}: {
+  authType: string;
+  onAuthChange: (v: string) => void;
+  apiKey: string;
+  setApiKey: (v: string) => void;
+  signalsIndex: string;
+  setSignalsIndex: (v: string) => void;
+  eventsIndex: string;
+  setEventsIndex: (v: string) => void;
+  editing: boolean;
+}) {
+  return (
+    <div className="grid gap-3 sm:grid-cols-2">
+      <div className="space-y-1.5">
+        <Label>Auth method</Label>
+        <Select onValueChange={onAuthChange} value={authType}>
+          <SelectTrigger>
+            <SelectValue placeholder="Select auth type" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="ApiKey">API key</SelectItem>
+          </SelectContent>
+        </Select>
+      </div>
+      <div className="space-y-1.5">
+        <Label htmlFor="elastic_api_key">Elastic API key</Label>
+        <Input
+          id="elastic_api_key"
+          type="password"
+          value={apiKey}
+          onChange={(e) => setApiKey(e.target.value)}
+          placeholder={editing ? "Leave blank to keep current" : "Paste base64 API key"}
+        />
+      </div>
+      <div className="space-y-1.5">
+        <Label>Signals index</Label>
+        <Input
+          value={signalsIndex}
+          onChange={(e) => setSignalsIndex(e.target.value)}
+          placeholder=".alerts-security.alerts-default"
+        />
+      </div>
+      <div className="space-y-1.5">
+        <Label>Events index pattern</Label>
+        <Input
+          value={eventsIndex}
+          onChange={(e) => setEventsIndex(e.target.value)}
+          placeholder="logs-*"
+        />
+      </div>
+    </div>
+  );
+}
+
+function SentinelAuthFields(props: {
+  authType: string;
+  onAuthChange: (v: string) => void;
+  tenantId: string;
+  setTenantId: (v: string) => void;
+  clientId: string;
+  setClientId: (v: string) => void;
+  clientSecret: string;
+  setClientSecret: (v: string) => void;
+  workspaceId: string;
+  setWorkspaceId: (v: string) => void;
+  subscriptionId: string;
+  setSubscriptionId: (v: string) => void;
+  resourceGroup: string;
+  setResourceGroup: (v: string) => void;
+  workspaceName: string;
+  setWorkspaceName: (v: string) => void;
+  editing: boolean;
+}) {
+  return (
+    <div className="grid gap-3 sm:grid-cols-2">
+      <div className="space-y-1.5">
+        <Label>Auth method</Label>
+        <Select onValueChange={props.onAuthChange} value={props.authType}>
+          <SelectTrigger>
+            <SelectValue placeholder="Select auth type" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="ServicePrincipal">Service principal</SelectItem>
+          </SelectContent>
+        </Select>
+      </div>
+      <div className="space-y-1.5">
+        <Label>Tenant ID</Label>
+        <Input
+          value={props.tenantId}
+          onChange={(e) => props.setTenantId(e.target.value)}
+          placeholder="00000000-0000-0000-0000-000000000000"
+        />
+      </div>
+      <div className="space-y-1.5">
+        <Label>Client ID</Label>
+        <Input
+          value={props.clientId}
+          onChange={(e) => props.setClientId(e.target.value)}
+          placeholder="App registration client ID"
+        />
+      </div>
+      <div className="space-y-1.5">
+        <Label>Client secret</Label>
+        <Input
+          type="password"
+          value={props.clientSecret}
+          onChange={(e) => props.setClientSecret(e.target.value)}
+          placeholder={props.editing ? "Leave blank to keep current" : "Client secret value"}
+        />
+      </div>
+      <div className="space-y-1.5 sm:col-span-2">
+        <Label>Log Analytics workspace ID</Label>
+        <Input
+          value={props.workspaceId}
+          onChange={(e) => props.setWorkspaceId(e.target.value)}
+          placeholder="Workspace (customer) ID"
+        />
+      </div>
+      <div className="space-y-1.5">
+        <Label>Subscription ID (optional)</Label>
+        <Input
+          value={props.subscriptionId}
+          onChange={(e) => props.setSubscriptionId(e.target.value)}
+        />
+      </div>
+      <div className="space-y-1.5">
+        <Label>Resource group (optional)</Label>
+        <Input
+          value={props.resourceGroup}
+          onChange={(e) => props.setResourceGroup(e.target.value)}
+        />
+      </div>
+      <div className="space-y-1.5 sm:col-span-2">
+        <Label>Workspace name (optional)</Label>
+        <Input
+          value={props.workspaceName}
+          onChange={(e) => props.setWorkspaceName(e.target.value)}
+        />
+      </div>
+    </div>
   );
 }

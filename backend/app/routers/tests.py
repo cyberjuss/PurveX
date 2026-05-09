@@ -14,6 +14,7 @@ from sqlalchemy import delete, desc
 from .. import models, schemas
 from ..db import get_db, async_sessionmaker
 from ..services.atomic_runner import generate_marker, execute_test_pipeline
+from ..services.detection_versioning import maybe_compute_version_hash
 from ..services.scoring import score_test_run
 from ..jobs import enqueue_test_execution
 from ..schemas import TestDetailResponse
@@ -204,6 +205,7 @@ async def run_test(
             initiated_by_username=initiated_by_username,
             initiated_by_role=initiated_by_role,
             started_at=datetime.utcnow(),
+            detection_version_hash=maybe_compute_version_hash(detection),
         )
         db.add(db_test)
         await db.commit()

@@ -12,15 +12,17 @@ ROOT_ENV = BACKEND_DIR.parent / ".env"
 load_dotenv(dotenv_path=ROOT_ENV)
 
 DEFAULT_DEPLOYMENT_ENV = os.getenv("PURVEX_ENV", "dev")
+STRICT_DEPLOYMENT_ENVS = {"prod", "staging", "beta"}
 DEFAULT_DATABASE_URL = os.getenv(
     "DATABASE_URL",
     f"sqlite+aiosqlite:///{(BACKEND_DIR / 'purvex.db').as_posix()}",
 )
-DEFAULT_CREATE_DEFAULT_ADMIN = DEFAULT_DEPLOYMENT_ENV.lower() != "prod"
-DEFAULT_ADMIN_PASSWORD_VALUE = (
-    os.getenv("DEFAULT_ADMIN_PASSWORD")
-    or ("admin" if DEFAULT_CREATE_DEFAULT_ADMIN else None)
-)
+# CREATE_DEFAULT_ADMIN is opt-in only. The launcher's interactive bootstrap
+# (scripts/create_admin.py) is the supported path; the in-process auto-create
+# path is reserved for unattended local dev where the operator has explicitly
+# set DEFAULT_ADMIN_PASSWORD. There is no implicit "admin" fallback.
+DEFAULT_CREATE_DEFAULT_ADMIN = False
+DEFAULT_ADMIN_PASSWORD_VALUE = os.getenv("DEFAULT_ADMIN_PASSWORD")
 
 class Settings(BaseSettings):
     project_name: str = "PurveX"
@@ -29,7 +31,11 @@ class Settings(BaseSettings):
     database_url: str = DEFAULT_DATABASE_URL
 
     # JWT Settings
-    # SECURITY: In production, this MUST be set via environment variable
+    # SECURITY: This MUST be set via environment variable in any environment
+    # other than ad-hoc local dev. If unset, we generate an *ephemeral* key and
+    # log a loud warning — every restart invalidates all sessions, so this is
+    # only acceptable on a developer's laptop. Beta/staging/production boot is
+    # blocked at the bottom of this file when JWT_SECRET_KEY is missing.
     # Generate a strong secret: python -c "import secrets; print(secrets.token_urlsafe(32))"
     JWT_SECRET_KEY: str = os.getenv("JWT_SECRET_KEY", "") or secrets.token_urlsafe(32)
     JWT_ALGORITHM: str = "HS256"
@@ -153,6 +159,21 @@ class Settings(BaseSettings):
     OPENAI_MODEL: str = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
     OPENAI_API_BASE_URL: str = os.getenv("OPENAI_API_BASE_URL", "https://api.openai.com/v1")
     AI_PROVIDER: str = os.getenv("AI_PROVIDER", "OpenAI")
+    # Comma-separated extra hostnames allowed for the LLM `api_base_url` on
+    # top of the built-in api.openai.com / api.deepseek.com. Use this to
+    # whitelist self-hosted endpoints (Azure OpenAI, vLLM behind a public TLS
+    # proxy, …). Per-org `api_base_url` settings that don't match the
+    # allowlist are rejected before any request is made.
+    LLM_EXTRA_ALLOWED_HOSTS: str = os.getenv("PURVEX_LLM_ALLOWED_HOSTS", "")
+    # Per-user rate limit on Watchtower chat (sliding window). Defaults are
+    # tuned so an interactive user is never throttled but a stuck client or
+    # malicious actor can't exhaust the customer's LLM quota.
+    AI_CHAT_RATE_LIMIT_MAX_REQUESTS: int = int(
+        os.getenv("AI_CHAT_RATE_LIMIT_MAX_REQUESTS", "30")
+    )
+    AI_CHAT_RATE_LIMIT_WINDOW_SECONDS: int = int(
+        os.getenv("AI_CHAT_RATE_LIMIT_WINDOW_SECONDS", "300")
+    )
     GENERATE_TUNING_SUGGESTIONS: bool = True
     EXPLAIN_TEST_FAILURES: bool = True
     AUTOMATICALLY_MODIFY_RULES: bool = False
@@ -160,7 +181,7 @@ class Settings(BaseSettings):
     NO_RAW_LOGS_OUTSIDE_ENV: bool = False
     AI_AUDIENCE_PREFERENCE: str = "Analyst"
 
-    # Deployment environment hint ("dev", "staging", "prod") used for safety checks.
+    # Deployment environment hint ("dev", "beta", "staging", "prod") used for safety checks.
     DEPLOYMENT_ENV: str = DEFAULT_DEPLOYMENT_ENV
 
     # Atomic Red Team catalog storage
@@ -185,23 +206,30 @@ settings = Settings()
 # --- Production safety checks ---
 _config_logger = logging.getLogger("purvex.config")
 
-if settings.DEPLOYMENT_ENV.lower() in ("prod", "staging"):
+if settings.DEPLOYMENT_ENV.lower() in STRICT_DEPLOYMENT_ENVS:
     _missing = []
     if not os.getenv("JWT_SECRET_KEY"):
         _missing.append("JWT_SECRET_KEY")
     if not os.getenv("PURVEX_ENCRYPTION_KEY"):
         _missing.append("PURVEX_ENCRYPTION_KEY")
     if not os.getenv("REDIS_URL"):
-        _missing.append("REDIS_URL (required for distributed rate limiting in staging/production)")
+        _missing.append("REDIS_URL (required for distributed rate limiting in beta/staging/production)")
     if "sqlite" in settings.database_url.lower():
-        _missing.append("DATABASE_URL (SQLite is not supported in production — use PostgreSQL)")
+        _missing.append("DATABASE_URL (SQLite is not supported in managed deployments — use PostgreSQL)")
     if _missing:
         raise RuntimeError(
-            f"Production deployment blocked — missing required config: {', '.join(_missing)}. "
+            f"Managed deployment blocked — missing required config: {', '.join(_missing)}. "
             "See .env.example for setup instructions."
         )
 elif "sqlite" in settings.database_url.lower():
     _config_logger.warning(
         "Using SQLite database. This is fine for development but not suitable "
         "for production. Set DATABASE_URL to a PostgreSQL connection string."
+    )
+
+if not os.getenv("JWT_SECRET_KEY"):
+    _config_logger.warning(
+        "JWT_SECRET_KEY is not set; generated an ephemeral key for this process. "
+        "All sessions will be invalidated on the next restart. Set JWT_SECRET_KEY "
+        "in the environment (see scripts/purvex.sh setup or docs/beta-install-runbook.md)."
     )

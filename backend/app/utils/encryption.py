@@ -4,8 +4,8 @@ API keys, TOTP secrets).
 
 The encryption key is read from the ``PURVEX_ENCRYPTION_KEY`` environment
 variable.  In *development* mode a deterministic fallback is used so the app
-still starts, but a loud warning is emitted.  In *production* the app refuses
-to start without a proper key.
+still starts, but a loud warning is emitted.  In *beta/staging/production* the
+app refuses to start without a proper key.
 
 Generate a key once with::
 
@@ -36,9 +36,9 @@ def _load_key() -> bytes:
 
     from ..config import settings
 
-    if getattr(settings, "DEPLOYMENT_ENV", "dev").lower() in ("prod", "staging"):
+    if getattr(settings, "DEPLOYMENT_ENV", "dev").lower() in ("prod", "staging", "beta"):
         raise RuntimeError(
-            f"{_KEY_ENV} environment variable is required in production/staging. "
+            f"{_KEY_ENV} environment variable is required in beta/staging/production. "
             "Generate one with: python -c \"from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())\""
         )
 

@@ -8,7 +8,13 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 def test_current_alembic_head_is_available():
     from app.main import _current_alembic_head
 
-    assert _current_alembic_head() == "0008"
+    assert _current_alembic_head() == "0011"
+
+
+def test_beta_is_treated_as_managed_schema_env():
+    from app.main import MANAGED_SCHEMA_ENVS
+
+    assert "beta" in MANAGED_SCHEMA_ENVS
 
 
 def test_dependency_health_endpoint_exists():

@@ -54,7 +54,7 @@ function normalizeResult(test: TestWithDetectionTitle): ResultKey {
 function getIssueLabel(test: TestWithDetectionTitle) {
   const result = normalizeResult(test);
   if (result === "FAIL") return "Detection missed";
-  if (result === "INCONCLUSIVE") return "Telemetry gap";
+  if (result === "INCONCLUSIVE") return "No logs";
   if (result === "ERROR") return "Execution error";
   if (result === "RUNNING" || result === "PENDING") return "In flight";
   if (result === "PASS") return "Validated";
@@ -266,7 +266,7 @@ export function TestsWorkspace({ initialTests }: TestsWorkspaceProps = {}) {
       {/* Inline status strip */}
       <div className="flex flex-wrap items-center gap-2">
         <StatusPill label="Needs action" count={statusCounts.attention} tone="danger" />
-        <StatusPill label="Telemetry blocked" count={statusCounts.telemetry} tone="warning" />
+        <StatusPill label="No logs" count={statusCounts.telemetry} tone="warning" />
         <StatusPill label="In flight" count={statusCounts.inFlight} tone="info" />
         <StatusPill label="Trusted" count={statusCounts.trusted} tone="success" />
         <span className="text-xs text-slate-400 dark:text-slate-500 ml-1">{tests.length} total runs</span>
@@ -514,7 +514,7 @@ export function TestsWorkspace({ initialTests }: TestsWorkspaceProps = {}) {
               {[
                 { label: "Validated", count: filteredTests.filter((t) => normalizeResult(t) === "PASS").length, color: "bg-emerald-500" },
                 { label: "Detection missed", count: filteredTests.filter((t) => normalizeResult(t) === "FAIL").length, color: "bg-rose-500" },
-                { label: "Telemetry gap", count: filteredTests.filter((t) => normalizeResult(t) === "INCONCLUSIVE").length, color: "bg-amber-400" },
+                { label: "No logs", count: filteredTests.filter((t) => normalizeResult(t) === "INCONCLUSIVE").length, color: "bg-amber-400" },
                 { label: "Execution error", count: filteredTests.filter((t) => normalizeResult(t) === "ERROR").length, color: "bg-red-400" },
               ].map((row) => (
                 <div key={row.label} className="flex items-center gap-3">

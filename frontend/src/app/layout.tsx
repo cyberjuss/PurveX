@@ -22,9 +22,9 @@ export default async function RootLayout({
       suppressHydrationWarning
     >
       <head>
-        <link rel="icon" href="/purvex-favicon.svg" />
+        <link rel="icon" href="/purvex-favicon.svg?v=8" />
         <link rel="apple-touch-icon" sizes="180x180" href="/logo.png?v=7" />
-        <link rel="shortcut icon" href="/purvex-favicon.svg" />
+        <link rel="shortcut icon" href="/purvex-favicon.svg?v=8" />
         {nonce ? <meta name="csp-nonce" content={nonce} /> : null}
       </head>
       <body className={`${inter.className} text-foreground`} suppressHydrationWarning>

@@ -2,17 +2,26 @@
 
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { Card, CardContent } from "@/components/ui/card";
-import { SkeletonCard } from "@/components/ui/skeleton";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
-import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
+import { Skeleton } from "@/components/ui/skeleton";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { apiFetch } from "@/lib/api";
-import { Sparkles } from "lucide-react";
-import { PageContainer } from "@/components/layout/page-container";
-import { PageHeader } from "@/components/layout/page-header";
+import {
+  SettingsPageShell,
+  SettingsSection,
+  SettingsRow,
+  SettingsBanner,
+  SettingsSaveBar,
+  SettingsStatusPill,
+} from "@/components/settings/settings-section";
 
 interface AIAssistantSettings {
   provider: string;
@@ -33,6 +42,7 @@ function getErrorMessage(error: unknown, fallback: string) {
 
 export default function AIAssistantSettingsPage() {
   const [settings, setSettings] = useState<AIAssistantSettings | null>(null);
+  const [pristine, setPristine] = useState<AIAssistantSettings | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
@@ -44,8 +54,9 @@ export default function AIAssistantSettingsPage() {
         setLoading(true);
         const data = await apiFetch("/settings/ai-assistant-settings");
         setSettings(data);
-      } catch (error: unknown) {
-        setError(getErrorMessage(error, "Failed to load AI assistant settings."));
+        setPristine(data);
+      } catch (err: unknown) {
+        setError(getErrorMessage(err, "Failed to load Watchtower settings."));
       } finally {
         setLoading(false);
       }
@@ -53,23 +64,19 @@ export default function AIAssistantSettingsPage() {
     fetchSettings();
   }, []);
 
-  // Normalize provider defaults on initial load so DeepSeek doesn't point at OpenAI.
+  // Normalise provider defaults so DeepSeek doesn't point at the OpenAI URL.
   useEffect(() => {
     if (!settings) return;
     const providerLower = (settings.provider || "").toLowerCase();
+    const baseUrl = (settings.api_base_url || "").trim();
+    const model = (settings.model_name || "").trim();
     if (providerLower === "deepseek") {
-      const baseUrl = (settings.api_base_url || "").trim();
-      const model = (settings.model_name || "").trim();
       const nextBaseUrl = !baseUrl || baseUrl === "https://api.openai.com/v1" ? "https://api.deepseek.com/v1" : baseUrl;
       const nextModel = !model || model.startsWith("gpt-") ? "deepseek-chat" : model;
       if (nextBaseUrl !== settings.api_base_url || nextModel !== settings.model_name) {
         setSettings((prev) => (prev ? { ...prev, api_base_url: nextBaseUrl, model_name: nextModel } : prev));
       }
-      return;
-    }
-    if (providerLower === "openai") {
-      const baseUrl = (settings.api_base_url || "").trim();
-      const model = (settings.model_name || "").trim();
+    } else if (providerLower === "openai") {
       const nextBaseUrl = !baseUrl || baseUrl === "https://api.deepseek.com/v1" ? "https://api.openai.com/v1" : baseUrl;
       const nextModel = !model || model.startsWith("deepseek-") ? "gpt-4o-mini" : model;
       if (nextBaseUrl !== settings.api_base_url || nextModel !== settings.model_name) {
@@ -78,58 +85,23 @@ export default function AIAssistantSettingsPage() {
     }
   }, [settings]);
 
+  const dirty = !!settings && !!pristine && JSON.stringify(settings) !== JSON.stringify(pristine);
+
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
-    const target = e.target as HTMLInputElement;
-    const { id, value, type } = target;
-    const checked = type === "checkbox" ? target.checked : undefined;
-    setSettings(prev => (prev ? { ...prev, [id]: type === "checkbox" ? checked : value } : null));
+    const { id, value } = e.target;
+    setSettings((prev) => (prev ? { ...prev, [id]: value } : null));
   };
 
-  const handleCheckboxChange = (id: keyof AIAssistantSettings, checked: boolean) => {
-    setSettings(prev => (prev ? { ...prev, [id]: checked } : null));
+  const handleSwitch = (id: keyof AIAssistantSettings, checked: boolean) => {
+    setSettings((prev) => (prev ? { ...prev, [id]: checked } : null));
   };
 
-  const handleSelectChange = (id: keyof AIAssistantSettings, value: string) => {
-    setSettings((prev) => {
-      if (!prev) return null;
-      if (id !== "provider") {
-        return { ...prev, [id]: value };
-      }
-
-      const nextProvider = value;
-      const next: AIAssistantSettings = { ...prev, provider: nextProvider };
-
-      const providerLower = nextProvider.toLowerCase();
-      if (providerLower === "deepseek") {
-        const baseUrl = (next.api_base_url || "").trim();
-        const model = (next.model_name || "").trim();
-
-        if (!baseUrl || baseUrl === "https://api.openai.com/v1") {
-          next.api_base_url = "https://api.deepseek.com/v1";
-        }
-        if (!model || model.startsWith("gpt-")) {
-          next.model_name = "deepseek-chat";
-        }
-      } else if (providerLower === "openai") {
-        const baseUrl = (next.api_base_url || "").trim();
-        const model = (next.model_name || "").trim();
-
-        if (!baseUrl || baseUrl === "https://api.deepseek.com/v1") {
-          next.api_base_url = "https://api.openai.com/v1";
-        }
-        if (!model || model.startsWith("deepseek-")) {
-          next.model_name = "gpt-4o-mini";
-        }
-      }
-
-      return next;
-    });
+  const handleSelect = (id: keyof AIAssistantSettings, value: string) => {
+    setSettings((prev) => (prev ? { ...prev, [id]: value } : null));
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleSave = async () => {
     if (!settings) return;
-
     setIsSaving(true);
     setError(null);
     try {
@@ -137,107 +109,108 @@ export default function AIAssistantSettingsPage() {
         method: "PUT",
         body: JSON.stringify(settings),
       });
+      setPristine(settings);
       router.refresh();
-    } catch (error: unknown) {
-      setError(getErrorMessage(error, "Failed to save AI assistant settings."));
+    } catch (err: unknown) {
+      setError(getErrorMessage(err, "Failed to save Watchtower settings."));
     } finally {
       setIsSaving(false);
     }
   };
 
+  const handleReset = () => setSettings(pristine);
+
   if (loading) {
     return (
-      <PageContainer maxWidth="lg" className="space-y-6">
-        <PageHeader
-          eyebrow="AI governance"
-          title="AI Assistant"
-          subtitle="Configure what the assistant can analyze, how it responds, and what data limits apply inside PurveX."
-          icon={<Sparkles className="h-5 w-5" />}
-        />
-        <div className="space-y-4">
-          <SkeletonCard />
-          <SkeletonCard />
+      <SettingsPageShell eyebrow="AI governance" title="Watchtower">
+        <div className="space-y-6 py-8">
+          <Skeleton className="h-5 w-40" />
+          <Skeleton className="h-10 w-full" />
+          <Skeleton className="h-10 w-full" />
         </div>
-      </PageContainer>
-    );
-  }
-  if (error) {
-    return (
-      <PageContainer maxWidth="lg" className="space-y-6">
-        <PageHeader
-          eyebrow="AI governance"
-          title="AI Assistant"
-          subtitle="Configure what the assistant can analyze, how it responds, and what data limits apply inside PurveX."
-          icon={<Sparkles className="h-5 w-5" />}
-        />
-        <Card><CardContent className="pt-6 text-sm text-destructive">Error loading AI assistant settings: {error}</CardContent></Card>
-      </PageContainer>
-    );
-  }
-  if (!settings) {
-    return (
-      <PageContainer maxWidth="lg" className="space-y-6">
-        <PageHeader
-          eyebrow="AI governance"
-          title="AI Assistant"
-          subtitle="Configure what the assistant can analyze, how it responds, and what data limits apply inside PurveX."
-          icon={<Sparkles className="h-5 w-5" />}
-        />
-        <Card><CardContent className="pt-6 text-sm text-muted-foreground">No AI assistant settings found.</CardContent></Card>
-      </PageContainer>
+      </SettingsPageShell>
     );
   }
 
+  if (error && !settings) {
+    return (
+      <SettingsPageShell eyebrow="AI governance" title="Watchtower">
+        <SettingsBanner tone="danger" title="Couldn't load settings">
+          {error}
+        </SettingsBanner>
+      </SettingsPageShell>
+    );
+  }
+
+  if (!settings) return null;
+
   return (
-    <PageContainer maxWidth="lg" className="space-y-6">
-        <PageHeader
+    <>
+      <SettingsPageShell
         eyebrow="AI governance"
-        title="AI Assistant"
-        subtitle="Configure what the assistant can analyze, how it responds, and what data limits apply inside PurveX."
-        icon={<Sparkles className="h-5 w-5" />}
-      />
-      <Card>
-        <CardContent className="pt-6 space-y-6">
-          <form onSubmit={handleSubmit} className="space-y-6">
-          <div className="space-y-2">
-            <p className="text-[11px] uppercase tracking-[0.2em] text-slate-400">
-              Provider
-            </p>
-            <div className="space-y-2 md:max-w-xs">
-              <Label htmlFor="provider">AI provider</Label>
-              <Select onValueChange={(value: string) => handleSelectChange("provider", value)} value={settings.provider}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Select AI provider" />
+        title="Watchtower"
+        description="What Watchtower can analyze, how it responds, and what data may leave the environment."
+        status={
+          <SettingsStatusPill tone={settings.provider ? "ok" : "muted"}>
+            {settings.provider || "Unconfigured"}
+          </SettingsStatusPill>
+        }
+        banner={
+          error ? (
+            <SettingsBanner tone="danger" title="Save failed">
+              {error}
+            </SettingsBanner>
+          ) : undefined
+        }
+      >
+        <SettingsSection
+          title="Provider"
+          description="Which LLM endpoint Watchtower calls and how aggressively it analyses each run."
+        >
+          <div className="space-y-4">
+            <div className="space-y-1.5">
+              <Label htmlFor="provider">Provider</Label>
+              <Select
+                onValueChange={(value: string) => handleSelect("provider", value)}
+                value={settings.provider}
+              >
+                <SelectTrigger className="max-w-sm">
+                  <SelectValue placeholder="Select provider" />
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="OpenAI">OpenAI</SelectItem>
                   <SelectItem value="DeepSeek">DeepSeek</SelectItem>
                 </SelectContent>
               </Select>
+              <p className="text-xs text-[var(--surface-subtle-foreground)]">
+                The server reads provider keys from <code>OPENAI_API_KEY</code>. DeepSeek uses
+                <code> https://api.deepseek.com/v1</code> with <code>deepseek-chat</code>.
+              </p>
             </div>
-            <p className="text-xs text-slate-500 md:max-w-xl">
-              The server reads provider keys from <code>OPENAI_API_KEY</code>. For DeepSeek, set base URL to <code>https://api.deepseek.com/v1</code> and model to <code>deepseek-chat</code> or <code>deepseek-reasoner</code>.
-            </p>
-            <div className="space-y-2 md:max-w-xs">
-              <Label htmlFor="analysis_mode">Analysis mode</Label>
+
+            <div className="space-y-1.5">
+              <Label htmlFor="analysis_mode">Analysis depth</Label>
               <Select
-                onValueChange={(value: string) => handleSelectChange("analysis_mode", value)}
+                onValueChange={(value: string) => handleSelect("analysis_mode", value)}
                 value={settings.analysis_mode}
               >
-                <SelectTrigger>
-                  <SelectValue placeholder="Select analysis mode" />
+                <SelectTrigger className="max-w-sm">
+                  <SelectValue placeholder="Select depth" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="fast">Fast (3 events, ~10s)</SelectItem>
-                  <SelectItem value="balanced">Balanced (6 events, ~15s)</SelectItem>
-                  <SelectItem value="deep">Deep (10 events, ~25s)</SelectItem>
+                  <SelectItem value="fast">Fast — 3 events, ~10s</SelectItem>
+                  <SelectItem value="balanced">Balanced — 6 events, ~15s</SelectItem>
+                  <SelectItem value="deep">Deep — 10 events, ~25s</SelectItem>
                 </SelectContent>
               </Select>
             </div>
-            <details className="rounded-2xl border border-slate-200 bg-slate-50/60 p-4 md:max-w-xl">
-              <summary className="cursor-pointer text-sm font-medium text-slate-700">Advanced provider settings</summary>
-              <div className="mt-4 grid gap-3 md:grid-cols-2">
-                <div className="space-y-2">
+
+            <details className="rounded-lg border border-[var(--stroke-soft)] bg-[var(--surface-elevated)] px-4 py-3">
+              <summary className="cursor-pointer text-xs font-semibold uppercase tracking-wider text-[var(--surface-subtle-foreground)]">
+                Advanced provider settings
+              </summary>
+              <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                <div className="space-y-1.5">
                   <Label htmlFor="api_base_url">API base URL</Label>
                   <Input
                     id="api_base_url"
@@ -246,96 +219,115 @@ export default function AIAssistantSettingsPage() {
                     placeholder="https://api.openai.com/v1"
                   />
                 </div>
-                <div className="space-y-2">
-                  <Label htmlFor="model_name">Model name</Label>
+                <div className="space-y-1.5">
+                  <Label htmlFor="model_name">Model</Label>
                   <Input
                     id="model_name"
                     value={settings.model_name}
                     onChange={handleChange}
-                    placeholder="deepseek-chat"
+                    placeholder="gpt-4o-mini"
                   />
                 </div>
               </div>
             </details>
           </div>
+        </SettingsSection>
 
-          <div className="space-y-2">
-            <p className="text-[11px] uppercase tracking-[0.2em] text-slate-400">
-              AI capabilities
-            </p>
-            <div className="space-y-2">
-              <div className="flex items-center space-x-2">
-                <Checkbox
-                  id="generate_tuning_suggestions"
+        <SettingsSection
+          title="Capabilities"
+          description="Toggle what Watchtower is allowed to do automatically."
+        >
+          <div className="space-y-1">
+            <SettingsRow
+              label="Generate detection tuning suggestions"
+              description="Watchtower proposes targeted edits when a detection fails."
+              control={
+                <Switch
                   checked={settings.generate_tuning_suggestions}
-                  onCheckedChange={(checked: boolean) => handleCheckboxChange("generate_tuning_suggestions", checked)}
+                  onCheckedChange={(checked: boolean) =>
+                    handleSwitch("generate_tuning_suggestions", checked)
+                  }
                 />
-                <Label htmlFor="generate_tuning_suggestions">Generate detection tuning suggestions</Label>
-              </div>
-              <div className="flex items-center space-x-2">
-                <Checkbox
-                  id="explain_test_failures"
+              }
+            />
+            <SettingsRow
+              label="Explain validation failures"
+              description="Plain-language summary appears next to each FAIL/INCONCLUSIVE."
+              control={
+                <Switch
                   checked={settings.explain_test_failures}
-                  onCheckedChange={(checked: boolean) => handleCheckboxChange("explain_test_failures", checked)}
+                  onCheckedChange={(checked: boolean) =>
+                    handleSwitch("explain_test_failures", checked)
+                  }
                 />
-                <Label htmlFor="explain_test_failures">Explain validation failures in plain language</Label>
-              </div>
-            </div>
+              }
+            />
           </div>
+        </SettingsSection>
 
-          <div className="space-y-2">
-            <p className="text-[11px] uppercase tracking-[0.2em] text-slate-400">
-              Data sharing limits
-            </p>
-            <div className="space-y-2">
-              <div className="flex items-center space-x-2">
-                <Checkbox
-                  id="strip_ips_hostnames"
+        <SettingsSection
+          title="Data sharing"
+          description="What can be sent to the LLM endpoint with each request."
+        >
+          <div className="space-y-1">
+            <SettingsRow
+              label="Strip IPs and hostnames"
+              description="Removes private addresses and host names before any prompt is sent."
+              control={
+                <Switch
                   checked={settings.strip_ips_hostnames}
-                  onCheckedChange={(checked: boolean) => handleCheckboxChange("strip_ips_hostnames", checked)}
+                  onCheckedChange={(checked: boolean) =>
+                    handleSwitch("strip_ips_hostnames", checked)
+                  }
                 />
-                <Label htmlFor="strip_ips_hostnames">Strip IPs/hostnames before sending logs to AI</Label>
-              </div>
-              <div className="flex items-center space-x-2">
-                <Checkbox
-                  id="no_raw_logs_outside_env"
+              }
+            />
+            <SettingsRow
+              label="Never send raw logs to cloud models"
+              description="Disabled in this build — applies once self-hosted models are wired in."
+              control={
+                <Switch
                   checked={settings.no_raw_logs_outside_env}
-                  onCheckedChange={(checked: boolean) => handleCheckboxChange("no_raw_logs_outside_env", checked)}
-                  disabled // Applies to cloud models
+                  onCheckedChange={(checked: boolean) =>
+                    handleSwitch("no_raw_logs_outside_env", checked)
+                  }
+                  disabled
                 />
-                <Label htmlFor="no_raw_logs_outside_env">Do not send raw log lines outside environment (cloud models)</Label>
-              </div>
-            </div>
+              }
+            />
           </div>
+        </SettingsSection>
 
-          <div className="space-y-2">
-            <p className="text-[11px] uppercase tracking-[0.2em] text-slate-400">
-              Tone &amp; audience
-            </p>
-            <div className="space-y-2 md:max-w-xs">
-              <Label htmlFor="audience_preference">Audience preference</Label>
-              <Select onValueChange={(value: string) => handleSelectChange("audience_preference", value)} value={settings.audience_preference}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Select audience" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="Analyst">Analyst</SelectItem>
-                  <SelectItem value="SOC Manager">SOC Manager</SelectItem>
-                  <SelectItem value="CISO">CISO</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
+        <SettingsSection
+          title="Audience"
+          description="Who Watchtower is writing for; influences tone and depth."
+        >
+          <div className="space-y-1.5">
+            <Label htmlFor="audience_preference">Default audience</Label>
+            <Select
+              onValueChange={(value: string) => handleSelect("audience_preference", value)}
+              value={settings.audience_preference}
+            >
+              <SelectTrigger className="max-w-sm">
+                <SelectValue placeholder="Select audience" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="Analyst">Analyst</SelectItem>
+                <SelectItem value="SOC Manager">SOC Manager</SelectItem>
+                <SelectItem value="CISO">CISO</SelectItem>
+              </SelectContent>
+            </Select>
           </div>
+        </SettingsSection>
+      </SettingsPageShell>
 
-          <Button
-            type="submit"
-            disabled={isSaving}
-          >
-            {isSaving ? "Saving…" : "Save AI settings"}
-          </Button>
-        </form>
-      </CardContent>
-      </Card>
-    </PageContainer>
+      <SettingsSaveBar
+        saving={isSaving}
+        dirty={dirty}
+        onSave={handleSave}
+        onReset={handleReset}
+        saveLabel="Save Watchtower"
+      />
+    </>
   );
 }

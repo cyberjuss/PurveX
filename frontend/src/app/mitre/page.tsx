@@ -115,7 +115,7 @@ const STATUS_META: Record<CoverageStatus, { label: string; cell: string; dot: st
     ring: "ring-amber-400",
   },
   mapped: {
-    label: "Linked — Not tested",
+    label: "Untested",
     cell: "bg-sky-300 hover:bg-sky-400 text-slate-900",
     dot: "bg-sky-400",
     ring: "ring-sky-400",
@@ -206,6 +206,17 @@ function MitreViewPageContent() {
   }, [atomicCatalogAvailable, atomicTestsByTechnique]);
 
   const handleSelectTechnique = useCallback((item: TechniqueCoverage) => {
+    setSelectedTechnique(item);
+    loadAtomicTestsForTechnique(item.id);
+  }, [loadAtomicTestsForTechnique]);
+
+  const handleSelectTactic = useCallback((tactic: string) => {
+    setSelectedTechnique(null);
+    setSelectedTactic(tactic);
+  }, []);
+
+  const handleSelectTechniqueFromTactic = useCallback((item: TechniqueCoverage) => {
+    setSelectedTactic(null);
     setSelectedTechnique(item);
     loadAtomicTestsForTechnique(item.id);
   }, [loadAtomicTestsForTechnique]);
@@ -501,7 +512,11 @@ function MitreViewPageContent() {
                 {/* Tactic header */}
                 <button
                   type="button"
-                  onClick={() => setSelectedTactic(selectedTactic === col.tactic ? null : col.tactic)}
+                  onClick={() =>
+                    selectedTactic === col.tactic
+                      ? setSelectedTactic(null)
+                      : handleSelectTactic(col.tactic)
+                  }
                   className={cn(
                     "rounded-lg border px-3.5 py-3 text-left transition",
                     selectedTactic === col.tactic
@@ -560,7 +575,7 @@ function MitreViewPageContent() {
 
       {/* Focused tactic drill-down */}
       {focusedColumn && (
-        <div className="rounded-2xl border border-[var(--stroke-soft)] bg-[var(--surface-card)] p-6 shadow-sm dark:border-white/10 dark:bg-white/5">
+        <div className="hidden rounded-2xl border border-[var(--stroke-soft)] bg-[var(--surface-card)] p-6 shadow-sm dark:border-white/10 dark:bg-white/5">
           <div className="flex items-center justify-between mb-4">
             <div>
               <p className="text-[11px] font-bold uppercase tracking-wider text-indigo-600">Tactic focus</p>
@@ -594,10 +609,70 @@ function MitreViewPageContent() {
       )}
 
       {/* Technique detail — right Sheet slide-in */}
+      <Sheet open={!!selectedTactic} onOpenChange={(open) => { if (!open) setSelectedTactic(null); }}>
+        <SheetContent
+          side="right"
+          className="border-[var(--stroke-soft)] bg-[var(--surface-card)] text-[var(--foreground)]"
+        >
+          {focusedColumn && (
+            <>
+              <SheetHeader className="border-[var(--stroke-soft)]">
+                <div className="flex items-center gap-2 mb-1">
+                  <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-700 dark:bg-white/10 dark:text-slate-200">
+                    Tactic lane
+                  </span>
+                </div>
+                <SheetTitle className="pr-8 text-[var(--foreground)]">{focusedColumn.tactic}</SheetTitle>
+                <SheetDescription className="text-slate-600 dark:text-slate-400">
+                  {focusedColumn.validated} of {focusedColumn.total} techniques validated across this lane.
+                </SheetDescription>
+              </SheetHeader>
+
+              <SheetBody className="px-5">
+                <div className="mb-6 flex flex-wrap items-center gap-4 text-sm text-slate-600 dark:text-slate-300">
+                  <span>
+                    <span className="font-semibold text-[var(--foreground)]">{focusedColumn.total}</span> techniques in scope
+                  </span>
+                  <Divider />
+                  <span>
+                    <span className="font-semibold text-[var(--foreground)]">{focusedColumn.validated}</span> validated
+                  </span>
+                  <Divider />
+                  <span>
+                    <span className="font-semibold text-[var(--foreground)]">{focusedColumn.coverage}%</span> coverage
+                  </span>
+                </div>
+
+                <div className="grid gap-2 sm:grid-cols-2">
+                  {focusedColumn.techniques.map((item) => {
+                    const status = getStatus(item);
+                    const meta = STATUS_META[status];
+                    return (
+                      <button
+                        key={item.id}
+                        onClick={() => handleSelectTechniqueFromTactic(item)}
+                        className="flex items-start gap-3 rounded-lg border border-[var(--stroke-soft)] bg-[var(--surface-elevated)] p-3 text-left transition hover:bg-slate-100 dark:border-white/10 dark:bg-white/5 dark:hover:bg-white/10"
+                      >
+                        <span className={cn("mt-1 h-2 w-2 shrink-0 rounded-full", meta.dot)} />
+                        <div className="min-w-0 flex-1">
+                          <p className="font-mono text-xs font-bold text-indigo-600">{item.id}</p>
+                          <p className="truncate text-sm text-slate-700 dark:text-slate-200">{item.name}</p>
+                          <p className="text-[11px] text-slate-400">{meta.label} · {item.mappedCount} linked</p>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </SheetBody>
+            </>
+          )}
+        </SheetContent>
+      </Sheet>
+
       <Sheet open={!!selectedTechnique} onOpenChange={(open) => { if (!open) setSelectedTechnique(null); }}>
         <SheetContent
           side="right"
-          className="w-[min(560px,calc(100vw-24px))] max-w-none border-[var(--stroke-soft)] bg-[var(--surface-card)] text-[var(--foreground)] sm:rounded-l-2xl"
+          className="border-[var(--stroke-soft)] bg-[var(--surface-card)] text-[var(--foreground)]"
         >
           {selectedTechnique && (
             <>
@@ -616,11 +691,18 @@ function MitreViewPageContent() {
               </SheetHeader>
 
               <SheetBody className="px-5">
-                {/* Stats */}
-                <div className="grid grid-cols-3 gap-3 mb-6">
-                  <StatBlock label="Linked" value={selectedTechnique.mappedCount} />
-                  <StatBlock label="Tested" value={selectedTechnique.testedCount} />
-                  <StatBlock label="Passing" value={selectedTechnique.validatedCount} />
+                <div className="mb-6 flex flex-wrap items-center gap-4 text-sm text-slate-600 dark:text-slate-300">
+                  <span>
+                    <span className="font-semibold text-[var(--foreground)]">{selectedTechnique.mappedCount}</span> linked
+                  </span>
+                  <Divider />
+                  <span>
+                    <span className="font-semibold text-[var(--foreground)]">{selectedTechnique.testedCount}</span> tested
+                  </span>
+                  <Divider />
+                  <span>
+                    <span className="font-semibold text-[var(--foreground)]">{selectedTechnique.validatedCount}</span> passing
+                  </span>
                 </div>
 
                 {/* Atomic tests */}
@@ -639,7 +721,7 @@ function MitreViewPageContent() {
                       <p className="mt-2 text-sm text-slate-600 dark:text-slate-400">No atomic tests found for this technique.</p>
                     </div>
                   ) : (
-                    <div className="space-y-3">
+                    <div className="overflow-hidden rounded-xl border border-[var(--stroke-soft)] divide-y divide-[var(--stroke-soft)]">
                       {sheetAtomicTests.map((test, i) => (
                         <AtomicTestCard
                           key={test.id || i}
@@ -694,7 +776,7 @@ function AtomicTestCard({ test, onRun }: { test: AtomicTestDefinition; onRun: ()
   const executorName = test.executor_name || test.executor?.name || "Command";
 
   return (
-    <div className="overflow-hidden rounded-xl border border-[var(--stroke-soft)] bg-[var(--surface-elevated)]">
+    <div className="bg-[var(--surface-elevated)]">
       <button
         type="button"
         onClick={() => setExpanded(!expanded)}
@@ -712,9 +794,6 @@ function AtomicTestCard({ test, onRun }: { test: AtomicTestDefinition; onRun: ()
               ))}
             </div>
           )}
-          <p className="mt-2 line-clamp-2 rounded-md border border-[var(--stroke-soft)] bg-slate-50 px-2 py-1 font-mono text-[11px] text-slate-700 dark:bg-slate-900/80 dark:text-slate-200">
-            {primaryCommand || "No executable command published for this atomic test."}
-          </p>
         </div>
         <Button
           type="button"
@@ -914,7 +993,7 @@ function ExecutiveSummary({
               <span className="ml-1 text-lg font-semibold text-slate-400">%</span>
             </p>
             <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
-              Of instrumented techniques, weighted by criticality.
+              Of instrumented techniques, weighted by severity.
             </p>
           </div>
           {trendDelta !== 0 && (
@@ -967,7 +1046,7 @@ function ExecutiveSummary({
               Top high-value gaps
             </p>
           </div>
-          <span className="text-[11px] text-slate-400">Sorted by criticality</span>
+          <span className="text-[11px] text-slate-400">Sorted by severity</span>
         </div>
 
         {topActions.length === 0 ? (

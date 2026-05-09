@@ -3,7 +3,11 @@ import secrets
 from typing import Optional
 import re
 
-from jose import JWTError, jwt
+# SECURITY: Migrated from `python-jose` (unmaintained, CVE-2024-33663 algorithm
+# confusion + CVE-2024-33664 DoS) to PyJWT during the 2026-05 audit. PyJWT is
+# the de-facto replacement and shares the same surface for our HS256 use case.
+import jwt
+from jwt import PyJWTError
 from passlib.context import CryptContext
 
 from .config import settings
@@ -73,5 +77,5 @@ def decode_access_token(token: str) -> Optional[dict]:
             token, settings.JWT_SECRET_KEY, algorithms=[settings.JWT_ALGORITHM]
         )
         return payload
-    except JWTError:
+    except PyJWTError:
         return None

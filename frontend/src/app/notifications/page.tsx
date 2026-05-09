@@ -2,8 +2,6 @@
 
 import { useEffect, useState, useMemo } from "react";
 import { useRouter } from "next/navigation";
-import { Card, CardContent } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   getTests,
@@ -13,26 +11,25 @@ import {
   type Detection,
   type EnvironmentRunnerConfig,
 } from "@/lib/api";
-import { 
-  Clock, 
-  Activity, 
-  ShieldCheck, 
-  Sparkles, 
-  CheckCircle2, 
-  XCircle, 
-  AlertTriangle, 
-  ArrowRight,
-  Filter,
+import {
+  Activity,
+  ShieldCheck,
+  Sparkles,
+  CheckCircle2,
+  XCircle,
+  AlertTriangle,
   RefreshCw,
   Bell,
-  X
+  Trash2,
+  X,
+  Inbox,
+  ChevronRight,
 } from "lucide-react";
-import { formatRelative, isToday, isThisWeek } from "date-fns";
+import { formatDistanceToNowStrict, isToday, isThisWeek } from "date-fns";
 import { PageContainer } from "@/components/layout/page-container";
 import { LoadingState } from "@/components/ui/loading-state";
 import { ErrorState } from "@/components/ui/error-state";
 import { cn } from "@/lib/utils";
-import { PageHeader } from "@/components/layout/page-header";
 
 type NotificationType = "test" | "detection" | "platform";
 type NotificationCategory = "all" | "tests" | "detections" | "platform";
@@ -63,13 +60,64 @@ const CATEGORY_LABELS: Record<NotificationCategory, string> = {
 const PLATFORM_NOTIFICATIONS_KEY = "purvex_platform_notifications";
 const PLATFORM_RUNNER_SEEN_KEY = "purvex_platform_runner_ids";
 const DISMISSED_NOTIFICATIONS_KEY = "purvex_dismissed_notifications";
+const NOTIFICATION_RETENTION_DAYS = 14;
+const DISMISSED_RETENTION_DAYS = 30;
+const MAX_NOTIFICATIONS = 80;
 
 type StoredNotification = Omit<UnifiedNotification, "timestamp"> & { timestamp: string };
+type StoredDismissal = { id: string; dismissedAt: string };
 type RunnerSummary = EnvironmentRunnerConfig & {
   id?: number;
   hostname?: string;
   environment_name?: string;
 };
+
+function safeReadArray<T>(key: string): T[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(key) || "[]");
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function isFreshTimestamp(value: Date | string, retentionDays = NOTIFICATION_RETENTION_DAYS) {
+  const timestamp = value instanceof Date ? value.getTime() : new Date(value).getTime();
+  if (!Number.isFinite(timestamp)) return false;
+  return timestamp >= Date.now() - retentionDays * 24 * 60 * 60 * 1000;
+}
+
+function readDismissedIds() {
+  const stored = safeReadArray<string | StoredDismissal>(DISMISSED_NOTIFICATIONS_KEY);
+  const cutoff = Date.now() - DISMISSED_RETENTION_DAYS * 24 * 60 * 60 * 1000;
+  const fresh: StoredDismissal[] = [];
+
+  for (const item of stored) {
+    if (typeof item === "string") {
+      fresh.push({ id: item, dismissedAt: new Date().toISOString() });
+      continue;
+    }
+    if (!item?.id) continue;
+    const dismissedAt = new Date(item.dismissedAt).getTime();
+    if (!Number.isFinite(dismissedAt) || dismissedAt >= cutoff) {
+      fresh.push(item);
+    }
+  }
+
+  if (typeof window !== "undefined") {
+    window.localStorage.setItem(DISMISSED_NOTIFICATIONS_KEY, JSON.stringify(fresh));
+  }
+
+  return new Set(fresh.map((item) => item.id));
+}
+
+function writeDismissedIds(ids: Set<string>) {
+  if (typeof window === "undefined") return;
+  const now = new Date().toISOString();
+  const records: StoredDismissal[] = Array.from(ids).map((id) => ({ id, dismissedAt: now }));
+  window.localStorage.setItem(DISMISSED_NOTIFICATIONS_KEY, JSON.stringify(records));
+}
 
 export default function NotificationsPage() {
   const [tests, setTests] = useState<TestWithDetectionTitle[]>([]);
@@ -94,16 +142,12 @@ export default function NotificationsPage() {
       setTests(recentTests.slice(0, 20));
       setDetections(recentDetections.slice(0, 10));
       if (typeof window !== "undefined") {
-        const storedIds: number[] = JSON.parse(
-          window.localStorage.getItem(PLATFORM_RUNNER_SEEN_KEY) || "[]"
-        );
+        const storedIds = safeReadArray<number>(PLATFORM_RUNNER_SEEN_KEY);
         const newRunners = (runners || []).filter(
           (runner: RunnerSummary) => typeof runner.id === "number" && !storedIds.includes(runner.id)
         );
-        const cutoff = Date.now() - 24 * 60 * 60 * 1000;
-        const storedNotifications: StoredNotification[] = JSON.parse(
-          window.localStorage.getItem(PLATFORM_NOTIFICATIONS_KEY) || "[]"
-        ).filter((item: StoredNotification) => new Date(item.timestamp).getTime() >= cutoff);
+        const storedNotifications = safeReadArray<StoredNotification>(PLATFORM_NOTIFICATIONS_KEY)
+          .filter((item) => isFreshTimestamp(item.timestamp));
         const newNotifications: StoredNotification[] = newRunners.map((runner: RunnerSummary) => ({
           id: `platform-runner-${runner.id}-${Date.now()}`,
           type: "platform",
@@ -117,7 +161,7 @@ export default function NotificationsPage() {
           },
         }));
 
-        const mergedNotifications = [...newNotifications, ...storedNotifications].slice(0, 50);
+        const mergedNotifications = [...newNotifications, ...storedNotifications].slice(0, MAX_NOTIFICATIONS);
         const mergedIds = Array.from(new Set([...storedIds, ...newRunners.map((runner: RunnerSummary) => runner.id)]));
 
         window.localStorage.setItem(PLATFORM_NOTIFICATIONS_KEY, JSON.stringify(mergedNotifications));
@@ -143,10 +187,7 @@ export default function NotificationsPage() {
     // Visiting the notifications page marks test notifications as read.
     if (typeof window !== "undefined") {
       window.localStorage.removeItem("purvex_unread_test_notification");
-      const storedDismissed: string[] = JSON.parse(
-        window.localStorage.getItem(DISMISSED_NOTIFICATIONS_KEY) || "[]"
-      );
-      setDismissedIds(new Set(storedDismissed));
+      setDismissedIds(readDismissedIds());
       handler = () => {
         loadData();
       };
@@ -211,8 +252,12 @@ export default function NotificationsPage() {
       items.push(notification);
     });
 
-    // Sort by timestamp (newest first)
-    const sorted = items.sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
+    // Sort by timestamp (newest first), auto-expire old derived notifications,
+    // and cap the list so the page cannot accumulate stale noise forever.
+    const sorted = items
+      .filter((item) => isFreshTimestamp(item.timestamp))
+      .sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime())
+      .slice(0, MAX_NOTIFICATIONS);
     return sorted.filter((item) => !dismissedIds.has(item.id));
   }, [tests, detections, platformNotifications, dismissedIds]);
 
@@ -247,50 +292,79 @@ export default function NotificationsPage() {
   const getStatusIcon = (status?: string) => {
     switch (status) {
       case "success":
-        return <CheckCircle2 className="h-5 w-5 text-emerald-400" />;
+        return <CheckCircle2 className="h-4 w-4 text-emerald-500" />;
       case "error":
-        return <XCircle className="h-5 w-5 text-red-400" />;
+        return <XCircle className="h-4 w-4 text-rose-500" />;
       case "warning":
-        return <AlertTriangle className="h-5 w-5 text-amber-400" />;
+        return <AlertTriangle className="h-4 w-4 text-amber-500" />;
       default:
-        return <Activity className="h-5 w-5 text-slate-400" />;
+        return <Activity className="h-4 w-4 text-slate-400" />;
     }
   };
 
-  const getStatusColor = (status?: string) => {
-    switch (status) {
-      case "success":
-        return "hover:border-emerald-500/40";
-      case "error":
-        return "hover:border-red-500/40";
-      case "warning":
-        return "hover:border-amber-500/40";
-      default:
-        return undefined;
-    }
-  };
-
-  const getTypeIcon = (type: NotificationType) => {
+  const getTypeMeta = (type: NotificationType) => {
     switch (type) {
       case "test":
-        return <Activity className="h-4 w-4" />;
+        return { icon: <Activity className="h-3 w-3" />, label: "Validation run" };
       case "detection":
-        return <ShieldCheck className="h-4 w-4" />;
+        return { icon: <ShieldCheck className="h-3 w-3" />, label: "Trust change" };
       case "platform":
-        return <Sparkles className="h-4 w-4" />;
+        return { icon: <Sparkles className="h-3 w-3" />, label: "Setup" };
     }
   };
 
-  const unreadCount = notifications.length; // Could be enhanced with actual read/unread tracking
+  // Counts per category for the left rail
+  const counts = useMemo(() => {
+    return {
+      all: notifications.length,
+      tests: notifications.filter((n) => n.type === "test").length,
+      detections: notifications.filter((n) => n.type === "detection").length,
+      platform: notifications.filter((n) => n.type === "platform").length,
+    } as Record<NotificationCategory, number>;
+  }, [notifications]);
+
+  const statusBreakdown = useMemo(() => {
+    return {
+      error: notifications.filter((n) => n.status === "error").length,
+      warning: notifications.filter((n) => n.status === "warning").length,
+      success: notifications.filter((n) => n.status === "success").length,
+    };
+  }, [notifications]);
   const dismissNotification = (id: string) => {
     setDismissedIds((prev) => {
       const next = new Set(prev);
       next.add(id);
-      if (typeof window !== "undefined") {
-        window.localStorage.setItem(DISMISSED_NOTIFICATIONS_KEY, JSON.stringify(Array.from(next)));
-      }
+      writeDismissedIds(next);
       return next;
     });
+  };
+
+  const dismissMany = (ids: string[]) => {
+    setDismissedIds((prev) => {
+      const next = new Set(prev);
+      ids.forEach((id) => next.add(id));
+      writeDismissedIds(next);
+      return next;
+    });
+  };
+
+  const clearVisibleNotifications = () => {
+    dismissMany(filteredNotifications.map((notification) => notification.id));
+  };
+
+  const cleanOldNotifications = () => {
+    const cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000;
+    dismissMany(
+      notifications
+        .filter((notification) => notification.timestamp.getTime() < cutoff)
+        .map((notification) => notification.id)
+    );
+    if (typeof window !== "undefined") {
+      const freshPlatform = safeReadArray<StoredNotification>(PLATFORM_NOTIFICATIONS_KEY)
+        .filter((notification) => new Date(notification.timestamp).getTime() >= cutoff);
+      window.localStorage.setItem(PLATFORM_NOTIFICATIONS_KEY, JSON.stringify(freshPlatform));
+    }
+    setPlatformNotifications((prev) => prev.filter((notification) => notification.timestamp.getTime() >= cutoff));
   };
 
   if (loading) {
@@ -313,202 +387,297 @@ export default function NotificationsPage() {
     );
   }
 
+  const categoryOrder: NotificationCategory[] = ["all", "tests", "detections", "platform"];
+  const categoryIcons: Record<NotificationCategory, React.ReactNode> = {
+    all: <Inbox className="h-3.5 w-3.5" />,
+    tests: <Activity className="h-3.5 w-3.5" />,
+    detections: <ShieldCheck className="h-3.5 w-3.5" />,
+    platform: <Sparkles className="h-3.5 w-3.5" />,
+  };
+
   return (
     <PageContainer maxWidth="full" className={cn("pt-4", refreshing && "page-refreshing")}>
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-2 pb-8 space-y-6">
-        <PageHeader
-          eyebrow="Validation updates"
-          title="Notifications"
-          subtitle="Track validation runs, trust changes, and setup issues that need attention."
-          icon={<Bell className="h-5 w-5" />}
-          actions={(
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-2 pb-10">
+        {/* Inline header — no boxed card */}
+        <header className="flex flex-wrap items-end justify-between gap-4 border-b border-slate-200 pb-5">
+          <div className="min-w-0">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">
+              Validation updates
+            </p>
+            <h1 className="mt-1 flex items-center gap-2.5 text-[26px] font-display font-semibold tracking-tight text-slate-900">
+              <Bell className="h-5 w-5 text-slate-500" />
+              Notifications
+              {notifications.length > 0 && (
+                <span className="inline-flex h-6 min-w-[1.5rem] items-center justify-center rounded-full bg-slate-900 px-2 text-xs font-semibold text-white tabular-nums">
+                  {notifications.length}
+                </span>
+              )}
+            </h1>
+            <p className="mt-1 text-sm text-slate-500">
+              Validation runs, trust changes, and setup issues that need attention.
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={cleanOldNotifications}
+              disabled={notifications.length === 0}
+              className="h-8 whitespace-nowrap text-xs text-slate-600"
+            >
+              <Trash2 className="mr-1.5 h-3.5 w-3.5" />
+              Clean old
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={clearVisibleNotifications}
+              disabled={filteredNotifications.length === 0}
+              className="h-8 whitespace-nowrap text-xs text-slate-600"
+            >
+              <X className="mr-1.5 h-3.5 w-3.5" />
+              Clear view
+            </Button>
             <Button
               variant="outline"
               size="sm"
               onClick={() => void loadData()}
               disabled={refreshing}
+              className="h-8 whitespace-nowrap text-xs"
             >
-              <RefreshCw className={cn("mr-2 h-4 w-4", refreshing && "animate-spin")} />
+              <RefreshCw className={cn("mr-1.5 h-3.5 w-3.5", refreshing && "animate-spin")} />
               Refresh
             </Button>
-          )}
-        />
+          </div>
+        </header>
 
-      {/* Category Tabs */}
-      <div className="mb-6 flex items-center gap-3 flex-wrap">
-        <Filter className="h-4 w-4 text-slate-500" />
-        {(["all", "tests", "detections", "platform"] as NotificationCategory[]).map((cat) => (
-          <Button
-            key={cat}
-            variant={category === cat ? "default" : "secondary"}
-            size="sm"
-            onClick={() => setCategory(cat)}
-            className={cn(
-              "h-8 text-xs capitalize focus-visible:ring-2 focus-visible:ring-sky-500/50 transition-all font-semibold",
-              category === cat
-                ? "bg-white text-slate-900 border-white shadow-md"
-                : "bg-white/90 text-slate-700 border border-slate-200 hover:bg-white"
-            )}
-            aria-label={`Filter notifications by ${cat}`}
-            aria-pressed={category === cat}
-          >
-            {CATEGORY_LABELS[cat]}
-            {cat === "all" && unreadCount > 0 && (
-              <Badge className="ml-2 h-4 px-1.5 text-[10px] bg-slate-100 text-slate-700 border-slate-200">
-                {unreadCount}
-              </Badge>
-            )}
-          </Button>
-        ))}
-      </div>
+        {/* Status breakdown strip */}
+        <div className="mt-4 flex flex-wrap items-center gap-2 text-xs">
+          <StatusChip
+            tone="rose"
+            label="Errors"
+            count={statusBreakdown.error}
+            icon={<XCircle className="h-3 w-3" />}
+          />
+          <StatusChip
+            tone="amber"
+            label="Warnings"
+            count={statusBreakdown.warning}
+            icon={<AlertTriangle className="h-3 w-3" />}
+          />
+          <StatusChip
+            tone="emerald"
+            label="Successful"
+            count={statusBreakdown.success}
+            icon={<CheckCircle2 className="h-3 w-3" />}
+          />
+          <span className="ml-auto text-[11px] text-slate-400">
+            Auto-expire after {NOTIFICATION_RETENTION_DAYS} days · dismissed pruned after {DISMISSED_RETENTION_DAYS}
+          </span>
+        </div>
 
-      {/* Notifications Timeline */}
-      {filteredNotifications.length === 0 ? (
-        <Card className="elite-card">
-          <CardContent className="pt-14 pb-14 text-center">
-            <div className="relative inline-flex h-16 w-16 items-center justify-center rounded-full bg-white shadow-sm border border-slate-200 mb-5">
-              <div className="absolute inset-0 rounded-full ring-1 ring-slate-200/60" />
-              <Bell className="h-8 w-8 text-slate-500 relative z-10" />
-            </div>
-            <p className="text-lg font-display font-semibold text-slate-900 mb-2">
-              {category === "all" ? "No validation updates yet" : `No ${CATEGORY_LABELS[category].toLowerCase()} yet`}
+        {/* Two-column inbox */}
+        <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-[220px_minmax(0,1fr)]">
+          {/* Left rail — categories with live counts */}
+          <aside className="space-y-1">
+            <p className="px-2 pb-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400">
+              Filter
             </p>
-            <p className="text-sm text-slate-500 max-w-md mx-auto">
-              {category === "all"
-                ? "Validation runs, trust changes, and setup issues will appear here as your workspace starts producing evidence."
-                : `No ${CATEGORY_LABELS[category].toLowerCase()} are available right now. Try selecting a different category.`}
-            </p>
-            {category !== "all" && (
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setCategory("all")}
-                className="mt-4"
-              >
-                View all updates
-              </Button>
-            )}
-          </CardContent>
-        </Card>
-      ) : (
-        <div className="space-y-8">
-          {groupedNotifications.map((group, groupIndex) => (
-            <div key={group.label} className="space-y-4">
-              {/* Time Group Header */}
-              <div className="flex items-center gap-3">
-                <div className="h-px flex-1 bg-gradient-to-r from-transparent via-slate-200 to-transparent" />
-                <h2 className="text-xs font-display font-semibold text-slate-700 uppercase tracking-[0.2em]">
-                  {group.label}
-                </h2>
-                <Badge variant="outline" className="text-[10px] px-2 py-0.5 bg-white border-slate-200 text-slate-700">
-                  {group.items.length}
-                </Badge>
-                <div className="h-px flex-1 bg-gradient-to-r from-transparent via-slate-200 to-transparent" />
-              </div>
-
-              {/* Notifications List */}
-              <div className="space-y-3">
-                {group.items.map((notification, index) => (
-                  <Card
-                    key={notification.id}
+            {categoryOrder.map((cat) => {
+              const active = category === cat;
+              return (
+                <button
+                  key={cat}
+                  type="button"
+                  onClick={() => setCategory(cat)}
+                  aria-pressed={active}
+                  className={cn(
+                    "group flex w-full items-center justify-between gap-2 rounded-lg border px-2.5 py-1.5 text-left text-[13px] transition",
+                    active
+                      ? "border-slate-900 bg-slate-900 text-white"
+                      : "border-transparent text-slate-700 hover:border-slate-200 hover:bg-slate-50"
+                  )}
+                >
+                  <span className="flex items-center gap-2 truncate">
+                    <span
+                      className={cn(
+                        "flex h-5 w-5 shrink-0 items-center justify-center rounded-md",
+                        active ? "bg-white/10 text-white" : "bg-slate-100 text-slate-500"
+                      )}
+                    >
+                      {categoryIcons[cat]}
+                    </span>
+                    <span className="truncate">{CATEGORY_LABELS[cat]}</span>
+                  </span>
+                  <span
                     className={cn(
-                      "elite-card dynamic-card border border-slate-200 transition-all cursor-pointer group",
-                      getStatusColor(notification.status) || ""
+                      "shrink-0 rounded px-1.5 text-[11px] tabular-nums",
+                      active ? "bg-white/15 text-white" : "text-slate-500"
                     )}
-                    style={{
-                      animation: `fadeInScale 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards`,
-                      animationDelay: `${Math.min((groupIndex * 10 + index) * 50, 500)}ms`,
-                      opacity: 0,
-                    }}
-                    onClick={() => router.push(notification.actionUrl)}
                   >
-                    <CardContent className="p-5">
-                      <div className="flex items-start gap-4">
-                        {/* Status Icon */}
-                        <div className="mt-0.5 shrink-0">
-                          <div className="relative">
-                            <div className="absolute inset-0 bg-current opacity-20 rounded-full blur-md" />
-                            <div className="relative">
+                    {counts[cat]}
+                  </span>
+                </button>
+              );
+            })}
+          </aside>
+
+          {/* Right — feed */}
+          <section>
+            {filteredNotifications.length === 0 ? (
+              <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-slate-200 bg-slate-50/40 px-6 py-16 text-center">
+                <div className="flex h-12 w-12 items-center justify-center rounded-full bg-white shadow-sm ring-1 ring-slate-200">
+                  <Bell className="h-5 w-5 text-slate-400" />
+                </div>
+                <p className="mt-4 text-sm font-semibold text-slate-900">
+                  {category === "all"
+                    ? "Inbox zero"
+                    : `No ${CATEGORY_LABELS[category].toLowerCase()} yet`}
+                </p>
+                <p className="mt-1 max-w-sm text-xs text-slate-500">
+                  {category === "all"
+                    ? "Validation runs, trust changes, and setup issues will appear here as your workspace produces evidence."
+                    : "Try a different category to see what is currently in the inbox."}
+                </p>
+                {category !== "all" && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setCategory("all")}
+                    className="mt-4 h-8 text-xs"
+                  >
+                    View all updates
+                  </Button>
+                )}
+              </div>
+            ) : (
+              <div className="overflow-hidden rounded-xl border border-slate-200 bg-white">
+                {groupedNotifications.map((group, groupIndex) => (
+                  <div key={group.label}>
+                    <div className="sticky top-0 z-[1] flex items-center justify-between border-b border-slate-200 bg-slate-50/80 px-4 py-2 backdrop-blur">
+                      <span className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-500">
+                        {group.label}
+                      </span>
+                      <span className="text-[11px] tabular-nums text-slate-400">
+                        {group.items.length}
+                      </span>
+                    </div>
+                    <ul className="divide-y divide-slate-100">
+                      {group.items.map((notification) => {
+                        const meta = getTypeMeta(notification.type);
+                        return (
+                          <li
+                            key={notification.id}
+                            onClick={() => router.push(notification.actionUrl)}
+                            className={cn(
+                              "group relative flex cursor-pointer items-center gap-3 px-4 py-3 transition hover:bg-slate-50",
+                              groupIndex === 0 && "first:rounded-t-none"
+                            )}
+                          >
+                            {/* Status accent stripe */}
+                            <span
+                              aria-hidden
+                              className={cn(
+                                "absolute left-0 top-2 bottom-2 w-[3px] rounded-r",
+                                notification.status === "error"
+                                  ? "bg-rose-500"
+                                  : notification.status === "warning"
+                                    ? "bg-amber-500"
+                                    : notification.status === "success"
+                                      ? "bg-emerald-500"
+                                      : "bg-slate-300"
+                              )}
+                            />
+
+                            <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-slate-50 ring-1 ring-slate-200">
                               {getStatusIcon(notification.status)}
                             </div>
-                          </div>
-                        </div>
 
-                        {/* Content */}
-                        <div className="flex-1 min-w-0 space-y-2">
-                          <div className="flex items-start justify-between gap-3">
-                            <div className="flex-1 min-w-0">
-                              <div className="flex items-center gap-2 mb-1 flex-wrap">
-                          <div className="flex items-center gap-1.5 text-xs text-slate-500">
-                            {getTypeIcon(notification.type)}
-                            <span>{notification.type === "test" ? "Validation run" : notification.type === "detection" ? "Trust change" : "Setup"}</span>
-                          </div>
-                          {notification.metadata?.score !== undefined && (
-                            <>
-                              <span className="text-slate-400">·</span>
-                              <span className="text-xs font-semibold text-emerald-600">
-                                Score: {notification.metadata.score}
-                  </span>
-                            </>
-                          )}
-                        </div>
-                              <h3 className="text-base font-display font-semibold text-slate-900 group-hover:text-slate-700 transition-colors">
+                            <div className="min-w-0 flex-1">
+                              <div className="flex items-center gap-2">
+                                <span className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-slate-600">
+                                  {meta.icon}
+                                  {meta.label}
+                                </span>
+                                {notification.metadata?.environment && (
+                                  <span className="text-[10px] uppercase tracking-wide text-slate-400">
+                                    {notification.metadata.environment}
+                                  </span>
+                                )}
+                                {notification.metadata?.score !== undefined &&
+                                  notification.metadata.score !== null && (
+                                    <span className="text-[10px] font-semibold text-emerald-600">
+                                      Score {notification.metadata.score}
+                                    </span>
+                                  )}
+                              </div>
+                              <p className="mt-0.5 truncate text-sm font-medium text-slate-900">
                                 {notification.title}
-                              </h3>
-                              <p className="text-sm text-slate-600 mt-1">
+                              </p>
+                              <p className="truncate text-xs text-slate-500">
                                 {notification.description}
-                          </p>
-                        </div>
-                            <div className="flex items-center gap-2 shrink-0">
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                className="h-8 px-3 text-xs opacity-0 group-hover:opacity-100 transition-all"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  router.push(notification.actionUrl);
-                                }}
-                              >
-                                View
-                                <ArrowRight className="h-3.5 w-3.5 ml-1.5" />
-                              </Button>
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                className="h-8 w-8 opacity-0 group-hover:opacity-100 transition-all"
+                              </p>
+                            </div>
+
+                            <div className="flex shrink-0 items-center gap-3">
+                              <span className="text-[11px] tabular-nums text-slate-400">
+                                {formatDistanceToNowStrict(notification.timestamp, { addSuffix: true })}
+                              </span>
+                              <button
+                                type="button"
                                 onClick={(e) => {
                                   e.stopPropagation();
                                   dismissNotification(notification.id);
                                 }}
                                 aria-label="Dismiss notification"
+                                className="flex h-7 w-7 items-center justify-center rounded-md text-slate-400 opacity-0 transition hover:bg-slate-100 hover:text-slate-700 group-hover:opacity-100"
                               >
-                                <X className="h-4 w-4" />
-                              </Button>
+                                <X className="h-3.5 w-3.5" />
+                              </button>
+                              <ChevronRight className="h-4 w-4 text-slate-300 transition group-hover:translate-x-0.5 group-hover:text-slate-500" />
                             </div>
-                          </div>
-
-                          {/* Timestamp */}
-                          <div className="flex items-center gap-1.5 text-xs text-slate-500">
-                            <Clock className="h-3.5 w-3.5" />
-                            <span>{formatRelative(notification.timestamp, new Date())}</span>
-                            {notification.metadata?.testId && (
-                              <>
-                                <span className="text-slate-400">·</span>
-                                <span className="font-mono text-slate-500">#{notification.metadata.testId}</span>
-                              </>
-                )}
-                          </div>
-                        </div>
-                      </div>
-              </CardContent>
-            </Card>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  </div>
                 ))}
-          </div>
-            </div>
-          ))}
+              </div>
+            )}
+          </section>
         </div>
+      </div>
+    </PageContainer>
+  );
+}
+
+function StatusChip({
+  tone,
+  label,
+  count,
+  icon,
+}: {
+  tone: "rose" | "amber" | "emerald";
+  label: string;
+  count: number;
+  icon: React.ReactNode;
+}) {
+  const palette = {
+    rose: "bg-rose-50 text-rose-700 ring-rose-200",
+    amber: "bg-amber-50 text-amber-700 ring-amber-200",
+    emerald: "bg-emerald-50 text-emerald-700 ring-emerald-200",
+  } as const;
+  const muted = "bg-slate-50 text-slate-500 ring-slate-200";
+  return (
+    <span
+      className={cn(
+        "inline-flex items-center gap-1.5 rounded-full px-2 py-1 text-[11px] font-medium ring-1",
+        count > 0 ? palette[tone] : muted
       )}
-        </div>
-      </PageContainer>
+    >
+      {icon}
+      <span>{label}</span>
+      <span className="tabular-nums">{count}</span>
+    </span>
   );
 }

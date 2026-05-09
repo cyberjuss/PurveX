@@ -178,6 +178,13 @@ class Test(Base):
     started_at = Column(DateTime(timezone=True), nullable=False)
     finished_at = Column(DateTime(timezone=True), nullable=True)
 
+    # Snapshot of the detection's rule-defining fields at the moment this Test
+    # was created (sha256 over siem_type|technique_id|siem_query|sigma_rule).
+    # Drives the per-version KPI rollup so the UI can answer "did my last edit
+    # hurt?" Distinct from detections.content_hash, which tracks upstream
+    # source-of-truth for drift detection.
+    detection_version_hash = Column(String(64), nullable=True)
+
 
 class TestArtifact(Base):
     __tablename__ = "test_artifacts"
@@ -287,7 +294,14 @@ class DetectionProposal(Base):
     organization_id = Column(Integer, ForeignKey("organizations.id"), nullable=False, index=True)
 
     # Target — nullable when action=="create" (no existing rule yet).
-    detection_id = Column(String, ForeignKey("detections.id"), nullable=True)
+    # ``ondelete=SET NULL`` so that deleting a Detection doesn't cascade-
+    # delete or block on the historical proposal. The approve handler
+    # already supersedes when the target row vanishes; the delete service
+    # additionally marks pending proposals as superseded so reviewers
+    # don't see ghost rows.
+    detection_id = Column(
+        String, ForeignKey("detections.id", ondelete="SET NULL"), nullable=True
+    )
 
     # Provenance. ``proposed_by_kind`` ∈ {"ai", "user", "git"}. We keep a
     # free-text ``proposed_by_label`` alongside the FK because the AI path
@@ -565,6 +579,7 @@ class EnvironmentRunnerConfig(Base):
     username = Column(String, nullable=True)
     auth_method = Column(String, default="key")
     key_path = Column(String, nullable=True)
+    ssh_host_key_sha256 = Column(String, nullable=True)
     allowed_test_types = Column(Text, default='["Atomic only"]')  # JSON string
     max_concurrent_tests = Column(Integer, default=1)
     heartbeat_interval_seconds = Column(Integer, default=5)

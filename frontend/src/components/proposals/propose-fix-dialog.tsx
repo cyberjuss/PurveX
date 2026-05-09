@@ -133,7 +133,7 @@ export function ProposeFixDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-xl">
+      <DialogContent className="w-[min(calc(100vw-2rem),32rem)]">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <ShieldCheck className="h-5 w-5 text-[var(--accent-strong)]" />

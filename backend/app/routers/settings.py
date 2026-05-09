@@ -3,6 +3,7 @@ from typing import Any, Dict, List, Optional, Annotated
 from fastapi import APIRouter, Depends, HTTPException, status, Request, Body, Response
 from datetime import datetime, timedelta, timezone
 import hashlib
+import logging
 import secrets
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
@@ -16,6 +17,8 @@ from ..utils.tenant import require_org_id
 from ..utils.authz import require_permission, Permission
 from ..utils.encryption import encrypt_value, decrypt_value
 from ..config import settings
+
+logger = logging.getLogger("purvex.api.settings")
 
 router = APIRouter(
     prefix="/settings",
@@ -252,12 +255,10 @@ async def update_organization_settings(
     except HTTPException:
         raise
     except Exception as e:
-        import logging
-        logger = logging.getLogger("purvex.api")
-        logger.error(f"Error updating organization settings: {e}", exc_info=True)
+        logger.error("Error updating organization settings: %s", e, exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to update organization settings: {str(e)}"
+            detail="Failed to update organization settings.",
         )
 
     return organization
@@ -661,9 +662,16 @@ async def get_siem_evidence(
             limit=limit,
         )
     except Exception as exc:
+        # Log full upstream error server-side; never echo it to the client —
+        # SIEM connector exceptions can carry tokens, request IDs, or partial
+        # auth headers that we don't want to leak.
+        logger.warning(
+            "Splunk evidence request failed: siem_id=%s org_id=%s error=%s",
+            siem_id, org_id, exc,
+        )
         raise HTTPException(
             status_code=502,
-            detail=f"Splunk evidence request failed. Check URL, token, and SSL settings. {str(exc)}",
+            detail="Splunk evidence request failed. Check URL, token, and SSL settings.",
         )
 
 
@@ -1542,6 +1550,20 @@ async def update_ai_assistant_settings(
     # RBAC: Require AI assistant configure permission
     await require_permission(current_user, Permission.ASSISTANT_CONFIGURE, db)
     user_id, user_email = safe_user_identity(current_user)
+
+    # Reject base URLs that aren't on the LLM allowlist before we persist
+    # them. Catching this here prevents an admin from saving an SSRF-prone
+    # value that would only fail later when chat is actually invoked.
+    from ..services.ai_assistant import validate_llm_base_url
+    incoming_base_url = getattr(ai_settings_update, "api_base_url", None)
+    if incoming_base_url:
+        try:
+            validate_llm_base_url(incoming_base_url)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=400,
+                detail=f"AI assistant base URL is not allowed: {exc}",
+            )
     
     # Get user's organization_id - auto-assign to default org if missing
     org_id = getattr(current_user, "organization_id", None)

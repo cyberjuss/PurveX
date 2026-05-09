@@ -195,6 +195,16 @@ async def clone_shallow(
     return out.strip() or None
 
 
+class NonFastForwardError(GitCommandError):
+    """Raised when the local HEAD is not a fast-forward of the remote tip.
+
+    Surfaced as a distinct exception so callers (e.g.
+    :mod:`app.services.git_writeback`) can recover by superseding the
+    proposal and asking the user to re-sync, instead of producing a
+    generic "git push failed" that the user can't diagnose.
+    """
+
+
 async def push_branch(
     *,
     cwd: Path,
@@ -205,22 +215,32 @@ async def push_branch(
 ) -> None:
     """Push ``cwd``'s current HEAD to ``branch`` on the remote.
 
-    Uses an explicit URL on the command line (instead of the ``origin``
-    remote that ``clone`` configured) so the injected token never touches
-    ``.git/config`` on disk.
+    Verifies fast-forward safety before pushing: a fresh fetch confirms
+    the remote tip hasn't advanced since this clone was made, and we
+    raise :class:`NonFastForwardError` if it did. Without this guard
+    we'd already mark the proposal ``applied`` locally before the push
+    discovers a divergence — leaving the local DB and the upstream
+    repo out of sync until somebody intervenes.
+
+    The push itself uses an explicit URL on the command line (instead
+    of the ``origin`` remote that ``clone`` configured) so the injected
+    token never touches ``.git/config`` on disk.
     """
     url = build_auth_url(
         repo_url=repo_url,
         auth_type=auth_type,
         auth_secret_encrypted=auth_secret_encrypted,
     )
+
+    # 1. Refresh our view of the remote branch tip. ``--depth=1`` keeps
+    # this cheap; we only need the SHA, not history.
     rc, _, err = await run_git(
-        ["push", url, f"HEAD:{branch}"],
+        ["fetch", "--depth=1", url, branch],
         cwd=cwd,
     )
     if rc != 0:
         raise GitCommandError(
-            "git push failed: "
+            "git fetch (pre-push) failed: "
             + (
                 scrub_auth(
                     err.strip(),
@@ -230,3 +250,45 @@ async def push_branch(
                 or "unknown error"
             )
         )
+
+    rc, remote_sha, _ = await run_git(["rev-parse", "FETCH_HEAD"], cwd=cwd)
+    rc2, local_sha, _ = await run_git(["rev-parse", "HEAD"], cwd=cwd)
+    if rc == 0 and rc2 == 0:
+        remote_sha = remote_sha.strip()
+        local_sha = local_sha.strip()
+        # If local already matches remote we have nothing to push and
+        # ``git push`` would no-op anyway — fall through.
+        if remote_sha and local_sha and remote_sha != local_sha:
+            # Confirm local descends from remote (fast-forward safe).
+            rc3, _, _ = await run_git(
+                ["merge-base", "--is-ancestor", remote_sha, local_sha],
+                cwd=cwd,
+            )
+            if rc3 != 0:
+                raise NonFastForwardError(
+                    f"upstream branch {branch!r} has advanced since this "
+                    "clone was taken; refusing to push and risk overwriting "
+                    "an external commit. Re-sync the source and retry."
+                )
+
+    # 2. Push. With the FF check above this should never produce a
+    # non-FF error from the server, but if it does we still surface it
+    # cleanly rather than as a generic GitCommandError.
+    rc, _, err = await run_git(
+        ["push", url, f"HEAD:{branch}"],
+        cwd=cwd,
+    )
+    if rc != 0:
+        scrubbed = (
+            scrub_auth(
+                err.strip(),
+                auth_type=auth_type,
+                auth_secret_encrypted=auth_secret_encrypted,
+            )
+            or "unknown error"
+        )
+        if "non-fast-forward" in scrubbed.lower() or "rejected" in scrubbed.lower():
+            raise NonFastForwardError(
+                f"upstream branch {branch!r} rejected the push: {scrubbed}"
+            )
+        raise GitCommandError(f"git push failed: {scrubbed}")

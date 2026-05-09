@@ -156,8 +156,8 @@ export default function SettingsPage() {
     {
       id: "ai-assistant",
       href: "/settings/ai-assistant",
-      label: "AI Assistant",
-      description: "Configure OpenAI analysis, privacy controls, and assistant behavior.",
+      label: "Watchtower",
+      description: "Configure Watchtower's LLM provider, privacy controls, and analysis behavior.",
       icon: Sparkles,
       color: "amber",
       status: hasAiAssistant ? "configured" : "default",

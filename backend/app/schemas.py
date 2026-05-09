@@ -2,6 +2,8 @@ from pydantic import BaseModel, ConfigDict, field_validator
 from datetime import date, datetime
 from typing import Any, Optional, List, Dict
 from pydantic import Field # Added for explicit field definition if needed
+import ipaddress
+from urllib.parse import urlparse
 
 
 class UserBase(BaseModel):
@@ -115,6 +117,11 @@ class DetectionUpdate(BaseModel):
 
 class Detection(DetectionBase):
     id: str
+    criticality: Optional[str] = Field(
+        None,
+        max_length=20,
+        description="Criticality level returned with detection records",
+    )
     created_at: Optional[datetime] = None
     last_updated_at: Optional[datetime] = None
 
@@ -144,6 +151,10 @@ class TestBase(BaseModel):
     # summary: Optional[str] = None # Removed as per new model
     started_at: Optional[datetime] = None
     finished_at: Optional[datetime] = None
+    # Hash of the detection's rule-defining fields at the moment this Test
+    # was created. NULL for tests created before versioning shipped, and for
+    # scenario-driven runs that don't target a Detection.
+    detection_version_hash: Optional[str] = Field(None, max_length=64)
 
 class TestCreate(TestBase):
     pass
@@ -154,6 +165,52 @@ class Test(TestBase):
     status: str # Re-added
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class DetectionVersionKPI(BaseModel):
+    """Per-rule-version validation KPIs.
+
+    A "version" is a unique value of ``Test.detection_version_hash``.
+    ``version_label`` is assigned by the server as v1, v2, ... ordered by
+    ``first_seen`` ASC. ``is_current`` flags the bucket whose hash matches
+    the live detection's rule fields.
+
+    ``delta_pass_pct`` is the answer to "did my last edit hurt?" — a signed
+    integer percentage point delta between this version's pass rate and
+    the previous version's pass rate. NULL on v1 (no predecessor) and on
+    any version comparing against a zero-run predecessor. ``compared_to_label``
+    names the version we compared against, so the UI can render
+    "▼ 25 pts vs v2" without inventing the relationship client-side.
+    """
+
+    version_label: str
+    version_hash: Optional[str] = None
+    runs: int
+    pass_rate: float
+    fail_rate: float
+    inconclusive_rate: float
+    first_seen: Optional[datetime] = None
+    last_seen: Optional[datetime] = None
+    is_current: bool
+    delta_pass_pct: Optional[int] = None
+    compared_to_label: Optional[str] = None
+
+
+class DetectionVersionKPIResponse(BaseModel):
+    """Response shape for the per-detection version KPI endpoint.
+
+    ``versions`` only contains the linear sequence (v1 → v2 → … →
+    current). The pre-versioning ``Legacy`` bucket — runs whose rule
+    state is not knowable — lives in its own ``legacy`` field. Splitting
+    keeps the UI simple: the main list is comparable, ordered, and
+    delta-able; legacy is a footnote you can collapse or hide.
+    """
+
+    detection_id: str
+    current_version_hash: str
+    versions: list[DetectionVersionKPI]
+    legacy: Optional[DetectionVersionKPI] = None
+
 
 # Valid run modes. Kept as a constant so the router, scheduler, and runner
 # can share a single source of truth without circular imports.
@@ -448,7 +505,47 @@ class SIEMConnectionBase(BaseModel):
     log_marker_pattern: str = "purvex_*"
 
 class SIEMConnectionCreate(SIEMConnectionBase):
-    pass
+    @field_validator("url")
+    @classmethod
+    def _validate_siem_url(cls, value: str) -> str:
+        normalized = (value or "").strip()
+        parsed = urlparse(normalized)
+        if parsed.scheme not in {"http", "https"}:
+            raise ValueError("SIEM URL must start with http:// or https://")
+        if not parsed.hostname:
+            raise ValueError("SIEM URL must include a hostname")
+        if parsed.username or parsed.password:
+            raise ValueError("SIEM URL must not embed credentials")
+        if parsed.query or parsed.fragment:
+            raise ValueError("SIEM URL must not include query parameters or fragments")
+
+        host = parsed.hostname.lower()
+        if host in {"localhost", "0.0.0.0"}:
+            raise ValueError("SIEM URL must not point to a loopback host")
+
+        metadata_hosts = {
+            "metadata.google.internal",
+            "metadata",
+            "metadata.azure.internal",
+            "169.254.169.254",
+        }
+        if host in metadata_hosts:
+            raise ValueError("SIEM URL must not point to a cloud metadata endpoint")
+
+        try:
+            ip = ipaddress.ip_address(host)
+        except ValueError:
+            ip = None
+
+        if ip is not None:
+            if ip.is_loopback or ip.is_unspecified:
+                raise ValueError("SIEM URL must not point to a loopback host")
+            if ip.is_link_local:
+                raise ValueError("SIEM URL must not point to a link-local address")
+            if ip.is_reserved or ip.is_multicast:
+                raise ValueError("SIEM URL must not point to a reserved address")
+
+        return normalized.rstrip("/")
 
 class SIEMConnection(SIEMConnectionBase):
     id: int
@@ -524,6 +621,7 @@ class EnvironmentRunnerConfigBase(BaseModel):
     username: Optional[str] = None
     auth_method: str = "key"
     key_path: Optional[str] = None
+    ssh_host_key_sha256: Optional[str] = None
     allowed_test_types: str = '["Atomic only"]'
     max_concurrent_tests: int = 1
     heartbeat_interval_seconds: int = 5

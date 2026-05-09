@@ -1,21 +1,22 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import Link from "next/link";
 import {
-  GitBranch,
   RefreshCw,
   Plus,
   Trash2,
   AlertTriangle,
   CheckCircle2,
-  ArrowLeft,
   KeyRound,
   Loader2,
   FileCode2,
 } from "lucide-react";
-import { PageContainer } from "@/components/layout/page-container";
-import { PageHeader } from "@/components/layout/page-header";
+import {
+  SettingsPageShell,
+  SettingsSection,
+  SettingsBanner,
+  SettingsStatusPill,
+} from "@/components/settings/settings-section";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -131,67 +132,64 @@ export default function DetectionSourcesPage() {
   }
 
   return (
-    <PageContainer maxWidth="full">
-      <div className="mx-auto max-w-6xl px-8 py-8 space-y-6">
-        <div>
-          <Link
-            href="/settings"
-            className="inline-flex items-center gap-1 text-xs text-[var(--surface-subtle-foreground)] hover:text-[var(--foreground)]"
-          >
-            <ArrowLeft className="h-3 w-3" />
-            Back to settings
-          </Link>
-        </div>
-        <PageHeader
-          eyebrow="Detection-as-Code"
-          title="Detection Sources"
-          subtitle="Wire a git repository up as the source of truth for your detection rules. Sync brings new rules in as drafts and routes conflicts through the proposal inbox."
-          icon={<GitBranch className="h-5 w-5" />}
-          actions={
-            <Button onClick={() => setAddOpen(true)}>
-              <Plus className="mr-2 h-4 w-4" /> Add source
-            </Button>
-          }
-        />
-
-        {error && (
-          <div className="rounded-xl border border-rose-500/40 bg-rose-500/10 p-4 text-sm text-rose-200">
+    <SettingsPageShell
+      eyebrow="Detection-as-Code"
+      title="Detection Sources"
+      description="Wire a git repository up as the source of truth for your detection rules. Sync brings new rules in as drafts and routes conflicts through the proposal inbox."
+      width="wide"
+      status={
+        <SettingsStatusPill tone={sources.length > 0 ? "ok" : "muted"}>
+          {sources.length > 0
+            ? `${sources.length} source${sources.length === 1 ? "" : "s"}`
+            : "Not configured"}
+        </SettingsStatusPill>
+      }
+      actions={
+        <Button size="sm" onClick={() => setAddOpen(true)}>
+          <Plus className="mr-2 h-4 w-4" /> Add source
+        </Button>
+      }
+      banner={
+        error ? (
+          <SettingsBanner tone="danger" title="Couldn't load sources">
             {error}
-          </div>
-        )}
-
-        {lastResult && (
-          <div
-            className={cn(
-              "rounded-xl border p-4 text-sm",
-              lastResult.kind === "ok"
-                ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-200"
-                : "border-amber-500/40 bg-amber-500/10 text-amber-200",
-            )}
+          </SettingsBanner>
+        ) : lastResult ? (
+          <SettingsBanner
+            tone={lastResult.kind === "ok" ? "success" : "warning"}
+            title={
+              <>
+                {lastResult.kind === "ok" ? "Sync complete" : "Sync reported issues"}
+                <span className="ml-2 font-normal text-[var(--surface-subtle-foreground)]">
+                  {lastResult.name}
+                </span>
+              </>
+            }
           >
-            <p className="font-semibold">
-              {lastResult.kind === "ok" ? "Sync complete" : "Sync reported issues"}
-              <span className="ml-2 font-normal text-[var(--surface-subtle-foreground)]">
-                {lastResult.name}
-              </span>
-            </p>
-            <p className="mt-1">
+            <p>
               Created {lastResult.created}, updated {lastResult.updated},{" "}
               {lastResult.proposals} proposal
-              {lastResult.proposals === 1 ? "" : "s"} opened, {lastResult.skipped}{" "}
-              unchanged.
+              {lastResult.proposals === 1 ? "" : "s"} opened, {lastResult.skipped} unchanged.
             </p>
             {lastResult.errors.length > 0 && (
               <ul className="mt-2 list-disc pl-5 text-xs">
                 {lastResult.errors.slice(0, 5).map((e, i) => (
-                  <li key={i} className="font-mono">{e}</li>
+                  <li key={i} className="font-mono">
+                    {e}
+                  </li>
                 ))}
               </ul>
             )}
-          </div>
-        )}
-
-        <div className="rounded-2xl border border-[var(--stroke-soft)] bg-[var(--surface-card)] p-6 shadow-[var(--shadow-soft)]">
+          </SettingsBanner>
+        ) : undefined
+      }
+    >
+      <SettingsSection
+        title="Connected sources"
+        description="Each source maps a git repository + branch + path to a detection set."
+        stacked
+      >
+        <div>
           {loading ? (
             <div className="flex items-center gap-2 text-sm text-[var(--surface-subtle-foreground)]">
               <Loader2 className="h-4 w-4 animate-spin" /> Loading sources…
@@ -268,7 +266,7 @@ export default function DetectionSourcesPage() {
             </ul>
           )}
         </div>
-      </div>
+      </SettingsSection>
 
       <AddSourceDialog
         open={addOpen}
@@ -277,7 +275,7 @@ export default function DetectionSourcesPage() {
           if (!open) load();
         }}
       />
-    </PageContainer>
+    </SettingsPageShell>
   );
 }
 
@@ -392,7 +390,7 @@ function AddSourceDialog({ open, onOpenChange }: AddSourceDialogProps) {
         onOpenChange(o);
       }}
     >
-      <DialogContent className="max-w-xl">
+      <DialogContent className="w-[min(calc(100vw-2rem),28rem)]">
         <DialogHeader>
           <DialogTitle>Add detection source</DialogTitle>
         </DialogHeader>

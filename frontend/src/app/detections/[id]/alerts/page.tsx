@@ -6,5 +6,5 @@ export default async function DetectionAlertsRedirectPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  redirect(`/detections/${id}/events`);
+  redirect(`/detections/${id}#validation-evidence`);
 }

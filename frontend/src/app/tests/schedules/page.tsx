@@ -318,7 +318,7 @@ export default function TestSchedulesPage() {
                 Create Schedule
               </Button>
             </DialogTrigger>
-            <DialogContent className="max-w-2xl">
+            <DialogContent className="w-[min(calc(100vw-2rem),36rem)]">
               <DialogHeader>
                 <DialogTitle>Create Test Schedule</DialogTitle>
                 <DialogDescription>

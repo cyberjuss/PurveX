@@ -1,8 +1,8 @@
 """Structured JSON logging for PurveX.
 
-In production (PURVEX_ENV=prod or PURVEX_ENV=staging), logs emit as single-line
-JSON to stdout — friendly for log aggregators (Loki, Datadog, CloudWatch).
-In dev, logs stay human-readable.
+In managed deployments (PURVEX_ENV=beta, staging, or prod), logs emit as
+single-line JSON to stdout — friendly for log aggregators (Loki, Datadog,
+CloudWatch). In dev, logs stay human-readable.
 
 Every record includes the current request's correlation ID when one is bound
 via `correlation_id_ctx.set(...)` (see RequestContextMiddleware).
@@ -48,7 +48,7 @@ def _build_json_formatter():
 
 def configure_logging() -> None:
     env = os.getenv("PURVEX_ENV", "dev").lower()
-    use_json = env in {"prod", "staging"} or os.getenv("PURVEX_LOG_FORMAT", "").lower() == "json"
+    use_json = env in {"prod", "staging", "beta"} or os.getenv("PURVEX_LOG_FORMAT", "").lower() == "json"
 
     root = logging.getLogger()
     for handler in list(root.handlers):

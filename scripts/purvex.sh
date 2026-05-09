@@ -14,6 +14,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BACKEND_DIR="${ROOT_DIR}/backend"
 FRONTEND_DIR="${ROOT_DIR}/frontend"
+LOG_DIR="${ROOT_DIR}/.purvex/logs"
 BACKEND_PORT="${BACKEND_PORT:-8001}"
 FRONTEND_PORT="${FRONTEND_PORT:-1120}"
 MIN_PYTHON="3.11"
@@ -171,6 +172,36 @@ run_setup() {
 BACKEND_PID=""
 FRONTEND_PID=""
 CLEANUP_DONE=0
+BACKEND_LOG_FILE=""
+FRONTEND_LOG_FILE=""
+
+ensure_log_dir() {
+  mkdir -p "${LOG_DIR}"
+}
+
+prepare_log_files() {
+  ensure_log_dir
+  BACKEND_LOG_FILE="${LOG_DIR}/backend.log"
+  FRONTEND_LOG_FILE="${LOG_DIR}/frontend.log"
+  : > "${BACKEND_LOG_FILE}"
+  : > "${FRONTEND_LOG_FILE}"
+}
+
+print_log_paths() {
+  [ -n "${BACKEND_LOG_FILE}" ] && kv "Backend log" "${BACKEND_LOG_FILE}"
+  [ -n "${FRONTEND_LOG_FILE}" ] && kv "Frontend log" "${FRONTEND_LOG_FILE}"
+}
+
+show_log_tail() {
+  local label="${1}"
+  local path="${2}"
+
+  [ -f "${path}" ] || return 0
+  printf "\n"
+  warn "${label} log tail:"
+  tail -n 30 "${path}" || true
+  printf "\n"
+}
 
 kill_process_tree() {
   local pid="${1:-}"
@@ -363,7 +394,12 @@ start_backend() {
   fi
 
   local uvicorn_level="${UVICORN_LOG_LEVEL:-warning}"
-  uvicorn app.main:app --host 127.0.0.1 --port "${BACKEND_PORT}" --log-level "${uvicorn_level}" &
+  if [ "${PURVEX_ATTACH_STARTUP_LOGS:-0}" = "1" ] || [ -z "${BACKEND_LOG_FILE}" ]; then
+    uvicorn app.main:app --host 127.0.0.1 --port "${BACKEND_PORT}" --log-level "${uvicorn_level}" &
+  else
+    uvicorn app.main:app --host 127.0.0.1 --port "${BACKEND_PORT}" --log-level "${uvicorn_level}" \
+      >>"${BACKEND_LOG_FILE}" 2>&1 &
+  fi
   BACKEND_PID=$!
 }
 
@@ -389,7 +425,12 @@ start_frontend() {
     npx next build --webpack
   fi
 
-  PORT="${FRONTEND_PORT}" npx next start -p "${FRONTEND_PORT}" -H 127.0.0.1 &
+  if [ "${PURVEX_ATTACH_STARTUP_LOGS:-0}" = "1" ] || [ -z "${FRONTEND_LOG_FILE}" ]; then
+    PORT="${FRONTEND_PORT}" npx next start -p "${FRONTEND_PORT}" -H 127.0.0.1 &
+  else
+    PORT="${FRONTEND_PORT}" npx next start -p "${FRONTEND_PORT}" -H 127.0.0.1 \
+      >>"${FRONTEND_LOG_FILE}" 2>&1 &
+  fi
   FRONTEND_PID=$!
 }
 
@@ -402,6 +443,16 @@ start_frontend_dev() {
   rm -rf .next
   npx next dev --webpack -p "${FRONTEND_PORT}" -H 127.0.0.1 &
   FRONTEND_PID=$!
+}
+
+wait_for_frontend_ready() {
+  for _ in $(seq 1 60); do
+    if curl -fsS "http://127.0.0.1:${FRONTEND_PORT}" >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 1
+  done
+  return 1
 }
 
 run_dev() {
@@ -448,6 +499,7 @@ run_start() {
   check_python
   check_node
   load_env
+  prepare_log_files
 
   stop_matching_processes "backend" "*PurveX*backend*uvicorn*"
   stop_matching_processes "frontend" "*PurveX*frontend*next*start*"
@@ -473,13 +525,19 @@ run_start() {
   info "Starting PurveX..."
   start_backend
   if ! wait_for_backend_ready; then
+    show_log_tail "Backend" "${BACKEND_LOG_FILE}"
     fail "API did not start."
   fi
   bootstrap_admin
   start_frontend
+  if ! wait_for_frontend_ready; then
+    show_log_tail "Frontend" "${FRONTEND_LOG_FILE}"
+    fail "Web UI did not start."
+  fi
   unset PURVEX_QUIET_RUNTIME
 
   print_urls "http://127.0.0.1:${BACKEND_PORT}" "http://127.0.0.1:${FRONTEND_PORT}"
+  print_log_paths
 
   wait
 }

@@ -3,6 +3,7 @@ import json
 import pytest
 import pytest_asyncio
 from cryptography.fernet import Fernet
+from pydantic import ValidationError
 
 
 @pytest_asyncio.fixture
@@ -183,7 +184,7 @@ async def test_ai_settings_route_does_not_store_plaintext_provider_keys(
         schemas.AIAssistantSettingsCreate(
             provider="OpenAI",
             model_name="gpt-test",
-            api_base_url="https://api.example.test/v1",
+            api_base_url="https://api.openai.com/v1",
             api_key=create_plaintext,
         ),
         session,
@@ -200,7 +201,7 @@ async def test_ai_settings_route_does_not_store_plaintext_provider_keys(
         schemas.AIAssistantSettingsCreate(
             provider="OpenAI",
             model_name="gpt-test",
-            api_base_url="https://api.example.test/v1",
+            api_base_url="https://api.openai.com/v1",
             api_key=update_plaintext,
         ),
         session,
@@ -211,3 +212,44 @@ async def test_ai_settings_route_does_not_store_plaintext_provider_keys(
     assert row.api_key != update_plaintext
     assert is_encrypted_value(row.api_key)
     assert decrypt_value(row.api_key) == update_plaintext
+
+
+def test_siem_schema_accepts_normal_https_url():
+    from app import schemas
+
+    model = schemas.SIEMConnectionCreate(
+        siem_type="splunk",
+        name="Valid SIEM",
+        url="https://splunk.example.test:8089",
+        auth_type="token",
+        credentials='{"token":"abc"}',
+    )
+
+    assert model.url == "https://splunk.example.test:8089"
+
+
+@pytest.mark.parametrize(
+    "bad_url, expected_detail",
+    [
+        ("ftp://splunk.example.test", "http:// or https://"),
+        ("http://localhost:8089", "loopback host"),
+        ("http://127.0.0.1:8089", "loopback host"),
+        ("http://0.0.0.0:8089", "loopback host"),
+        ("http://169.254.169.254/latest/meta-data", "cloud metadata endpoint"),
+        ("https://user:pass@splunk.example.test", "embed credentials"),
+        ("https://splunk.example.test?token=abc", "query parameters or fragments"),
+    ],
+)
+def test_siem_schema_rejects_unsafe_urls(bad_url, expected_detail):
+    from app import schemas
+
+    with pytest.raises(ValidationError) as exc_info:
+        schemas.SIEMConnectionCreate(
+            siem_type="splunk",
+            name="Unsafe SIEM",
+            url=bad_url,
+            auth_type="token",
+            credentials='{"token":"abc"}',
+        )
+
+    assert expected_detail in str(exc_info.value)

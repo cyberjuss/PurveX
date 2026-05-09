@@ -1,6 +1,7 @@
 import json
 import logging
-from typing import Dict, List, Optional
+from typing import AsyncIterator, Dict, List, Optional
+from urllib.parse import urlparse
 
 import httpx
 
@@ -9,6 +10,163 @@ from ..config import settings
 
 
 logger = logging.getLogger(__name__)
+
+
+# Hardcoded baseline of provider hosts we ship support for. Customers who
+# need a different host (Azure OpenAI, a self-hosted vLLM, etc.) widen the
+# allowlist via PURVEX_LLM_ALLOWED_HOSTS in their env, never via the per-org
+# settings page — that page collects untrusted user input.
+_BUILTIN_LLM_HOSTS = frozenset({"api.openai.com", "api.deepseek.com"})
+
+
+def _llm_allowed_hosts() -> frozenset[str]:
+    extra = (getattr(settings, "LLM_EXTRA_ALLOWED_HOSTS", "") or "").strip()
+    if not extra:
+        return _BUILTIN_LLM_HOSTS
+    extras = {h.strip().lower() for h in extra.split(",") if h.strip()}
+    return _BUILTIN_LLM_HOSTS | frozenset(extras)
+
+
+def validate_llm_base_url(api_base_url: Optional[str]) -> None:
+    """Reject base URLs that could be used to redirect LLM traffic to internal
+    services. Raises ValueError on anything that isn't an https:// URL whose
+    host is in the configured allowlist. ``None`` means "use the default" and
+    is always allowed.
+    """
+    if not api_base_url:
+        return
+    parsed = urlparse(api_base_url.strip())
+    if parsed.scheme != "https":
+        raise ValueError("LLM base URL must use https://")
+    host = (parsed.hostname or "").lower()
+    if not host:
+        raise ValueError("LLM base URL is missing a hostname")
+    if host in {"localhost", "127.0.0.1", "::1", "0.0.0.0"}:
+        raise ValueError("LLM base URL must not point at a loopback address")
+    allowed = _llm_allowed_hosts()
+    if host not in allowed:
+        raise ValueError(
+            "LLM base URL host is not in the allowlist; "
+            "add it to PURVEX_LLM_ALLOWED_HOSTS to permit it"
+        )
+
+
+def _resolve_provider(provider: Optional[str]) -> tuple[str, str]:
+    """Returns (normalized_provider, human_label). Raises ValueError on unsupported."""
+    resolved = (provider or settings.AI_PROVIDER or "OpenAI").strip().lower()
+    if resolved in {"built-in", "builtin"}:
+        raise ValueError("Built-in provider does not support external model calls.")
+    if resolved not in {"openai", "deepseek"}:
+        raise ValueError("provider not supported")
+    label = "DeepSeek" if resolved == "deepseek" else "OpenAI"
+    return resolved, label
+
+
+def _resolve_endpoint(
+    provider: str,
+    api_base_url: Optional[str],
+    model_name: Optional[str],
+) -> tuple[str, str]:
+    """Returns (full_chat_completions_url, resolved_model)."""
+    default_base_url = (
+        "https://api.deepseek.com/v1"
+        if provider == "deepseek"
+        else settings.OPENAI_API_BASE_URL
+    )
+    base_url = (api_base_url or default_base_url).rstrip("/")
+    resolved_model = model_name or (
+        "deepseek-chat" if provider == "deepseek" else settings.OPENAI_MODEL
+    )
+    return f"{base_url}/chat/completions", resolved_model
+
+
+async def stream_llm(
+    prompt: str,
+    *,
+    system_prompt: Optional[str] = None,
+    provider: Optional[str] = None,
+    api_base_url: Optional[str] = None,
+    model_name: Optional[str] = None,
+    timeout_seconds: int = 30,
+) -> AsyncIterator[str]:
+    """Yield content deltas from the configured chat-completions provider.
+
+    The stream is wire-compatible with both OpenAI and DeepSeek (both emit
+    SSE lines of the form ``data: {...}\\n\\n`` with a final ``data: [DONE]``).
+
+    Errors are raised — callers wrap and surface them to the SSE client.
+    """
+    try:
+        resolved_provider, label = _resolve_provider(provider)
+    except ValueError as exc:
+        raise RuntimeError(f"Error communicating with AI provider: {exc}") from exc
+
+    try:
+        validate_llm_base_url(api_base_url)
+    except ValueError as exc:
+        # Treat as a configuration error rather than a transient upstream
+        # failure so callers can surface it to the operator.
+        raise RuntimeError(f"Refusing to call LLM: {exc}") from exc
+
+    api_key = settings.OPENAI_API_KEY
+    if not api_key:
+        raise RuntimeError(f"Error communicating with {label}: API key is not configured.")
+
+    url, resolved_model = _resolve_endpoint(resolved_provider, api_base_url, model_name)
+    messages = []
+    if system_prompt:
+        messages.append({"role": "system", "content": system_prompt})
+    messages.append({"role": "user", "content": prompt})
+
+    async with httpx.AsyncClient(timeout=timeout_seconds) as client:
+        async with client.stream(
+            "POST",
+            url,
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+                "Accept": "text/event-stream",
+            },
+            json={
+                "model": resolved_model,
+                "messages": messages,
+                "temperature": 0.2,
+                "stream": True,
+            },
+        ) as response:
+            if response.status_code >= 400:
+                # Drain the body so we can include a useful diagnostic in
+                # logs without leaking it to the client.
+                body_bytes = await response.aread()
+                logger.warning(
+                    "LLM upstream HTTP error: provider=%s status=%s body=%s",
+                    label, response.status_code, body_bytes[:1000],
+                )
+                raise RuntimeError(
+                    f"Error communicating with {label}: upstream returned status {response.status_code}."
+                )
+
+            async for line in response.aiter_lines():
+                if not line:
+                    continue
+                if not line.startswith("data:"):
+                    continue
+                payload = line[len("data:"):].strip()
+                if not payload or payload == "[DONE]":
+                    if payload == "[DONE]":
+                        return
+                    continue
+                try:
+                    chunk = json.loads(payload)
+                except json.JSONDecodeError:
+                    continue
+                choices = chunk.get("choices") or []
+                if not choices:
+                    continue
+                delta = choices[0].get("delta") or {}
+                content = delta.get("content")
+                if isinstance(content, str) and content:
+                    yield content
 
 
 def call_llm(
@@ -28,6 +186,11 @@ def call_llm(
         return "Error communicating with AI provider: Built-in provider does not support external model calls."
 
     label = "DeepSeek" if resolved_provider == "deepseek" else "OpenAI"
+
+    try:
+        validate_llm_base_url(api_base_url)
+    except ValueError as exc:
+        return f"Refusing to call {label}: {exc}"
 
     api_key = settings.OPENAI_API_KEY
     if not api_key:
@@ -81,52 +244,15 @@ def call_llm(
 
     return f"Error communicating with {label}: Empty response content."
 
-def _fallback_analysis(
-    test: models.Test,
-    detection: models.Detection,
-    events_sample: List[Dict],
-) -> Dict:
-    has_logs = bool(events_sample)
-    if not has_logs:
-        category = "ENVIRONMENT"
-        explanation = (
-            "No qualifying telemetry was found for this test run, so the result is inconclusive. "
-            "This usually indicates a logging or collection gap rather than a rule logic issue."
-        )
-        next_steps = [
-            "Verify the endpoint agent/log forwarder is running on the target host.",
-            "Confirm the correct index/sourcetype receives process/authentication events.",
-            f"Re-run the test after confirming logs include marker {test.marker}.",
-        ]
-    elif (test.result or "").upper() in {"FAIL", "FAIL_RULE_VISIBILITY"}:
-        category = "RULE_LOGIC"
-        explanation = (
-            "Telemetry is present but the detection did not fire. This points to a rule or field-mapping gap."
-        )
-        next_steps = [
-            "Compare the detection query fields to the sample events and adjust field names.",
-            "Validate any filters/thresholds that could suppress this behavior.",
-            "Re-run the test after tuning the rule to confirm coverage.",
-        ]
-    else:
-        category = "OTHER"
-        explanation = (
-            "The test outcome does not map cleanly to a single root cause. Review the sample events and query."
-        )
-        next_steps = [
-            "Check that required telemetry sources are enabled for this technique.",
-            "Validate parsing/normalization for key fields used in the rule.",
-            "Re-run the test to confirm the result is repeatable.",
-        ]
-
-    explanation_block = (
-        f"Explanation:\n- {explanation}\n- Next steps: " + "; ".join(next_steps)
-    )
+def _provider_unavailable_analysis() -> Dict:
     return {
-        "ai_explanation": explanation_block,
-        "ai_suggested_rule": "No changes suggested.",
-        "ai_root_cause_category": category,
-        "ai_confidence_score": 40,
+        "ai_explanation": (
+            "AI analysis was not generated because the configured provider is unavailable or not "
+            "configured. No synthetic fallback analysis was stored for this test."
+        ),
+        "ai_suggested_rule": None,
+        "ai_root_cause_category": "OTHER",
+        "ai_confidence_score": 0,
     }
 
 
@@ -243,7 +369,7 @@ Confidence: An integer from 0 to 100 representing how confident you are in your 
     )
 
     if not llm_response or llm_response.startswith("Error communicating"):
-        return _fallback_analysis(test, detection, events_sample)
+        return _provider_unavailable_analysis()
 
     # Parse the LLM response
     ai_explanation = ""

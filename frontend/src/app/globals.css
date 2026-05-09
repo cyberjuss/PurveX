@@ -629,6 +629,253 @@ input[type="password"]::-webkit-textfield-decoration-container {
   --transition-slower: 500ms cubic-bezier(0.16, 1, 0.3, 1);
 }
 
+@layer utilities {
+  .console-page {
+    position: relative;
+    background:
+      linear-gradient(180deg, color-mix(in srgb, var(--surface-subtle) 72%, transparent) 0%, transparent 18rem),
+      radial-gradient(circle at top right, color-mix(in srgb, var(--accent-strong) 8%, transparent), transparent 28rem);
+  }
+
+  .console-page::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background-image:
+      linear-gradient(to right, color-mix(in srgb, var(--stroke-soft) 55%, transparent) 1px, transparent 1px),
+      linear-gradient(to bottom, color-mix(in srgb, var(--stroke-soft) 45%, transparent) 1px, transparent 1px);
+    background-size: 28px 28px;
+    mask-image: linear-gradient(180deg, rgba(0, 0, 0, 0.32), transparent 42%);
+    opacity: 0.22;
+  }
+
+  .console-shell {
+    position: relative;
+    overflow: hidden;
+    border: 1px solid var(--stroke-soft);
+    border-radius: 24px;
+    background:
+      linear-gradient(180deg, color-mix(in srgb, var(--surface-card) 92%, transparent), var(--surface-card)),
+      var(--surface-card);
+    box-shadow: var(--shadow-soft);
+  }
+
+  .console-shell::before {
+    content: "";
+    position: absolute;
+    inset: 0 0 auto 0;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, var(--accent-line), transparent);
+    opacity: 0.9;
+    pointer-events: none;
+  }
+
+  .console-panel {
+    border: 1px solid var(--stroke-soft);
+    border-radius: 20px;
+    background:
+      linear-gradient(180deg, color-mix(in srgb, var(--surface-elevated) 84%, transparent), var(--surface-card)),
+      var(--surface-card);
+    box-shadow: var(--shadow-soft);
+  }
+
+  .console-toolbar {
+    border-bottom: 1px solid var(--stroke-soft);
+    background:
+      linear-gradient(180deg, color-mix(in srgb, var(--surface-subtle) 72%, transparent), transparent),
+      var(--surface-card);
+  }
+
+  .console-command-rail {
+    background:
+      radial-gradient(circle at top left, color-mix(in srgb, var(--accent-soft) 18%, transparent), transparent 46%),
+      linear-gradient(180deg, color-mix(in srgb, var(--surface-elevated) 84%, transparent), var(--surface-card)),
+      var(--surface-card);
+  }
+
+  .console-command-hero {
+    position: relative;
+    overflow: hidden;
+    border-bottom: 1px solid color-mix(in srgb, var(--stroke-soft) 72%, transparent);
+    background:
+      radial-gradient(circle at 12% 12%, color-mix(in srgb, var(--accent-soft) 34%, transparent), transparent 40%),
+      radial-gradient(circle at 88% 0%, color-mix(in srgb, var(--accent-line) 18%, transparent), transparent 28%),
+      linear-gradient(180deg, color-mix(in srgb, var(--surface-subtle) 88%, transparent), transparent);
+  }
+
+  .console-command-hero::after {
+    content: "";
+    position: absolute;
+    inset: auto 18px 0 18px;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--accent-line) 60%, transparent), transparent);
+    opacity: 0.9;
+    pointer-events: none;
+  }
+
+  .console-strip {
+    display: grid;
+    gap: 1px;
+    background: var(--stroke-soft);
+  }
+
+  .console-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    border: 1px solid var(--stroke-soft);
+    border-radius: 999px;
+    background: var(--surface-elevated);
+    padding: 0.3rem 0.65rem;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--surface-subtle-foreground);
+  }
+
+  .console-filter-cloud {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.55rem;
+  }
+
+  .console-filter {
+    display: inline-flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+    border: 1px solid var(--stroke-soft);
+    border-radius: 999px;
+    background:
+      linear-gradient(180deg, color-mix(in srgb, var(--surface-elevated) 90%, transparent), color-mix(in srgb, var(--surface-card) 92%, transparent)),
+      var(--surface-card);
+    padding: 0.55rem 0.85rem;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.05em;
+    color: var(--foreground);
+    box-shadow: 0 10px 24px rgba(3, 7, 18, 0.12);
+    transition: border-color var(--transition-fast), background-color var(--transition-fast), color var(--transition-fast), transform var(--transition-fast), box-shadow var(--transition-fast);
+  }
+
+  .console-filter:hover {
+    border-color: var(--accent-line);
+    background: color-mix(in srgb, var(--surface-elevated) 80%, var(--accent-soft));
+    box-shadow: 0 14px 32px rgba(3, 7, 18, 0.18);
+    transform: translateY(-1px);
+  }
+
+  .console-filter[data-active="true"] {
+    border-color: var(--accent-line);
+    background:
+      linear-gradient(180deg, color-mix(in srgb, var(--surface-elevated) 60%, var(--accent-soft)), color-mix(in srgb, var(--surface-card) 72%, var(--accent-soft))),
+      var(--surface-card);
+    color: var(--accent-strong);
+    box-shadow:
+      0 0 0 1px color-mix(in srgb, var(--accent-line) 32%, transparent),
+      0 16px 34px rgba(59, 130, 246, 0.12);
+  }
+
+  .console-count {
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--surface-subtle) 76%, transparent);
+    padding: 0.12rem 0.5rem;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    line-height: 1.4;
+    color: var(--surface-subtle-foreground);
+  }
+
+  .console-metric-strip {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    border: 1px solid color-mix(in srgb, var(--stroke-soft) 80%, transparent);
+    border-radius: 999px;
+    background:
+      linear-gradient(180deg, color-mix(in srgb, var(--surface-elevated) 82%, transparent), color-mix(in srgb, var(--surface-card) 94%, transparent)),
+      var(--surface-card);
+    padding: 0.8rem 0.95rem;
+    box-shadow: 0 14px 34px rgba(3, 7, 18, 0.14);
+  }
+
+  .console-metric-strip[data-tone="warning"] {
+    border-color: color-mix(in srgb, #f97316 35%, var(--stroke-soft));
+  }
+
+  .console-metric-icon {
+    display: inline-flex;
+    height: 2rem;
+    width: 2rem;
+    align-items: center;
+    justify-content: center;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--surface-subtle) 84%, transparent);
+    color: var(--accent-strong);
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--stroke-soft) 72%, transparent);
+  }
+
+  .console-metric-strip[data-tone="warning"] .console-metric-icon {
+    color: #fb923c;
+  }
+
+  .console-metric-value {
+    font-family: var(--font-mono);
+    font-size: 1rem;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    color: var(--foreground);
+  }
+
+  .console-table {
+    width: 100%;
+    border-collapse: collapse;
+  }
+
+  .console-table thead tr {
+    background: color-mix(in srgb, var(--surface-subtle) 76%, transparent);
+  }
+
+  .console-table th {
+    padding: 0.65rem 0.8rem;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    text-align: left;
+    color: var(--surface-subtle-foreground);
+  }
+
+  .console-table td {
+    padding: 0.75rem 0.8rem;
+    border-top: 1px solid color-mix(in srgb, var(--stroke-soft) 72%, transparent);
+    vertical-align: top;
+  }
+
+  .console-table tbody tr {
+    transition: background-color var(--transition-fast);
+  }
+
+  .console-table tbody tr:hover {
+    background: color-mix(in srgb, var(--surface-subtle) 72%, transparent);
+  }
+
+  .console-mono {
+    font-family: var(--font-mono);
+    letter-spacing: 0.08em;
+  }
+
+  .console-label {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--surface-subtle-foreground);
+  }
+}
+
 /* Premium Card Styles - Consistent across platform */
 .premium-card {
   background: var(--pvrx-surface);

@@ -30,3 +30,9 @@ scripts/purvex.exe
 cookiejar.txt
 plan.md
 .claude/
+
+# Local Alembic/SQLite reconciliation helpers — must not ship
+backend/_fix_*.py
+
+# Stray local logs/output captured by run scripts
+tmp-start-*.log

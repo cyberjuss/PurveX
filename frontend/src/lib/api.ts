@@ -2,6 +2,8 @@
 // so cookies stay same-origin. On the server (SSR/route handlers) we can hit the
 // backend directly.
 const PROXY_PREFIX = "/api/v1";
+// Local development fallback only. Beta/prod deployments must set
+// NEXT_PUBLIC_API_URL or route /api/v1 through the deployment proxy.
 const DEFAULT_API_URL = "http://localhost:8001";
 const LEGACY_DEFAULT_API_URLS = ["http://127.0.0.1:8001", "http://127.0.0.1:8000"];
 
@@ -557,6 +559,51 @@ export async function getDetection(id: string): Promise<Detection | null> {
   }
 }
 
+export type DetectionVersionKPI = {
+  version_label: string;
+  version_hash: string | null;
+  runs: number;
+  pass_rate: number;
+  fail_rate: number;
+  inconclusive_rate: number;
+  first_seen: string | null;
+  last_seen: string | null;
+  is_current: boolean;
+  // Signed pass-rate delta vs. the immediate predecessor in versions[],
+  // in whole percentage points. NULL on v1 (no predecessor) and on any
+  // version where either side has zero runs.
+  delta_pass_pct: number | null;
+  // Label of the version we compared against (e.g. "v1"). NULL when
+  // delta_pass_pct is NULL.
+  compared_to_label: string | null;
+};
+
+export type DetectionVersionKPIResponse = {
+  detection_id: string;
+  current_version_hash: string;
+  // Linear sequence v1 → v2 → … → current. Pre-versioning runs are NOT
+  // here — they live on `legacy` so the main list stays comparable.
+  versions: DetectionVersionKPI[];
+  legacy: DetectionVersionKPI | null;
+};
+
+export async function getDetectionVersionKPIs(
+  detectionId: string,
+): Promise<DetectionVersionKPIResponse | null> {
+  try {
+    return await apiFetch(`/detections/${detectionId}/version-kpis`, {
+      cache: "no-store",
+    });
+  } catch (err: any) {
+    const is404 =
+      (err as any)?.is404 ||
+      err?.message?.toLowerCase().includes("not found") ||
+      err?.message?.toLowerCase().includes("404");
+    if (is404) return null;
+    throw err;
+  }
+}
+
 export async function getDetectionAlerts(detectionId: string): Promise<DetectionAlert[]> {
   try {
     return await apiFetch(`/detections/${detectionId}/alerts`, { cache: "no-store" });
@@ -572,6 +619,136 @@ export async function getDetectionAlerts(detectionId: string): Promise<Detection
     }
     // Re-throw other errors (network errors, auth errors, etc.)
     throw err;
+  }
+}
+
+export interface AssistantStreamRequest {
+  prompt?: string;
+  action?: string;
+  context_scope?: "portfolio" | "detection";
+  detection_id?: string | null;
+  alert_id?: number | null;
+  model_name?: string;
+  analyst_goal?: string;
+}
+
+export interface AssistantStreamHandlers {
+  onDelta: (delta: string) => void;
+  onDone: () => void;
+  onError: (message: string) => void;
+  signal?: AbortSignal;
+}
+
+/**
+ * Stream the Watchtower assistant response token-by-token via SSE.
+ *
+ * The backend emits `data: {"type":"delta","content":"..."}` for each chunk,
+ * a final `{"type":"done"}`, and on upstream failure a `{"type":"error",...}`
+ * with the real provider-unavailable message.
+ */
+export async function streamAssistantChat(
+  body: AssistantStreamRequest,
+  handlers: AssistantStreamHandlers,
+): Promise<void> {
+  const { onDelta, onDone, onError, signal } = handlers;
+  const apiBases = getApiBaseCandidates();
+  const base = apiBases[0] ?? PROXY_PREFIX;
+
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    Accept: "text/event-stream",
+  };
+  if (typeof window !== "undefined") {
+    const csrfToken = await getCsrfToken();
+    if (csrfToken) {
+      headers["X-CSRF-Token"] = csrfToken;
+    }
+  }
+
+  let response: Response;
+  try {
+    response = await fetch(`${base}/assistant/chat/stream`, {
+      method: "POST",
+      credentials: "include",
+      headers,
+      body: JSON.stringify(body),
+      signal,
+    });
+  } catch (err: unknown) {
+    if (err instanceof Error && err.name === "AbortError") {
+      onDone();
+      return;
+    }
+    onError(err instanceof Error ? err.message : "Streaming request failed.");
+    return;
+  }
+
+  if (!response.ok || !response.body) {
+    let detail = `HTTP ${response.status}`;
+    try {
+      const text = await response.text();
+      const parsed = JSON.parse(text);
+      detail = parsed?.detail || text || detail;
+    } catch {
+      // ignore — keep the HTTP status as the detail.
+    }
+    onError(detail);
+    return;
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+
+      // SSE messages are separated by blank lines (\n\n). Drain any complete
+      // messages from the buffer and keep the trailing partial.
+      let separatorIdx = buffer.indexOf("\n\n");
+      while (separatorIdx !== -1) {
+        const rawEvent = buffer.slice(0, separatorIdx);
+        buffer = buffer.slice(separatorIdx + 2);
+
+        for (const line of rawEvent.split("\n")) {
+          if (!line.startsWith("data:")) continue;
+          const dataStr = line.slice(5).trim();
+          if (!dataStr) continue;
+          try {
+            const event = JSON.parse(dataStr) as { type: string; content?: string };
+            if (event.type === "delta" && event.content) {
+              onDelta(event.content);
+            } else if (event.type === "done") {
+              onDone();
+              return;
+            } else if (event.type === "error") {
+              onError(event.content ?? "AI provider returned an error.");
+              return;
+            }
+          } catch {
+            // Drop malformed events rather than killing the stream.
+          }
+        }
+
+        separatorIdx = buffer.indexOf("\n\n");
+      }
+    }
+    onDone();
+  } catch (err: unknown) {
+    if (err instanceof Error && err.name === "AbortError") {
+      onDone();
+      return;
+    }
+    onError(err instanceof Error ? err.message : "Streaming connection dropped.");
+  } finally {
+    try {
+      reader.releaseLock();
+    } catch {
+      // ignore
+    }
   }
 }
 

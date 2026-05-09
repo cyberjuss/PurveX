@@ -36,6 +36,7 @@ from .. import models, schemas
 from ..db import get_db
 from ..routers.auth import get_current_user
 from ..services import git_sync
+from ..services.proposal_policy import supersede_pending_for_source
 from ..utils.authz import Permission, require_permission
 from ..utils.encryption import encrypt_value
 from ..utils.endpoint_rate_limit import endpoint_rate_limit
@@ -93,6 +94,21 @@ async def _get_or_404(
     return row
 
 
+# Hard cap on serialized audit details. Sync outcomes with thousands of
+# files would otherwise put multi-KB JSON into every audit row and slow
+# the audit list page. We already truncate the ``errors`` list upstream,
+# but a long ``commit`` SHA list or a verbose status string could still
+# blow past this; the truncation marker makes that visible.
+_AUDIT_DETAIL_BYTE_CAP = 4096
+
+
+def _cap_audit_detail(blob: str | None) -> str | None:
+    if blob is None or len(blob) <= _AUDIT_DETAIL_BYTE_CAP:
+        return blob
+    head = blob[: _AUDIT_DETAIL_BYTE_CAP - 32]
+    return head + "…[truncated]"
+
+
 async def _audit(
     db: AsyncSession,
     user: models.User,
@@ -108,7 +124,7 @@ async def _audit(
             action=action,
             resource_type="detection_source",
             resource_id=str(source.id),
-            details=details or source.name,
+            details=_cap_audit_detail(details) or source.name,
         )
     )
 
@@ -238,6 +254,16 @@ async def delete_detection_source(
     org_id = require_org_id(current_user)
     row = await _get_or_404(db, source_id, org_id)
 
+    # Supersede any pending git-authored proposals targeting detections
+    # that came from this source — the inbox would otherwise show ghost
+    # rows the reviewer can't act on cleanly. Must run BEFORE we null
+    # out detection_source_id, since the join uses that FK.
+    superseded = await supersede_pending_for_source(
+        db,
+        organization_id=org_id,
+        detection_source_id=row.id,
+    )
+
     # Null-out the FK on detections that came from this source so they're
     # not orphaned. We leave the rules themselves in place — the user
     # explicitly asked to forget the *source*, not the detections.
@@ -246,7 +272,13 @@ async def delete_detection_source(
         .where(models.Detection.detection_source_id == row.id)
         .values(detection_source_id=None)
     )
-    await _audit(db, current_user, "DETECTION_SOURCE_DELETED", row)
+    await _audit(
+        db,
+        current_user,
+        "DETECTION_SOURCE_DELETED",
+        row,
+        details=json.dumps({"superseded_proposals": superseded}) if superseded else None,
+    )
     await db.delete(row)
     await db.commit()
     return

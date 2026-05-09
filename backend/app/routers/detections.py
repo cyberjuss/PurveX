@@ -6,11 +6,12 @@ import logging
 
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
-from sqlalchemy import func
+from sqlalchemy import case, func
 
 from .. import models, schemas
 from ..db import get_db, async_sessionmaker
 from ..routers.auth import get_current_user
+from ..services.detection_versioning import compute_detection_version_hash
 from ..utils.tenant import require_org_id
 from ..utils.authz import (
     require_detection_create,
@@ -244,6 +245,182 @@ async def get_detection(
     return det
 
 
+@router.get(
+    "/{detection_id}/version-kpis",
+    response_model=schemas.DetectionVersionKPIResponse,
+)
+async def get_detection_version_kpis(
+    detection_id: str,
+    db: DBSession,
+    current_user: CurrentUser,
+):
+    """Return per-version validation KPIs for a single detection.
+
+    Groups completed DETECTION_VALIDATION runs by ``Test.detection_version_hash``
+    and assigns server-side labels (``v1``, ``v2``, ...) ordered by first
+    appearance. The bucket whose hash matches the live detection is flagged
+    ``is_current=True`` so the UI can highlight the active version, even if
+    no runs exist for it yet (synthetic empty bucket prepended).
+
+    Tests with NULL ``detection_version_hash`` (ran before versioning
+    shipped, or scenario runs) collapse into a ``"Legacy"`` bucket
+    so historical data stays visible without a backfill.
+    """
+    await require_detection_read(current_user, db)
+    try:
+        uuid.UUID(detection_id)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid detection ID format",
+        )
+
+    org_id = require_org_id(current_user)
+
+    det_result = await db.execute(
+        select(models.Detection).where(
+            models.Detection.id == detection_id,
+            models.Detection.organization_id == org_id,
+        )
+    )
+    detection = det_result.scalar_one_or_none()
+    if detection is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Detection not found"
+        )
+
+    current_hash = compute_detection_version_hash(detection)
+
+    # Aggregate completed validation runs by version hash. We aggregate
+    # SUM(CASE WHEN result = 'X' THEN 1 ELSE 0 END) instead of using
+    # FILTER (...) so this query stays portable to SQLite for dev.
+    agg_stmt = (
+        select(
+            models.Test.detection_version_hash,
+            func.count().label("runs"),
+            func.coalesce(
+                func.sum(case((models.Test.result == "pass", 1), else_=0)), 0
+            ).label("pass_count"),
+            func.coalesce(
+                func.sum(case((models.Test.result == "fail", 1), else_=0)), 0
+            ).label("fail_count"),
+            func.coalesce(
+                func.sum(
+                    case((models.Test.result == "inconclusive", 1), else_=0)
+                ),
+                0,
+            ).label("inc_count"),
+            func.min(models.Test.started_at).label("first_seen"),
+            func.max(models.Test.started_at).label("last_seen"),
+        )
+        .where(
+            models.Test.detection_id == detection_id,
+            models.Test.organization_id == org_id,
+            models.Test.mode == "DETECTION_VALIDATION",
+            models.Test.status == "completed",
+        )
+        .group_by(models.Test.detection_version_hash)
+        .order_by(func.min(models.Test.started_at).asc())
+    )
+    agg_result = await db.execute(agg_stmt)
+    rows = agg_result.all()
+
+    versions: list[schemas.DetectionVersionKPI] = []
+    legacy: Optional[schemas.DetectionVersionKPI] = None
+    seen_current_hash = False
+    next_label_index = 1
+
+    for row in rows:
+        runs = row.runs or 0
+        is_legacy = row.detection_version_hash is None
+
+        if is_legacy:
+            # Pre-versioning rows can't be ordered or compared — they don't
+            # have a known rule state. Park them in a separate field so
+            # the main versions list stays a clean linear sequence.
+            legacy = schemas.DetectionVersionKPI(
+                version_label="Legacy",
+                version_hash=None,
+                runs=runs,
+                pass_rate=(row.pass_count / runs) if runs else 0.0,
+                fail_rate=(row.fail_count / runs) if runs else 0.0,
+                inconclusive_rate=(row.inc_count / runs) if runs else 0.0,
+                first_seen=row.first_seen,
+                last_seen=row.last_seen,
+                is_current=False,
+                delta_pass_pct=None,
+                compared_to_label=None,
+            )
+            continue
+
+        label = f"v{next_label_index}"
+        next_label_index += 1
+        is_current = row.detection_version_hash == current_hash
+        if is_current:
+            seen_current_hash = True
+        versions.append(
+            schemas.DetectionVersionKPI(
+                version_label=label,
+                version_hash=row.detection_version_hash,
+                runs=runs,
+                pass_rate=(row.pass_count / runs) if runs else 0.0,
+                fail_rate=(row.fail_count / runs) if runs else 0.0,
+                inconclusive_rate=(row.inc_count / runs) if runs else 0.0,
+                first_seen=row.first_seen,
+                last_seen=row.last_seen,
+                is_current=is_current,
+                delta_pass_pct=None,  # filled in below once we know predecessors
+                compared_to_label=None,
+            )
+        )
+
+    # If the live rule's hash hasn't appeared in any historical run yet,
+    # surface it as an empty "current" bucket so the panel still shows the
+    # active version and can prompt the user to run a validation.
+    if not seen_current_hash:
+        versions.append(
+            schemas.DetectionVersionKPI(
+                version_label=f"v{next_label_index}",
+                version_hash=current_hash,
+                runs=0,
+                pass_rate=0.0,
+                fail_rate=0.0,
+                inconclusive_rate=0.0,
+                first_seen=None,
+                last_seen=None,
+                is_current=True,
+                delta_pass_pct=None,
+                compared_to_label=None,
+            )
+        )
+
+    # Compute pass-rate delta vs. the immediate predecessor. This is the
+    # "did my last edit hurt?" answer — we want the UI to render it as a
+    # single line (▼ 25 pts vs v2) instead of asking the user to subtract.
+    # Skip when either side has zero runs: 0/0 isn't meaningful and would
+    # show as a confusing "▼ 67 pts" the moment a single fail lands on a
+    # never-validated predecessor.
+    for idx in range(1, len(versions)):
+        current_v = versions[idx]
+        prev_v = versions[idx - 1]
+        if current_v.runs == 0 or prev_v.runs == 0:
+            continue
+        # Round to whole points — sub-percent precision is noise to a
+        # human reader and risks "▼ 0.7 pts" type displays that look
+        # like a regression but aren't.
+        current_v.delta_pass_pct = int(
+            round((current_v.pass_rate - prev_v.pass_rate) * 100)
+        )
+        current_v.compared_to_label = prev_v.version_label
+
+    return schemas.DetectionVersionKPIResponse(
+        detection_id=detection_id,
+        current_version_hash=current_hash,
+        versions=versions,
+        legacy=legacy,
+    )
+
+
 @router.get("/{detection_id}/export", response_model=schemas.DetectionExport)
 async def export_detection(
     detection_id: str,
@@ -375,14 +552,21 @@ async def get_detection_alerts(
             or "info"
         )
 
-        host = (
-            event.get("host")
-            or event.get("Computer")
-            or event.get("dest")
-            or event.get("dest_host")
-            or (event.get("host") if isinstance(event.get("host"), str) else None)
-            or ((event.get("host") or {}).get("name") if isinstance(event.get("host"), dict) else None)
-        )
+        # Host can be a string (Splunk, Sentinel) or a nested dict (Elastic ECS:
+        # {"host": {"name": "web-1"}}). Handle the dict case first so we don't
+        # render the whole dict as a string.
+        raw_host = event.get("host")
+        if isinstance(raw_host, dict):
+            host = raw_host.get("name") or raw_host.get("hostname")
+        elif isinstance(raw_host, str) and raw_host:
+            host = raw_host
+        else:
+            host = (
+                event.get("Computer")           # Sentinel SecurityEvent
+                or event.get("dest")            # Splunk CIM
+                or event.get("dest_host")
+                or event.get("hostname")
+            )
 
         try:
             raw_event = json.dumps(event, default=str)[:8000]

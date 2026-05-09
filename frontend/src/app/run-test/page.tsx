@@ -2212,7 +2212,7 @@ function RunTestPageContent() {
                   ? {
                       color: "bg-red-50 border-red-200 text-red-800",
                       icon: <XCircle className="h-4 w-4 text-red-600" />,
-                      title: "Telemetry gap",
+                      title: "No logs",
                       sub: "No matching events arrived in the SIEM. Check log sources, agents, and ingestion pipelines.",
                     }
                   : {

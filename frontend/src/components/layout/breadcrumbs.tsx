@@ -48,7 +48,7 @@ export function Breadcrumbs({ items, variant = "light", className }: Breadcrumbs
           ? prevSegment === "tests"
             ? "Validation Run"
             : prevSegment === "events" || prevSegment === "alerts"
-              ? "Event Record"
+              ? "Validation Evidence"
               : "Details"
           : segment
               .split("-")
@@ -58,10 +58,11 @@ export function Breadcrumbs({ items, variant = "light", className }: Breadcrumbs
                 if (upper === "SIEM") return upper;
                 if (upper === "AGENT") return "Watchtower";
                 if (upper === "RUN") return "Run";
+                if (upper === "LAB") return "Endpoints";
                 if (upper === "TESTS" && segment === "tests") return "Tests";
                 if (upper === "DASHBOARD") return "Dashboard";
-                if (upper === "ALERTS") return "Signals";
-                if (upper === "EVENTS") return "Signals";
+                if (upper === "ALERTS") return "Validation Evidence";
+                if (upper === "EVENTS") return "Validation Evidence";
                 return word.charAt(0).toUpperCase() + word.slice(1);
               })
               .join(" ");

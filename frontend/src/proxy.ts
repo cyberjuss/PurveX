@@ -26,10 +26,6 @@ const PUBLIC_PREFIXES = [
   "/forgot-password",
   "/reset-password",
   "/legal",
-  "/about",
-  "/press",
-  "/contact",
-  "/creators",
 ];
 
 // App surfaces that require a logged-in session. Keep in sync with the
@@ -153,13 +149,13 @@ export default function proxy(request: NextRequest) {
       ].join("; ")
     : [
         "default-src 'self'",
-        `script-src 'self' 'nonce-${nonce}' 'strict-dynamic' https: http:`,
-        `script-src-elem 'self' 'nonce-${nonce}' https: http:`,
+        `script-src 'self' 'nonce-${nonce}' 'strict-dynamic'`,
+        `script-src-elem 'self' 'nonce-${nonce}'`,
         "script-src-attr 'none'",
         "style-src 'self' 'unsafe-inline'",
         "img-src 'self' data: blob:",
         "font-src 'self' data:",
-        "connect-src 'self' http://localhost:* http://127.0.0.1:*",
+        "connect-src 'self'",
         "object-src 'none'",
         "frame-ancestors 'none'",
         "base-uri 'self'",

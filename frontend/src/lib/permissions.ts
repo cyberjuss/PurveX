@@ -60,7 +60,7 @@ export const ROLE_GUIDANCE: Record<Role, { label: string; can: string[]; cannot:
     can: [
       "Manage users, roles, organization settings, SIEM connections, and endpoints",
       "Run and schedule production validations",
-      "Approve high-criticality and production changes",
+      "Approve high-severity and production changes",
     ],
     cannot: [
       "Bypass audit logging or tenant isolation",
@@ -77,7 +77,7 @@ export const ROLE_GUIDANCE: Record<Role, { label: string; can: string[]; cannot:
     cannot: [
       "Manage users, SIEM connections, endpoints, or organization settings",
       "Run or schedule production validations",
-      "Change criticality or approve high-criticality/production promotion",
+      "Change severity or approve high-severity/production promotion",
     ],
   },
   [Role.SECURITY_ANALYST]: {
@@ -88,7 +88,7 @@ export const ROLE_GUIDANCE: Record<Role, { label: string; can: string[]; cannot:
       "Use Watchtower for analysis",
     ],
     cannot: [
-      "Edit detections or change lifecycle/criticality",
+      "Edit detections or change lifecycle/severity",
       "Run dev or production validations",
       "Manage settings, SIEM connections, endpoints, users, or roles",
     ],

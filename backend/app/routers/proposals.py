@@ -32,6 +32,7 @@ from ..routers.auth import get_current_user
 from ..services.proposal_policy import (
     enforce_create_policy,
     enforce_review_policy,
+    supersede_pending_for_detection,
 )
 from ..utils.authz import (
     Permission,
@@ -422,11 +423,18 @@ async def approve_proposal(
     and — via ``enforce_review_policy`` — cannot be the proposer.
     """
     org_id = require_org_id(current_user)
+    # Lock the proposal row for the duration of this transaction so two
+    # reviewers approving the same proposal at the same instant can't both
+    # pass the ``status == 'pending'`` gate and stomp each other's writes.
+    # SQLite ignores ``with_for_update`` (single-writer anyway), Postgres
+    # serialises the second approver behind the first.
     res = await db.execute(
-        select(models.DetectionProposal).where(
+        select(models.DetectionProposal)
+        .where(
             models.DetectionProposal.id == proposal_id,
             models.DetectionProposal.organization_id == org_id,
         )
+        .with_for_update()
     )
     proposal = res.scalars().first()
     if proposal is None:
@@ -444,6 +452,28 @@ async def approve_proposal(
     elif proposal.action == "update":
         await require_detection_update(current_user, db, request)
     elif proposal.action == "delete":
+        # A delete proposal that targets a git-sourced rule would orphan the
+        # upstream link — re-creating the rule on the next sync as a fresh
+        # row with a new id and losing all run history attached to the old
+        # one. Block this path; deletion of git-sourced rules has to go
+        # through upstream removal + sync, or via DetectionSource removal.
+        if proposal.detection_id:
+            existing = await db.execute(
+                select(models.Detection.source).where(
+                    models.Detection.id == proposal.detection_id,
+                    models.Detection.organization_id == org_id,
+                )
+            )
+            existing_source = (existing.scalar_one_or_none() or "").lower()
+            if existing_source == "git":
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        "This detection is sourced from git. Delete it upstream "
+                        "and re-sync, or remove the detection source — do not "
+                        "delete via proposal."
+                    ),
+                )
         await require_detection_delete(current_user, db, request)
 
     target_fields = _load_json(proposal.target_fields, {})
@@ -492,6 +522,16 @@ async def approve_proposal(
             setattr(live, field, value)
         live.last_updated_at = datetime.now(timezone.utc)
     elif proposal.action == "delete" and live is not None:
+        # Mark every other pending proposal that targets this detection as
+        # superseded BEFORE the row goes away. Without this, the FK is
+        # ON DELETE SET NULL but the inbox would still show ghost
+        # proposals that can never be approved (their target is gone) or
+        # rejected cleanly.
+        await supersede_pending_for_detection(
+            db,
+            organization_id=org_id,
+            detection_id=live.id,
+        )
         await db.delete(live)
     elif proposal.action == "create":
         # Create proposals go through a separate codepath (DaC) so we
@@ -556,11 +596,16 @@ async def reject_proposal(
 ):
     await require_permission(current_user, Permission.DETECTIONS_READ, db)
     org_id = require_org_id(current_user)
+    # See approve_proposal for why this lock matters — same race exists if
+    # two reviewers click reject simultaneously (last-writer wins on the
+    # review note, harmless on Postgres + the row lock).
     res = await db.execute(
-        select(models.DetectionProposal).where(
+        select(models.DetectionProposal)
+        .where(
             models.DetectionProposal.id == proposal_id,
             models.DetectionProposal.organization_id == org_id,
         )
+        .with_for_update()
     )
     proposal = res.scalars().first()
     if proposal is None:

@@ -95,7 +95,7 @@ export function ExportYamlButton({
       </Button>
 
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="max-w-2xl">
+        <DialogContent className="w-[min(calc(100vw-2rem),40rem)]">
           <DialogHeader>
             <DialogTitle>Detection-as-Code export</DialogTitle>
           </DialogHeader>
