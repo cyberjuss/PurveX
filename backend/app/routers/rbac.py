@@ -2,7 +2,7 @@
 RBAC API endpoints for role and permission management.
 """
 from typing import List, Optional
-from datetime import datetime
+from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import delete, or_, select
@@ -93,6 +93,7 @@ async def list_users(
             "email": user.email,
             "is_admin": user.is_admin,
             "is_active": user.is_active,
+            "is_pending_activation": getattr(user, "is_pending_activation", False),
             "created_at": user.created_at.isoformat() if user.created_at else None,
         }
         for user in users
@@ -419,3 +420,154 @@ async def set_user_password(
         await session.commit()
     
     return {"message": "Password updated successfully"}
+
+
+class InviteUserRequest(BaseModel):
+    email: str
+    username: Optional[str] = None
+
+
+@router.post("/users/invite", response_model=dict)
+async def invite_user(
+    payload: InviteUserRequest,
+    request: Request,
+    db: DBSession,
+    current_user: CurrentUser,
+):
+    """Invite a new user by email (admin only).
+
+    Creates the account in a pending state with no usable password and
+    emails an activation link. The user sets their own password via
+    POST /auth/invite/accept, replacing the old flow where an admin chose
+    and had to relay a plaintext password out-of-band.
+    """
+    await require_permission(current_user, Permission.SETTINGS_USERS_MANAGE, db)
+    org_id = require_org_id(current_user)
+
+    client_ip = request.client.host if request.client else "unknown"
+    allowed, _ = check_rate_limit(
+        f"invite_user:{client_ip}:{current_user.id}", max_requests=20, window_seconds=3600
+    )
+    if not allowed:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Too many invites sent. Please wait and try again.",
+        )
+
+    from ..utils.security import sanitize_email
+
+    email = sanitize_email(payload.email)
+    if not email:
+        raise HTTPException(status_code=400, detail="A valid email is required")
+
+    existing = await db.execute(select(models.User).where(models.User.email == email))
+    if existing.scalars().first():
+        raise HTTPException(status_code=400, detail="A user with this email already exists")
+
+    username = (payload.username or email.split("@")[0]).strip() or None
+
+    import secrets as _secrets
+
+    # Unusable placeholder — the invited user must complete
+    # POST /auth/invite/accept to set a real password. is_pending_activation
+    # additionally blocks login outright until that happens.
+    user = models.User(
+        username=username,
+        email=email,
+        hashed_password=hash_password(_secrets.token_urlsafe(32)),
+        is_admin=False,
+        is_active=True,
+        is_pending_activation=True,
+        organization_id=org_id,
+    )
+    db.add(user)
+    await db.commit()
+    await db.refresh(user)
+
+    from ..security import create_access_token, decode_access_token
+
+    invite_token = create_access_token(
+        data={"sub": user.email, "uid": user.id, "purpose": "user_invite"},
+        expires_minutes=60 * 24 * 7,  # 7 days
+    )
+    claims = decode_access_token(invite_token)
+    if claims and claims.get("jti") and claims.get("exp"):
+        db.add(
+            models.UserInviteToken(
+                user_id=user.id,
+                invited_by_user_id=current_user.id,
+                jti=str(claims["jti"]),
+                expires_at=datetime.fromtimestamp(float(claims["exp"]), tz=timezone.utc),
+            )
+        )
+        await db.commit()
+
+    from ..config import settings as app_settings
+    from ..utils.email import send_invite_email
+
+    invite_link = f"{app_settings.APP_BASE_URL.rstrip('/')}/accept-invite?token={invite_token}"
+    sent = await send_invite_email(user.email, invite_link, inviter_name=current_user.username or current_user.email)
+    if not sent:
+        import logging
+
+        logging.getLogger("purvex.api").warning(
+            "Invite created for %s — email not sent, link: %s", user.email, invite_link
+        )
+
+    async with async_sessionmaker() as session:
+        session.add(
+            models.AuditEvent(
+                user_id=current_user.id,
+                user_email=current_user.email,
+                action="USER_INVITED",
+                resource_type="user",
+                resource_id=str(user.id),
+                details=f"Invited {user.email}",
+            )
+        )
+        await session.commit()
+
+    return {"message": "Invite sent", "user_id": user.id, "email": user.email}
+
+
+class SetUserStatusRequest(BaseModel):
+    is_active: bool
+
+
+@router.patch("/users/{user_id}/status", response_model=dict)
+async def set_user_status(
+    user_id: int,
+    payload: SetUserStatusRequest,
+    db: DBSession,
+    current_user: CurrentUser,
+):
+    """Deactivate or reactivate a user (admin only). Deactivating blocks
+    login immediately and also kills any already-issued session on the
+    next request (see is_active check in auth.get_current_user)."""
+    await require_permission(current_user, Permission.SETTINGS_USERS_MANAGE, db)
+    org_id = require_org_id(current_user)
+
+    if user_id == current_user.id:
+        raise HTTPException(status_code=400, detail="You cannot deactivate your own account")
+
+    user = await db.get(models.User, user_id)
+    if not user or user.organization_id != org_id:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    user.is_active = payload.is_active
+    await db.commit()
+
+    async with async_sessionmaker() as session:
+        session.add(
+            models.AuditEvent(
+                user_id=current_user.id,
+                user_email=current_user.email,
+                action="USER_ACTIVATED" if payload.is_active else "USER_DEACTIVATED",
+                resource_type="user",
+                resource_id=str(user.id),
+                details=f"{'Reactivated' if payload.is_active else 'Deactivated'} {user.email}",
+            )
+        )
+        await session.commit()
+
+    return {"message": "User reactivated" if payload.is_active else "User deactivated"}

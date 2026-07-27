@@ -22,6 +22,7 @@ from .. import models
 from ..security import hash_password, verify_password, validate_password_complexity, create_access_token, decode_access_token
 from ..utils.security import sanitize_email, sanitize_string
 from ..utils.rate_limit import check_rate_limit
+from ..utils.email import send_password_reset_email
 from ..config import settings as app_settings
 
 router = APIRouter(
@@ -97,12 +98,18 @@ async def request_password_reset(payload: PasswordResetRequest, request: Request
         )
         await db.commit()
 
-    # In a production deployment this token should be delivered via email.
-    # For now we log it to the server log so it can be used during manual testing.
+    reset_link = f"{app_settings.APP_BASE_URL.rstrip('/')}/reset-password?token={reset_token}"
+    sent = await send_password_reset_email(user.email, reset_link)
+
     import logging
 
     logger = logging.getLogger("purvex.api")
-    logger.info("Password reset token generated for %s", user.email)
+    if sent:
+        logger.info("Password reset requested for %s", user.email)
+    else:
+        # SMTP isn't configured — surface the link so local dev/testing can
+        # still complete the flow without a real mail provider.
+        logger.warning("Password reset requested for %s — email not sent, link: %s", user.email, reset_link)
 
     return {"message": "If an account exists for this email, a reset link has been generated."}
 

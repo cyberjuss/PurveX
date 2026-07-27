@@ -59,6 +59,24 @@ class Settings(BaseSettings):
     REQUIRE_2FA_FOR_ADMINS: bool = False
     REQUIRE_2FA_FOR_ALL_USERS: bool = False
 
+    # Base URL the app is reachable at, used to build absolute links in
+    # outbound emails (password reset, invites). Must be set to the real
+    # public URL in staging/prod; the dev default matches the port used by
+    # `next start` in this repo's local workflow.
+    APP_BASE_URL: str = os.getenv("APP_BASE_URL", "http://127.0.0.1:1120")
+
+    # Outbound email (SMTP). Optional: if unset, email-dependent flows
+    # (password reset, user invites) degrade gracefully — the API still
+    # responds correctly (no enumeration leakage) but logs a loud warning
+    # instead of actually sending, so this is safe to leave unset in dev.
+    SMTP_HOST: Optional[str] = os.getenv("SMTP_HOST")
+    SMTP_PORT: int = int(os.getenv("SMTP_PORT", "587"))
+    SMTP_USERNAME: Optional[str] = os.getenv("SMTP_USERNAME")
+    SMTP_PASSWORD: Optional[str] = os.getenv("SMTP_PASSWORD")
+    SMTP_FROM_EMAIL: Optional[str] = os.getenv("SMTP_FROM_EMAIL")
+    SMTP_FROM_NAME: str = os.getenv("SMTP_FROM_NAME", "PurveX")
+    SMTP_USE_TLS: bool = os.getenv("SMTP_USE_TLS", "true").strip().lower() in {"1", "true", "yes", "y"}
+
     # Allow localhost defaults; broader IPs handled via CORS_ALLOW_ORIGIN_REGEX.
     CORS_ORIGINS: List[str] = [
         "http://localhost:3000",
@@ -225,6 +243,14 @@ elif "sqlite" in settings.database_url.lower():
     _config_logger.warning(
         "Using SQLite database. This is fine for development but not suitable "
         "for production. Set DATABASE_URL to a PostgreSQL connection string."
+    )
+
+if settings.DEPLOYMENT_ENV.lower() in STRICT_DEPLOYMENT_ENVS and not settings.SMTP_HOST:
+    _config_logger.warning(
+        "SMTP_HOST is not set — password reset and user invite emails will not "
+        "be sent. Those flows will still respond correctly but no email will "
+        "reach the user. Set SMTP_HOST/SMTP_USERNAME/SMTP_PASSWORD/SMTP_FROM_EMAIL "
+        "to enable outbound email."
     )
 
 if not os.getenv("JWT_SECRET_KEY"):
