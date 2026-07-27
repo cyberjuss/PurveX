@@ -21,7 +21,9 @@ import {
 } from "lucide-react";
 import { getTests, type TestWithDetectionTitle } from "@/lib/api";
 import { cn } from "@/lib/utils";
+import { toneClasses, scoreToTone } from "@/lib/status-tone";
 import { PageContainer } from "@/components/layout/page-container";
+import { TestsHubTabs } from "@/components/tests/tests-hub-tabs";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Chip, type ChipProps } from "@/components/ui/chip";
@@ -105,20 +107,17 @@ const RESULT_TONE: Record<ResultKey, NonNullable<ChipProps["tone"]>> = {
 };
 
 const RESULT_ICON: Record<ResultKey, { icon: typeof CheckCircle2; color: string }> = {
-  PASS: { icon: CheckCircle2, color: "text-emerald-500" },
-  FAIL: { icon: XCircle, color: "text-rose-500" },
-  ERROR: { icon: Zap, color: "text-rose-500" },
-  INCONCLUSIVE: { icon: AlertTriangle, color: "text-amber-500" },
-  RUNNING: { icon: Clock3, color: "text-sky-500" },
-  PENDING: { icon: Clock3, color: "text-sky-500" },
-  UNKNOWN: { icon: ShieldAlert, color: "text-slate-400" },
+  PASS: { icon: CheckCircle2, color: toneClasses(RESULT_TONE.PASS).icon },
+  FAIL: { icon: XCircle, color: toneClasses(RESULT_TONE.FAIL).icon },
+  ERROR: { icon: Zap, color: toneClasses(RESULT_TONE.ERROR).icon },
+  INCONCLUSIVE: { icon: AlertTriangle, color: toneClasses(RESULT_TONE.INCONCLUSIVE).icon },
+  RUNNING: { icon: Clock3, color: toneClasses(RESULT_TONE.RUNNING).icon },
+  PENDING: { icon: Clock3, color: toneClasses(RESULT_TONE.PENDING).icon },
+  UNKNOWN: { icon: ShieldAlert, color: toneClasses(RESULT_TONE.UNKNOWN).icon },
 };
 
 function scoreTone(score?: number | null) {
-  if (typeof score !== "number") return "text-slate-500 dark:text-slate-400";
-  if (score >= 80) return "text-emerald-600 dark:text-emerald-300";
-  if (score >= 50) return "text-amber-600 dark:text-amber-300";
-  return "text-rose-600 dark:text-rose-300";
+  return toneClasses(scoreToTone(score)).text;
 }
 
 /**
@@ -242,6 +241,8 @@ export function TestsWorkspace({ initialTests }: TestsWorkspaceProps = {}) {
 
   return (
     <PageContainer maxWidth="full" className="space-y-5">
+      <TestsHubTabs />
+
       {/* ── Compact header with inline status pills ── */}
       <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
         <div className="flex items-center gap-4">

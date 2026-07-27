@@ -10,14 +10,12 @@ import {
   LogOut,
   FileText,
   HardDrive,
-  Inbox,
   Target,
 } from "lucide-react";
 import Link from "next/link";
 import Image from "next/image";
 import { usePathname, useRouter } from "next/navigation";
-import { apiFetch } from "@/lib/api";
-import { Chip } from "@/components/ui/chip";
+import { apiFetch, setLoggingOut } from "@/lib/api";
 
 type SidebarProps = {
   open: boolean;
@@ -32,10 +30,7 @@ const links = [
   { href: "/mitre", label: "MITRE Coverage", icon: Target },
   { href: "/lab", label: "Endpoints", icon: HardDrive },
   { href: "/reports", label: "Reports", icon: FileText },
-  { href: "/agent", label: "Watchtower", icon: Bot },
-  // Guardrail inbox: shows a live count of AI/user proposals awaiting
-  // human approval so the badge acts as a gentle nudge toward review.
-  { href: "/proposals", label: "Proposals", icon: Inbox },
+  { href: "/agent", label: "AI Assistant", icon: Bot },
   { href: "/settings", label: "Settings", icon: Settings },
 ];
 
@@ -46,9 +41,6 @@ export function Sidebar({ open, onClose, onToggle }: SidebarProps) {
   const [isLoggingOut, setIsLoggingOut] = useState(false);
   const [userName, setUserName] = useState("User");
   const [userRole, setUserRole] = useState("Member");
-  // Pending-proposal count powers the sidebar badge. We refetch on path
-  // changes so approving a proposal immediately drops the badge.
-  const [proposalPending, setProposalPending] = useState<number>(0);
   void onToggle;
 
   const userInitials = userName
@@ -85,28 +77,10 @@ export function Sidebar({ open, onClose, onToggle }: SidebarProps) {
     };
   }, []);
 
-  // Poll pending-proposal count on path change. Cheap GET, one row per
-  // status bucket. Failures are swallowed — the badge just stays at 0.
-  useEffect(() => {
-    let cancelled = false;
-    async function loadPending() {
-      try {
-        const stats = await apiFetch("/proposals/stats", { cache: "no-store" });
-        if (cancelled) return;
-        setProposalPending(Number(stats?.pending ?? 0));
-      } catch {
-        if (!cancelled) setProposalPending(0);
-      }
-    }
-    void loadPending();
-    return () => {
-      cancelled = true;
-    };
-  }, [pathname]);
-
   async function handleSignOut() {
     if (isLoggingOut) return;
     setIsLoggingOut(true);
+    setLoggingOut(true);
     if (typeof window !== "undefined") {
       try {
         await apiFetch("/auth/logout", { method: "POST" });
@@ -220,11 +194,6 @@ export function Sidebar({ open, onClose, onToggle }: SidebarProps) {
                   strokeWidth={2}
                 />
                 <span className="tracking-tight">{label}</span>
-                {href === "/proposals" && proposalPending > 0 ? (
-                  <Chip tone="warning" className="ml-auto font-semibold">
-                    {proposalPending > 99 ? "99+" : proposalPending}
-                  </Chip>
-                ) : null}
               </Link>
             );
           })}

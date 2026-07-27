@@ -131,6 +131,8 @@ export default function RootClientLayout({
     return () => observer.disconnect();
   }, [pathname, children]);
   const isLoginPage = pathname === "/login";
+  const PUBLIC_AUTH_PAGES = ["/setup", "/forgot-password", "/reset-password", "/accept-invite"];
+  const isPublicAuthPage = isLoginPage || PUBLIC_AUTH_PAGES.includes(pathname);
   const isFullBleedPage = ["/agent"].some((route) => pathname.startsWith(route));
   const isTopLevelRoute = segments.length <= 1;
   const hideBreadcrumbsForRoutes: string[] = [];
@@ -155,7 +157,6 @@ export default function RootClientLayout({
     const getRouteTitle = () => {
       if (pathname.startsWith("/settings/organization")) return "PurveX | Settings | Organization";
       if (pathname.startsWith("/settings/siem")) return "PurveX | Settings | SIEM";
-      if (pathname.startsWith("/settings/test-runner")) return "PurveX | Settings | Agents";
       if (pathname.startsWith("/settings/testing-policy")) return "PurveX | Settings | Testing Policy";
       if (pathname.startsWith("/settings/ai-assistant")) return "PurveX | Settings | AI Assistant";
       if (pathname.startsWith("/settings/users")) return "PurveX | Settings | Users";
@@ -178,7 +179,7 @@ export default function RootClientLayout({
       "/settings": "PurveX | Settings",
       "/reports": "PurveX | Reports",
       "/run-test": "PurveX | Run Validation",
-      "/agent": "PurveX | Watchtower",
+      "/agent": "PurveX | AI Assistant",
       "/mitre": "PurveX | MITRE",
       "/notifications": "PurveX | Notifications",
       "/legal": "PurveX | Legal",
@@ -190,7 +191,7 @@ export default function RootClientLayout({
 
   useEffect(() => {
     if (typeof window === "undefined") return;
-    if (isLoginPage) return;
+    if (isPublicAuthPage) return;
     if (!localStorage.getItem("purvex_seen_login") && !localStorage.getItem("purvex_username")) {
       return;
     }
@@ -241,7 +242,7 @@ export default function RootClientLayout({
     return () => {
       window.removeEventListener("pageshow", handlePageShow);
     };
-  }, [isLoginPage, maxIdleMs, pathname]);
+  }, [isPublicAuthPage, maxIdleMs, pathname]);
 
 
   // Ensure sidebar starts open post-hydration and handle splash/scroll restoration without inline scripts.
@@ -277,8 +278,8 @@ export default function RootClientLayout({
     };
   }, []);
 
-  // If it's the login page, render without authentication UI
-  if (isLoginPage) {
+  // If it's the login or first-run setup page, render without authentication UI
+  if (isPublicAuthPage) {
     return <>{children}</>;
   }
 
@@ -408,7 +409,6 @@ export default function RootClientLayout({
                   <div className="flex flex-wrap items-center justify-center gap-x-3 gap-y-1 text-[11px] text-slate-600 dark:text-slate-400">
                     <Link href="/legal/terms" className="hover:text-indigo-600 hover:underline underline-offset-4">Terms</Link>
                     <Link href="/legal/privacy" className="hover:text-indigo-600 hover:underline underline-offset-4">Privacy</Link>
-                    <Link href="/legal/how-it-works" className="hover:text-indigo-600 hover:underline underline-offset-4">How PurveX works</Link>
                     <Link href="/legal/attribution" className="hover:text-indigo-600 hover:underline underline-offset-4">Attribution &amp; Licenses</Link>
                   </div>
                 </div>

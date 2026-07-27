@@ -7,7 +7,6 @@ import {
   Building2,
   Users,
   Shield,
-  ServerCog,
   ShieldCheck,
   Sparkles,
   Settings as SettingsIcon,
@@ -18,10 +17,11 @@ import {
 } from "lucide-react";
 import { PageContainer } from "@/components/layout/page-container";
 import { PageHeader } from "@/components/layout/page-header";
+import { Chip, type ChipProps } from "@/components/ui/chip";
+import { toneClasses } from "@/lib/status-tone";
 import {
   getOrganizationSettings,
   getSiemConnections,
-  getEnvironmentRunners,
   getTestingPolicySettings,
   getAIAssistantSettings,
   listDetectionSources,
@@ -34,17 +34,21 @@ interface SettingsItem {
   label: string;
   description: string;
   icon: React.ComponentType<{ className?: string }>;
-  color: string;
   status?: "configured" | "default" | "not_configured";
   statusText?: string;
   count?: number;
   category: "core" | "advanced" | "management";
 }
 
+function settingsStatusTone(status?: SettingsItem["status"]): NonNullable<ChipProps["tone"]> {
+  if (status === "configured") return "success";
+  if (status === "default") return "warning";
+  return "muted";
+}
+
 export default function SettingsPage() {
   const pathname = usePathname();
   const [siemCount, setSiemCount] = useState<number | null>(null);
-  const [runnerCount, setRunnerCount] = useState<number | null>(null);
   const [hasPolicy, setHasPolicy] = useState(false);
   const [hasAiAssistant, setHasAiAssistant] = useState(false);
   const [orgName, setOrgName] = useState<string | null>(null);
@@ -58,14 +62,12 @@ export default function SettingsPage() {
         const [
           org,
           siems,
-          runners,
           policy,
           aiSettings,
           detectionSources,
         ] = await Promise.allSettled([
           getOrganizationSettings(),
           getSiemConnections(),
-          getEnvironmentRunners(),
           getTestingPolicySettings(),
           getAIAssistantSettings(),
           listDetectionSources(),
@@ -78,9 +80,6 @@ export default function SettingsPage() {
         }
         if (siems.status === "fulfilled") {
           setSiemCount(siems.value.length);
-        }
-        if (runners.status === "fulfilled") {
-          setRunnerCount(runners.value.length);
         }
         if (policy.status === "fulfilled") {
           setHasPolicy(true);
@@ -105,7 +104,6 @@ export default function SettingsPage() {
   }, []);
 
   const siemConfigured = (siemCount ?? 0) > 0;
-  const runnersConfigured = (runnerCount ?? 0) > 0;
   const settingsItems: SettingsItem[] = [
     {
       id: "organization",
@@ -113,7 +111,6 @@ export default function SettingsPage() {
       label: "Organization",
       description: "Set the organization name, contact details, timezone, and default environments.",
       icon: Building2,
-      color: "sky",
       status: orgName ? "configured" : "not_configured",
       statusText: orgName || "Not configured",
       category: "core",
@@ -124,22 +121,9 @@ export default function SettingsPage() {
       label: "SIEM",
       description: "Connect SIEM data sources and define how PurveX reads validation evidence.",
       icon: Shield,
-      color: "emerald",
       status: siemConfigured ? "configured" : "not_configured",
       statusText: siemConfigured ? `${siemCount} connected` : "Not configured",
       count: siemCount ?? 0,
-      category: "core",
-    },
-    {
-      id: "test-runner",
-      href: "/settings/test-runner",
-      label: "Agents",
-      description: "Register validation agents and control where validations can run.",
-      icon: ServerCog,
-      color: "indigo",
-      status: runnersConfigured ? "configured" : "not_configured",
-      statusText: runnersConfigured ? `${runnerCount} agent(s)` : "Not configured",
-      count: runnerCount ?? 0,
       category: "core",
     },
     {
@@ -148,7 +132,6 @@ export default function SettingsPage() {
       label: "Testing Policy",
       description: "Set allowed environments, production guardrails, and data retention rules.",
       icon: ShieldCheck,
-      color: "cyan",
       status: hasPolicy ? "configured" : "default",
       statusText: hasPolicy ? "Configured" : "Using defaults",
       category: "advanced",
@@ -159,7 +142,6 @@ export default function SettingsPage() {
       label: "Watchtower",
       description: "Configure Watchtower's LLM provider, privacy controls, and analysis behavior.",
       icon: Sparkles,
-      color: "amber",
       status: hasAiAssistant ? "configured" : "default",
       statusText: hasAiAssistant ? "Configured" : "Using defaults",
       category: "advanced",
@@ -167,10 +149,9 @@ export default function SettingsPage() {
     {
       id: "detection-sources",
       href: "/settings/detection-sources",
-      label: "Detection Sources",
-      description: "Connect a git repository to treat detections as code — sync creates proposals that route through the approval inbox.",
+      label: "Detection-as-Code",
+      description: "Import detections from a git repository, or export SIEM-owned detections to git for an audit trail — sync creates proposals that route through the approval inbox.",
       icon: GitBranch,
-      color: "violet",
       status: (detectionSourceCount ?? 0) > 0 ? "configured" : "not_configured",
       statusText:
         (detectionSourceCount ?? 0) > 0
@@ -185,7 +166,6 @@ export default function SettingsPage() {
       label: "Users",
       description: "Add workspace members, assign roles, and manage access.",
       icon: Users,
-      color: "slate",
       category: "management",
     },
     {
@@ -194,7 +174,6 @@ export default function SettingsPage() {
       label: "Audit",
       description: "Review configuration, access, and operational changes over time.",
       icon: Shield,
-      color: "purple",
       category: "management",
     },
   ];
@@ -218,7 +197,7 @@ export default function SettingsPage() {
         {nextActions.length > 0 && (
           <div className="rounded-2xl border border-[var(--stroke-soft)] bg-[var(--surface-card)] p-5 shadow-[var(--shadow-soft)]" data-tour="settings-next-actions">
             <div className="flex items-start gap-3">
-              <div className="mt-0.5 rounded-lg bg-amber-50 p-2 text-amber-700 dark:bg-amber-500/10 dark:text-amber-300">
+              <div className={cn("mt-0.5 rounded-lg p-2", `${toneClasses("warning").bg}/10`, toneClasses("warning").text)}>
                 <AlertCircle className="h-4 w-4" />
               </div>
               <div className="min-w-0 flex-1">
@@ -267,11 +246,7 @@ export default function SettingsPage() {
                   <div
                     className={cn(
                       "absolute left-0 right-0 top-0 h-1 rounded-t-2xl",
-                      item.status === "configured"
-                        ? "bg-emerald-500"
-                        : item.status === "default"
-                          ? "bg-amber-500"
-                          : "bg-[var(--surface-subtle-foreground)]"
+                      toneClasses(settingsStatusTone(item.status)).bg,
                     )}
                   />
                 )}
@@ -289,18 +264,9 @@ export default function SettingsPage() {
                         {item.label}
                       </h3>
                       {item.statusText && (
-                        <span
-                          className={cn(
-                            "rounded-lg px-2.5 py-1 text-xs font-semibold",
-                            item.status === "configured"
-                              ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-300"
-                              : item.status === "default"
-                                ? "bg-amber-50 text-amber-700 dark:bg-amber-500/10 dark:text-amber-300"
-                                : "bg-[var(--surface-elevated)] text-[var(--surface-subtle-foreground)]"
-                          )}
-                        >
+                        <Chip tone={settingsStatusTone(item.status)} size="md">
                           {item.statusText}
-                        </span>
+                        </Chip>
                       )}
                     </div>
                     <p className="mt-2 text-sm leading-6 text-[var(--surface-subtle-foreground)]">

@@ -9,7 +9,7 @@ function Card({ className, ...props }: React.ComponentProps<"div">) {
       className={cn(
         "relative overflow-hidden flex flex-col gap-6 rounded-lg py-6 px-6 transition-all duration-200",
         "bg-[var(--surface-card)] border border-[var(--stroke-soft)] text-[var(--surface-card-foreground)] shadow-[var(--shadow-soft)]",
-        "hover:-translate-y-0.5 hover:border-[var(--accent-line)] hover:shadow-[0_14px_38px_-22px_var(--accent-soft)] dark:hover:shadow-[0_20px_45px_-28px_rgba(0,0,0,0.72)]",
+        "hover:border-[var(--accent-line)]",
         className
       )}
       {...props}

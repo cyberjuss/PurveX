@@ -5,7 +5,8 @@ import useSWR from "swr";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Chip } from "@/components/ui/chip";
+import { Chip, type ChipProps } from "@/components/ui/chip";
+import { toneClasses } from "@/lib/status-tone";
 import { Input } from "@/components/ui/input";
 import { PageContainer } from "@/components/layout/page-container";
 import { PageSkeleton } from "@/components/ui/skeleton";
@@ -94,6 +95,12 @@ function platformMatches(techniquePlatforms: string[], filter: PlatformFilter): 
   return lower.some((p) => p === filter.toLowerCase());
 }
 
+function coverageTone(percent: number): NonNullable<ChipProps["tone"]> {
+  if (percent >= 75) return "success";
+  if (percent >= 40) return "warning";
+  return "danger";
+}
+
 function getStatus(item: TechniqueCoverage): CoverageStatus {
   if (item.validatedCount > 0) return "validated";
   if (item.testedCount > 0) return "at_risk";
@@ -101,31 +108,18 @@ function getStatus(item: TechniqueCoverage): CoverageStatus {
   return "unmapped";
 }
 
-const STATUS_META: Record<CoverageStatus, { label: string; cell: string; dot: string; ring: string }> = {
-  validated: {
-    label: "Validated",
-    cell: "bg-emerald-500 hover:bg-emerald-600 text-white",
-    dot: "bg-emerald-500",
-    ring: "ring-emerald-400",
-  },
-  at_risk: {
-    label: "At risk",
-    cell: "bg-amber-400 hover:bg-amber-500 text-white",
-    dot: "bg-amber-400",
-    ring: "ring-amber-400",
-  },
-  mapped: {
-    label: "Untested",
-    cell: "bg-sky-300 hover:bg-sky-400 text-slate-900",
-    dot: "bg-sky-400",
-    ring: "ring-sky-400",
-  },
-  unmapped: {
-    label: "Unmapped",
-    cell: "bg-slate-100 hover:bg-slate-200 text-slate-500",
-    dot: "bg-slate-300",
-    ring: "ring-slate-300",
-  },
+const STATUS_TONE: Record<CoverageStatus, NonNullable<ChipProps["tone"]>> = {
+  validated: "success",
+  at_risk: "warning",
+  mapped: "info",
+  unmapped: "muted",
+};
+
+const STATUS_LABEL: Record<CoverageStatus, string> = {
+  validated: "Validated",
+  at_risk: "At risk",
+  mapped: "Untested",
+  unmapped: "Unmapped",
 };
 
 function MitreViewPageContent() {
@@ -343,7 +337,7 @@ function MitreViewPageContent() {
           escape(col.tactic),
           escape(t.id),
           escape(t.name),
-          escape(STATUS_META[getStatus(t)].label),
+          escape(STATUS_LABEL[getStatus(t)]),
           escape(t.mappedCount),
           escape(t.testedCount),
           escape(t.validatedCount),
@@ -375,7 +369,7 @@ function MitreViewPageContent() {
   if (error) {
     return (
       <PageContainer>
-        <Card><CardContent className="pt-6"><p className="text-red-600">{error}</p></CardContent></Card>
+        <Card><CardContent className="pt-6"><p className={toneClasses("danger").text}>{error}</p></CardContent></Card>
       </PageContainer>
     );
   }
@@ -383,28 +377,23 @@ function MitreViewPageContent() {
   return (
     <PageContainer maxWidth="full" className="space-y-5">
       {/* Header */}
-      <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
-        <div className="flex items-center gap-4">
-          <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-indigo-50 dark:bg-indigo-500/10">
-            <Target className="h-6 w-6 text-indigo-600 dark:text-indigo-400" />
-          </div>
-          <div>
-            <p className="text-[11px] font-bold uppercase tracking-wider text-indigo-600 dark:text-indigo-400">MITRE ATT&amp;CK</p>
-            <h1 className="text-2xl font-bold text-[var(--foreground)] dark:text-white">Coverage Matrix</h1>
-            <p className="text-sm text-slate-500 dark:text-slate-400">
-              {counts.total} techniques · {validatedPercent}% validated · {matrix.length} tactics in view
-            </p>
-          </div>
+      <div className="flex flex-col gap-4 border-b border-[var(--stroke-soft)] pb-5 md:flex-row md:items-end md:justify-between">
+        <div>
+          <p className="text-xs font-medium uppercase tracking-wide text-[var(--surface-subtle-foreground)]">MITRE ATT&amp;CK</p>
+          <h1 className="mt-1 text-2xl font-semibold tracking-tight text-[var(--foreground)]">Coverage Matrix</h1>
+          <p className="mt-1 text-sm text-[var(--surface-subtle-foreground)]">
+            {counts.total} techniques · {validatedPercent}% validated · {matrix.length} tactics in view
+          </p>
         </div>
 
-        <div className="flex items-center gap-4 rounded-2xl border border-[var(--stroke-soft)] bg-[var(--surface-card)] px-5 py-3 dark:border-white/10 dark:bg-white/5">
-          <StatInline label="Validated" value={counts.validated} color="text-emerald-600" />
+        <div className="flex items-center gap-4 rounded-xl border border-[var(--stroke-soft)] bg-[var(--surface-card)] px-5 py-3">
+          <StatInline label="Validated" value={counts.validated} color={toneClasses("success").text} />
           <Divider />
-          <StatInline label="At risk" value={counts.at_risk} color="text-amber-600" />
+          <StatInline label="At risk" value={counts.at_risk} color={toneClasses("warning").text} />
           <Divider />
-          <StatInline label="Linked" value={counts.mapped} color="text-sky-600" />
+          <StatInline label="Linked" value={counts.mapped} color={toneClasses("info").text} />
           <Divider />
-          <StatInline label="Unmapped" value={counts.unmapped} color="text-slate-500" />
+          <StatInline label="Unmapped" value={counts.unmapped} color={toneClasses("muted").text} />
         </div>
       </div>
 
@@ -425,7 +414,7 @@ function MitreViewPageContent() {
       {/* Toolbar */}
       <div className="flex flex-wrap items-center gap-3">
         <div className="relative min-w-[260px] flex-1 max-w-sm">
-          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--surface-subtle-foreground)]" />
           <Input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
@@ -434,7 +423,7 @@ function MitreViewPageContent() {
           />
         </div>
 
-        <div className="flex items-center gap-1 rounded-lg border border-[var(--stroke-soft)] bg-[var(--surface-card)] p-1 dark:border-white/10 dark:bg-white/5">
+        <div className="flex items-center gap-1 rounded-lg border border-[var(--stroke-soft)] bg-[var(--surface-card)] p-1">
           {(["all", "validated", "at_risk", "mapped", "unmapped"] as const).map((s) => (
             <button
               key={s}
@@ -442,16 +431,18 @@ function MitreViewPageContent() {
               onClick={() => setStatusFilter(s)}
               className={cn(
                 "flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition",
-                statusFilter === s ? "bg-slate-900 text-white dark:bg-white dark:text-black" : "text-slate-600 hover:text-slate-900 dark:text-slate-300"
+                statusFilter === s
+                  ? "bg-[var(--foreground)] text-[var(--background)]"
+                  : "text-[var(--surface-subtle-foreground)] hover:text-[var(--foreground)]"
               )}
             >
-              {s !== "all" && <span className={cn("h-1.5 w-1.5 rounded-full", STATUS_META[s].dot)} />}
-              {s === "all" ? "All" : STATUS_META[s].label}
+              {s !== "all" && <span className={cn("h-1.5 w-1.5 rounded-full", toneClasses(STATUS_TONE[s]).bg)} />}
+              {s === "all" ? "All" : STATUS_LABEL[s]}
             </button>
           ))}
         </div>
 
-        <div className="flex items-center gap-1 rounded-lg border border-[var(--stroke-soft)] bg-[var(--surface-card)] p-1 dark:border-white/10 dark:bg-white/5">
+        <div className="flex items-center gap-1 rounded-lg border border-[var(--stroke-soft)] bg-[var(--surface-card)] p-1">
           {PLATFORM_FILTER_OPTIONS.map((p) => {
             const active = platformFilters.has(p);
             return (
@@ -463,8 +454,8 @@ function MitreViewPageContent() {
                 className={cn(
                   "rounded-md px-2.5 py-1.5 text-xs font-medium transition",
                   active
-                    ? "bg-indigo-600 text-white"
-                    : "text-slate-600 hover:text-slate-900 dark:text-slate-300"
+                    ? "bg-[var(--accent-strong)] text-white"
+                    : "text-[var(--surface-subtle-foreground)] hover:text-[var(--foreground)]"
                 )}
               >
                 {p}
@@ -491,7 +482,7 @@ function MitreViewPageContent() {
           </Chip>
         )}
         {atomicCatalogAvailable === false && (
-          <span className="text-xs text-slate-500 dark:text-slate-400">
+          <span className="text-xs text-[var(--surface-subtle-foreground)]">
             Atomic catalog not installed. Install it to view executable tests.
           </span>
         )}
@@ -500,15 +491,14 @@ function MitreViewPageContent() {
       {/* Matrix */}
       {matrix.length === 0 ? (
         <div className="rounded-2xl border border-dashed border-[var(--stroke-soft)] bg-[var(--surface-elevated)] p-12 text-center">
-          <Target className="mx-auto h-10 w-10 text-slate-300 dark:text-slate-600" />
+          <Target className="mx-auto h-10 w-10 text-[var(--surface-subtle-foreground)]" />
           <p className="mt-3 text-sm font-semibold text-[var(--foreground)]">No techniques match your filters</p>
-          <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">Try clearing filters or broadening your search.</p>
+          <p className="mt-1 text-xs text-[var(--surface-subtle-foreground)]">Try clearing filters or broadening your search.</p>
         </div>
       ) : (
-        <div className="overflow-x-auto rounded-2xl border border-[var(--stroke-soft)] bg-[var(--surface-card)] p-4 shadow-sm dark:border-white/10 dark:bg-white/5">
-          <div className="flex gap-2.5 min-w-max">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
             {matrix.map((col) => (
-              <div key={col.tactic} className="flex w-[220px] flex-col gap-2">
+              <div key={col.tactic} className="flex flex-col gap-2">
                 {/* Tactic header */}
                 <button
                   type="button"
@@ -520,26 +510,20 @@ function MitreViewPageContent() {
                   className={cn(
                     "rounded-lg border px-3.5 py-3 text-left transition",
                     selectedTactic === col.tactic
-                      ? "border-slate-900 bg-slate-900 text-white dark:border-white dark:bg-white dark:text-black"
-                      : "border-slate-200 bg-slate-50 hover:bg-slate-100 dark:border-white/10 dark:bg-white/5 dark:hover:bg-white/10"
+                      ? "border-transparent bg-[var(--foreground)] text-[var(--background)]"
+                      : "border-[var(--stroke-soft)] bg-[var(--surface-elevated)] hover:border-[var(--accent-line)]"
                   )}
                 >
                   <p className="text-xs font-bold uppercase tracking-wider truncate">{col.tactic}</p>
                   <div className="mt-1.5 flex items-center justify-between">
                     <span className="text-[11px] opacity-70">{col.validated}/{col.total}</span>
-                    <span className={cn(
-                      "text-sm font-bold",
-                      col.coverage >= 75 ? "text-emerald-500" : col.coverage >= 40 ? "text-amber-500" : "text-rose-500"
-                    )}>
+                    <span className={cn("text-sm font-bold", toneClasses(coverageTone(col.coverage)).text)}>
                       {col.coverage}%
                     </span>
                   </div>
-                  <div className="mt-2 h-1.5 rounded-full bg-black/10 dark:bg-white/10 overflow-hidden">
+                  <div className="mt-2 h-1.5 rounded-full bg-[var(--surface-subtle)] overflow-hidden">
                     <div
-                      className={cn(
-                        "h-full rounded-full",
-                        col.coverage >= 75 ? "bg-emerald-500" : col.coverage >= 40 ? "bg-amber-400" : "bg-rose-400"
-                      )}
+                      className={cn("h-full rounded-full", toneClasses(coverageTone(col.coverage)).bg)}
                       style={{ width: `${col.coverage}%` }}
                     />
                   </div>
@@ -549,16 +533,17 @@ function MitreViewPageContent() {
                 <div className="space-y-1.5">
                   {col.techniques.map((item) => {
                     const status = getStatus(item);
-                    const meta = STATUS_META[status];
+                    const tone = STATUS_TONE[status];
                     return (
                       <button
                         key={`${col.tactic}-${item.id}`}
                         type="button"
                         onClick={() => handleSelectTechnique(item)}
                         className={cn(
-                          "group w-full rounded-lg px-3 py-2 text-left text-xs transition ring-0 hover:ring-2",
-                          meta.cell,
-                          meta.ring
+                          "group w-full rounded-lg border px-3 py-2 text-left text-xs transition hover:opacity-80",
+                          toneClasses(tone).border,
+                          `${toneClasses(tone).bg}/15`,
+                          toneClasses(tone).text,
                         )}
                       >
                         <p className="font-mono font-bold truncate">{item.id}</p>
@@ -569,7 +554,6 @@ function MitreViewPageContent() {
                 </div>
               </div>
             ))}
-          </div>
         </div>
       )}
 
@@ -578,28 +562,28 @@ function MitreViewPageContent() {
         <div className="hidden rounded-2xl border border-[var(--stroke-soft)] bg-[var(--surface-card)] p-6 shadow-sm dark:border-white/10 dark:bg-white/5">
           <div className="flex items-center justify-between mb-4">
             <div>
-              <p className="text-[11px] font-bold uppercase tracking-wider text-indigo-600">Tactic focus</p>
+              <p className="text-[11px] font-bold uppercase tracking-wider text-[var(--accent-strong)]">Tactic focus</p>
               <h3 className="text-lg font-bold text-[var(--foreground)] dark:text-white">{focusedColumn.tactic}</h3>
             </div>
-            <button onClick={() => setSelectedTactic(null)} className="text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300">
+            <button onClick={() => setSelectedTactic(null)} className="text-[var(--surface-subtle-foreground)] hover:text-[var(--foreground)]">
               <X className="h-4 w-4" />
             </button>
           </div>
           <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
             {focusedColumn.techniques.map((item) => {
               const status = getStatus(item);
-              const meta = STATUS_META[status];
+              const tone = STATUS_TONE[status];
               return (
                 <button
                   key={item.id}
                   onClick={() => handleSelectTechnique(item)}
-                  className="flex items-start gap-3 rounded-lg border border-[var(--stroke-soft)] bg-[var(--surface-elevated)] p-3 text-left transition hover:bg-slate-100 dark:border-white/10 dark:bg-white/5 dark:hover:bg-white/10"
+                  className="flex items-start gap-3 rounded-lg border border-[var(--stroke-soft)] bg-[var(--surface-elevated)] p-3 text-left transition hover:bg-[var(--surface-subtle)]"
                 >
-                  <span className={cn("mt-1 h-2 w-2 shrink-0 rounded-full", meta.dot)} />
+                  <span className={cn("mt-1 h-2 w-2 shrink-0 rounded-full", toneClasses(tone).bg)} />
                   <div className="min-w-0 flex-1">
-                    <p className="font-mono text-xs font-bold text-indigo-600">{item.id}</p>
-                    <p className="truncate text-sm text-slate-700 dark:text-slate-200">{item.name}</p>
-                    <p className="text-[11px] text-slate-400">{meta.label} · {item.mappedCount} linked</p>
+                    <p className="font-mono text-xs font-bold text-[var(--accent-strong)]">{item.id}</p>
+                    <p className="truncate text-sm text-[var(--foreground)]">{item.name}</p>
+                    <p className="text-[11px] text-[var(--surface-subtle-foreground)]">{STATUS_LABEL[status]} · {item.mappedCount} linked</p>
                   </div>
                 </button>
               );
@@ -618,18 +602,16 @@ function MitreViewPageContent() {
             <>
               <SheetHeader className="border-[var(--stroke-soft)]">
                 <div className="flex items-center gap-2 mb-1">
-                  <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-700 dark:bg-white/10 dark:text-slate-200">
-                    Tactic lane
-                  </span>
+                  <Chip tone="muted" size="sm">Tactic lane</Chip>
                 </div>
                 <SheetTitle className="pr-8 text-[var(--foreground)]">{focusedColumn.tactic}</SheetTitle>
-                <SheetDescription className="text-slate-600 dark:text-slate-400">
+                <SheetDescription className="text-[var(--surface-subtle-foreground)]">
                   {focusedColumn.validated} of {focusedColumn.total} techniques validated across this lane.
                 </SheetDescription>
               </SheetHeader>
 
               <SheetBody className="px-5">
-                <div className="mb-6 flex flex-wrap items-center gap-4 text-sm text-slate-600 dark:text-slate-300">
+                <div className="mb-6 flex flex-wrap items-center gap-4 text-sm text-[var(--surface-subtle-foreground)]">
                   <span>
                     <span className="font-semibold text-[var(--foreground)]">{focusedColumn.total}</span> techniques in scope
                   </span>
@@ -646,18 +628,18 @@ function MitreViewPageContent() {
                 <div className="grid gap-2 sm:grid-cols-2">
                   {focusedColumn.techniques.map((item) => {
                     const status = getStatus(item);
-                    const meta = STATUS_META[status];
+                    const tone = STATUS_TONE[status];
                     return (
                       <button
                         key={item.id}
                         onClick={() => handleSelectTechniqueFromTactic(item)}
-                        className="flex items-start gap-3 rounded-lg border border-[var(--stroke-soft)] bg-[var(--surface-elevated)] p-3 text-left transition hover:bg-slate-100 dark:border-white/10 dark:bg-white/5 dark:hover:bg-white/10"
+                        className="flex items-start gap-3 rounded-lg border border-[var(--stroke-soft)] bg-[var(--surface-elevated)] p-3 text-left transition hover:bg-[var(--surface-subtle)]"
                       >
-                        <span className={cn("mt-1 h-2 w-2 shrink-0 rounded-full", meta.dot)} />
+                        <span className={cn("mt-1 h-2 w-2 shrink-0 rounded-full", toneClasses(tone).bg)} />
                         <div className="min-w-0 flex-1">
-                          <p className="font-mono text-xs font-bold text-indigo-600">{item.id}</p>
-                          <p className="truncate text-sm text-slate-700 dark:text-slate-200">{item.name}</p>
-                          <p className="text-[11px] text-slate-400">{meta.label} · {item.mappedCount} linked</p>
+                          <p className="font-mono text-xs font-bold text-[var(--accent-strong)]">{item.id}</p>
+                          <p className="truncate text-sm text-[var(--foreground)]">{item.name}</p>
+                          <p className="text-[11px] text-[var(--surface-subtle-foreground)]">{STATUS_LABEL[status]} · {item.mappedCount} linked</p>
                         </div>
                       </button>
                     );
@@ -678,20 +660,19 @@ function MitreViewPageContent() {
             <>
               <SheetHeader className="border-[var(--stroke-soft)]">
                 <div className="flex items-center gap-2 mb-1">
-                  <span className={cn("h-2.5 w-2.5 rounded-full", STATUS_META[getStatus(selectedTechnique)].dot)} />
-                  <span className="font-mono text-sm font-bold text-indigo-600 dark:text-indigo-400">{selectedTechnique.id}</span>
-                  <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-700 dark:bg-white/10 dark:text-slate-200">
-                    {STATUS_META[getStatus(selectedTechnique)].label}
-                  </span>
+                  <span className="font-mono text-sm font-bold text-[var(--accent-strong)]">{selectedTechnique.id}</span>
+                  <Chip tone={STATUS_TONE[getStatus(selectedTechnique)]} dot size="sm">
+                    {STATUS_LABEL[getStatus(selectedTechnique)]}
+                  </Chip>
                 </div>
                 <SheetTitle className="pr-8 text-[var(--foreground)]">{selectedTechnique.name}</SheetTitle>
-                <SheetDescription className="text-slate-600 dark:text-slate-400">
+                <SheetDescription className="text-[var(--surface-subtle-foreground)]">
                   {selectedTechnique.tactics.join(", ")}
                 </SheetDescription>
               </SheetHeader>
 
               <SheetBody className="px-5">
-                <div className="mb-6 flex flex-wrap items-center gap-4 text-sm text-slate-600 dark:text-slate-300">
+                <div className="mb-6 flex flex-wrap items-center gap-4 text-sm text-[var(--surface-subtle-foreground)]">
                   <span>
                     <span className="font-semibold text-[var(--foreground)]">{selectedTechnique.mappedCount}</span> linked
                   </span>
@@ -707,18 +688,18 @@ function MitreViewPageContent() {
 
                 {/* Atomic tests */}
                 <div>
-                  <h4 className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-3">
+                  <h4 className="text-xs font-bold uppercase tracking-wider text-[var(--surface-subtle-foreground)] mb-3">
                     Atomic Red Team Tests
                   </h4>
 
                   {sheetLoading ? (
                     <div className="flex items-center justify-center py-8">
-                      <Loader2 className="h-5 w-5 animate-spin text-slate-500 dark:text-slate-400" />
+                      <Loader2 className="h-5 w-5 animate-spin text-[var(--surface-subtle-foreground)]" />
                     </div>
                   ) : sheetAtomicTests.length === 0 ? (
                     <div className="rounded-xl border border-dashed border-[var(--stroke-soft)] bg-[var(--surface-elevated)] p-6 text-center">
-                      <FlaskConical className="mx-auto h-8 w-8 text-slate-400 dark:text-slate-500" />
-                      <p className="mt-2 text-sm text-slate-600 dark:text-slate-400">No atomic tests found for this technique.</p>
+                      <FlaskConical className="mx-auto h-8 w-8 text-[var(--surface-subtle-foreground)]" />
+                      <p className="mt-2 text-sm text-[var(--surface-subtle-foreground)]">No atomic tests found for this technique.</p>
                     </div>
                   ) : (
                     <div className="overflow-hidden rounded-xl border border-[var(--stroke-soft)] divide-y divide-[var(--stroke-soft)]">
@@ -780,15 +761,15 @@ function AtomicTestCard({ test, onRun }: { test: AtomicTestDefinition; onRun: ()
       <button
         type="button"
         onClick={() => setExpanded(!expanded)}
-        className="flex w-full items-center gap-3 px-4 py-3 text-left transition hover:bg-slate-50 dark:hover:bg-white/5"
+        className="flex w-full items-center gap-3 px-4 py-3 text-left transition hover:bg-[var(--surface-subtle)]"
       >
-        <ChevronRight className={cn("h-4 w-4 text-slate-500 dark:text-slate-400 shrink-0 transition-transform", expanded && "rotate-90")} />
+        <ChevronRight className={cn("h-4 w-4 text-[var(--surface-subtle-foreground)] shrink-0 transition-transform", expanded && "rotate-90")} />
         <div className="min-w-0 flex-1">
           <p className="truncate text-sm font-semibold text-[var(--foreground)]">{name}</p>
           {platforms.length > 0 && (
             <div className="flex gap-1 mt-1">
               {platforms.map((p: string) => (
-                <span key={p} className="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium text-slate-700 dark:bg-white/10 dark:text-slate-300">
+                <span key={p} className="rounded bg-[var(--surface-subtle)] px-1.5 py-0.5 text-[10px] font-medium text-[var(--surface-subtle-foreground)]">
                   {p}
                 </span>
               ))}
@@ -812,11 +793,11 @@ function AtomicTestCard({ test, onRun }: { test: AtomicTestDefinition; onRun: ()
       {expanded && (
         <div className="border-t border-[var(--stroke-soft)] px-4 py-3">
           {description && (
-            <p className="mb-3 whitespace-pre-wrap text-xs text-slate-600 dark:text-slate-400">{description}</p>
+            <p className="mb-3 whitespace-pre-wrap text-xs text-[var(--surface-subtle-foreground)]">{description}</p>
           )}
           {primaryCommand && (
             <div>
-              <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-1">
+              <p className="text-[10px] font-bold uppercase tracking-wider text-[var(--surface-subtle-foreground)] mb-1">
                 {executorName}
               </p>
               <pre className="rounded-lg bg-slate-900 p-3 text-xs text-slate-100 overflow-x-auto whitespace-pre-wrap dark:bg-slate-950">
@@ -826,7 +807,7 @@ function AtomicTestCard({ test, onRun }: { test: AtomicTestDefinition; onRun: ()
           )}
           {cleanupCommand && (
             <div className="mt-3">
-              <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-1">
+              <p className="text-[10px] font-bold uppercase tracking-wider text-[var(--surface-subtle-foreground)] mb-1">
                 Cleanup command
               </p>
               <pre className="rounded-lg bg-slate-900 p-3 text-xs text-slate-100 overflow-x-auto whitespace-pre-wrap dark:bg-slate-950">
@@ -843,20 +824,20 @@ function AtomicTestCard({ test, onRun }: { test: AtomicTestDefinition; onRun: ()
 function StatInline({ label, value, color }: { label: string; value: number; color: string }) {
   return (
     <div className="flex flex-col">
-      <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">{label}</span>
+      <span className="text-[10px] font-semibold uppercase tracking-wider text-[var(--surface-subtle-foreground)]">{label}</span>
       <span className={cn("text-xl font-bold", color)}>{value}</span>
     </div>
   );
 }
 
 function Divider() {
-  return <span className="h-8 w-px bg-slate-200 dark:bg-white/10" />;
+  return <span className="h-8 w-px bg-[var(--stroke-soft)]" />;
 }
 
 function StatBlock({ label, value }: { label: string; value: number }) {
   return (
     <div className="rounded-lg border border-[var(--stroke-soft)] bg-[var(--surface-elevated)] p-3 text-center">
-      <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">{label}</p>
+      <p className="text-[10px] font-bold uppercase tracking-wider text-[var(--surface-subtle-foreground)]">{label}</p>
       <p className="mt-1 text-xl font-bold text-[var(--foreground)]">{value}</p>
     </div>
   );
@@ -913,11 +894,11 @@ function Sparkline({
         role="img"
         aria-label={`Validated techniques trend: ${values[0]} on ${firstDate} to ${values[lastIdx]} on ${lastDate}`}
       >
-        <path d={areaD} fill="rgba(99, 102, 241, 0.12)" />
-        <path d={pathD} fill="none" stroke="#6366f1" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
-        <circle cx={toX(lastIdx)} cy={toY(values[lastIdx])} r={2.5} fill="#6366f1" />
+        <path d={areaD} fill="var(--accent-soft)" />
+        <path d={pathD} fill="none" stroke="var(--accent-strong)" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
+        <circle cx={toX(lastIdx)} cy={toY(values[lastIdx])} r={2.5} fill="var(--accent-strong)" />
       </svg>
-      <div className="mt-1 flex justify-between text-[10px] text-slate-400">
+      <div className="mt-1 flex justify-between text-[10px] text-[var(--surface-subtle-foreground)]">
         <span>{firstDate}</span>
         <span>{lastDate}</span>
       </div>
@@ -947,11 +928,11 @@ function ExecutiveSummarySkeleton() {
 }
 
 // Color the "next actions" chips by severity so the eye lands on CRITICAL first.
-const CRITICALITY_BADGE: Record<string, string> = {
-  CRITICAL: "bg-rose-500/15 text-rose-700 dark:text-rose-300",
-  HIGH: "bg-amber-500/15 text-amber-700 dark:text-amber-300",
-  MEDIUM: "bg-sky-500/15 text-sky-700 dark:text-sky-300",
-  LOW: "bg-slate-500/15 text-slate-600 dark:text-slate-300",
+const CRITICALITY_TONE: Record<string, NonNullable<ChipProps["tone"]>> = {
+  CRITICAL: "danger",
+  HIGH: "warning",
+  MEDIUM: "info",
+  LOW: "muted",
 };
 
 function ExecutiveSummary({
@@ -985,30 +966,25 @@ function ExecutiveSummary({
       <div className="rounded-2xl border border-[var(--stroke-soft)] bg-[var(--surface-card)] p-5 dark:border-white/10 dark:bg-white/5 lg:col-span-1">
         <div className="flex items-start justify-between">
           <div>
-            <p className="text-[11px] font-bold uppercase tracking-wider text-indigo-600 dark:text-indigo-400">
+            <p className="text-[11px] font-bold uppercase tracking-wider text-[var(--accent-strong)]">
               Weighted coverage
             </p>
-            <p className="mt-1 text-4xl font-bold tabular-nums text-slate-900 dark:text-white">
+            <p className="mt-1 text-4xl font-bold tabular-nums text-[var(--foreground)]">
               {summary.weighted_coverage_percent.toFixed(1)}
-              <span className="ml-1 text-lg font-semibold text-slate-400">%</span>
+              <span className="ml-1 text-lg font-semibold text-[var(--surface-subtle-foreground)]">%</span>
             </p>
-            <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+            <p className="mt-1 text-xs text-[var(--surface-subtle-foreground)]">
               Of instrumented techniques, weighted by severity.
             </p>
           </div>
           {trendDelta !== 0 && (
-            <span
-              className={cn(
-                "flex items-center gap-1 rounded-full px-2 py-1 text-[11px] font-semibold",
-                trendDelta > 0
-                  ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300"
-                  : "bg-rose-500/15 text-rose-700 dark:text-rose-300"
-              )}
+            <Chip
+              tone={trendDelta > 0 ? "success" : "danger"}
               title="Change in validated techniques over the last 30 days"
             >
               <TrendingUp className={cn("h-3 w-3", trendDelta < 0 && "rotate-180")} />
               {trendDelta > 0 ? "+" : ""}{trendDelta}
-            </span>
+            </Chip>
           )}
         </div>
 
@@ -1021,10 +997,10 @@ function ExecutiveSummary({
           </div>
         )}
 
-        <div className="mt-3 flex items-center gap-4 text-[11px] text-slate-500 dark:text-slate-400">
+        <div className="mt-3 flex items-center gap-4 text-[11px] text-[var(--surface-subtle-foreground)]">
           <span>
             Simple:{" "}
-            <span className="font-semibold text-slate-700 dark:text-slate-200">
+            <span className="font-semibold text-[var(--foreground)]">
               {summary.simple_coverage_percent.toFixed(1)}%
             </span>
           </span>
@@ -1039,18 +1015,18 @@ function ExecutiveSummary({
       <div className="rounded-2xl border border-[var(--stroke-soft)] bg-[var(--surface-card)] p-5 dark:border-white/10 dark:bg-white/5 lg:col-span-2">
         <div className="flex items-center justify-between">
           <div>
-            <p className="text-[11px] font-bold uppercase tracking-wider text-indigo-600 dark:text-indigo-400">
+            <p className="text-[11px] font-bold uppercase tracking-wider text-[var(--accent-strong)]">
               Next actions
             </p>
             <p className="text-sm font-semibold text-[var(--foreground)] dark:text-white">
               Top high-value gaps
             </p>
           </div>
-          <span className="text-[11px] text-slate-400">Sorted by severity</span>
+          <span className="text-[11px] text-[var(--surface-subtle-foreground)]">Sorted by severity</span>
         </div>
 
         {topActions.length === 0 ? (
-          <p className="mt-4 text-sm text-slate-500 dark:text-slate-400">
+          <p className="mt-4 text-sm text-[var(--surface-subtle-foreground)]">
             No high-value gaps — every HIGH and CRITICAL detection is validated. Nicely done.
           </p>
         ) : (
@@ -1060,14 +1036,13 @@ function ExecutiveSummary({
                 <button
                   type="button"
                   onClick={() => onTechniqueClick(action.technique_id)}
-                  className="flex w-full items-center gap-3 py-2.5 text-left transition hover:bg-slate-50 dark:hover:bg-white/5"
+                  className="flex w-full items-center gap-3 py-2.5 text-left transition hover:bg-[var(--surface-subtle)]"
                 >
                   <span
                     className={cn(
                       "flex h-7 w-7 shrink-0 items-center justify-center rounded-full",
-                      action.reason === "failing"
-                        ? "bg-rose-500/15 text-rose-600 dark:text-rose-300"
-                        : "bg-amber-500/15 text-amber-600 dark:text-amber-300"
+                      `${toneClasses(action.reason === "failing" ? "danger" : "warning").bg}/15`,
+                      toneClasses(action.reason === "failing" ? "danger" : "warning").text,
                     )}
                     title={action.reason === "failing" ? "Detection is failing" : "Never tested"}
                   >
@@ -1075,26 +1050,21 @@ function ExecutiveSummary({
                   </span>
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2">
-                      <span className="font-mono text-[11px] font-bold text-indigo-600 dark:text-indigo-400">
+                      <span className="font-mono text-[11px] font-bold text-[var(--accent-strong)]">
                         {action.technique_id}
                       </span>
-                      <span
-                        className={cn(
-                          "rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide",
-                          CRITICALITY_BADGE[action.max_criticality] || CRITICALITY_BADGE.MEDIUM
-                        )}
-                      >
+                      <Chip tone={CRITICALITY_TONE[action.max_criticality] || CRITICALITY_TONE.MEDIUM} size="sm">
                         {action.max_criticality}
-                      </span>
-                      <span className="text-[11px] text-slate-400">
+                      </Chip>
+                      <span className="text-[11px] text-[var(--surface-subtle-foreground)]">
                         {action.reason === "failing" ? "Failing" : "Never tested"}
                       </span>
                     </div>
-                    <p className="truncate text-sm text-slate-700 dark:text-slate-200">
+                    <p className="truncate text-sm text-[var(--foreground)]">
                       {action.technique_name}
                     </p>
                   </div>
-                  <ChevronRight className="h-4 w-4 shrink-0 text-slate-400" />
+                  <ChevronRight className="h-4 w-4 shrink-0 text-[var(--surface-subtle-foreground)]" />
                 </button>
               </li>
             ))}

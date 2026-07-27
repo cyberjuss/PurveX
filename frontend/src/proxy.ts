@@ -25,6 +25,7 @@ const PUBLIC_PREFIXES = [
   "/setup",
   "/forgot-password",
   "/reset-password",
+  "/accept-invite",
   "/legal",
 ];
 
@@ -38,13 +39,12 @@ const AUTH_PREFIXES = [
   "/tests",
   "/mitre",
   "/lab",
-  "/endpoints",
   "/reports",
   "/run-test",
   "/settings",
   "/notifications",
-  "/events",
-  "/alerts",
+  "/agent",
+  "/proposals",
 ];
 
 function isPublic(pathname: string): boolean {

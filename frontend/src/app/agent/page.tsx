@@ -101,21 +101,6 @@ const GOAL_LABELS: Record<AnalystGoal, string> = {
   stabilize_failing_tests: "Stabilize failing tests",
 };
 
-const RESULT_META: Record<string, { label: string; tone: string }> = {
-  PASS: {
-    label: "Passing",
-    tone: "border-emerald-500/25 bg-emerald-500/10 text-emerald-300",
-  },
-  FAIL: {
-    label: "Failing",
-    tone: "border-red-500/25 bg-red-500/10 text-red-300",
-  },
-  INCONCLUSIVE: {
-    label: "No logs",
-    tone: "border-amber-500/25 bg-amber-500/10 text-amber-300",
-  },
-};
-
 function getErrorMessage(error: unknown, fallback: string) {
   return error instanceof Error ? error.message : fallback;
 }
@@ -398,13 +383,13 @@ Please ensure:
   if (loading) {
     return (
       <PageContainer>
-        <div className="rounded-3xl border border-[var(--stroke-soft)] bg-[var(--surface-card)] p-10">
+        <div className="rounded-2xl border border-[var(--stroke-soft)] bg-[var(--surface-card)] p-10">
           <div className="flex items-center gap-5">
             <div className="relative">
               <div className="flex h-16 w-16 items-center justify-center rounded-2xl border border-[var(--stroke-soft)] bg-[var(--surface-elevated)]">
                 <Cpu className="h-8 w-8 animate-pulse text-[var(--accent-strong)]" />
               </div>
-              <Sparkles className="absolute -right-1 -top-1 h-5 w-5 text-cyan-300" />
+              <Sparkles className="absolute -right-1 -top-1 h-5 w-5 text-[var(--accent-strong)]" />
             </div>
             <div>
               <p className="text-lg font-semibold text-[var(--foreground)]">Loading Watchtower</p>
@@ -421,7 +406,7 @@ Please ensure:
   if (error) {
     return (
       <PageContainer>
-        <div className="flex min-h-[520px] items-center justify-center rounded-3xl border border-[var(--stroke-soft)] bg-[var(--surface-card)]">
+        <div className="flex min-h-[520px] items-center justify-center rounded-2xl border border-[var(--stroke-soft)] bg-[var(--surface-card)]">
           <div className="space-y-4 text-center">
             <AlertTriangle className="mx-auto h-12 w-12 text-red-400" />
             <div>
@@ -440,7 +425,7 @@ Please ensure:
 
   return (
     <PageContainer maxWidth="lg" className="space-y-4">
-      <section className="overflow-hidden rounded-3xl border border-[var(--stroke-soft)] bg-[var(--surface-card)]">
+      <section className="overflow-hidden rounded-2xl border border-[var(--stroke-soft)] bg-[var(--surface-card)]">
         <div className="border-b border-[var(--stroke-soft)] px-5 py-5">
           <div className="flex flex-col gap-4">
             <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">

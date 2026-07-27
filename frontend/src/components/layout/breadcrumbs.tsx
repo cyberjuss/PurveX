@@ -56,7 +56,7 @@ export function Breadcrumbs({ items, variant = "light", className }: Breadcrumbs
                 const upper = word.toUpperCase();
                 if (upper === "MITRE") return upper;
                 if (upper === "SIEM") return upper;
-                if (upper === "AGENT") return "Watchtower";
+                if (upper === "AGENT") return "AI Assistant";
                 if (upper === "RUN") return "Run";
                 if (upper === "LAB") return "Endpoints";
                 if (upper === "TESTS" && segment === "tests") return "Tests";
@@ -131,7 +131,7 @@ export function Breadcrumbs({ items, variant = "light", className }: Breadcrumbs
             ? "gap-1 text-slate-500"
             : isLight
             ? "gap-2 text-slate-500"
-            : "gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-slate-200 shadow-[0_12px_40px_rgba(0,0,0,0.35)] backdrop-blur-md"
+            : "gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-slate-200"
         )}
       >
         {breadcrumbItems.map((item, index) => {

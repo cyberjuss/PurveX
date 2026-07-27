@@ -2,12 +2,23 @@
 
 import { Suspense, useEffect, useState } from "react";
 import Image from "next/image";
+import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { z } from "zod";
 import TwoFactorVerify from "@/components/auth/TwoFactorVerify";
 import { getApiBaseCandidates, getBootstrapStatus } from "@/lib/api";
-import { AlertCircle, ArrowRight, CheckCircle2, Eye, EyeOff, Loader2, RefreshCw, ShieldCheck, Zap } from "lucide-react";
+import { AlertCircle, Eye, EyeOff, Loader2, Lock, RefreshCw, User } from "lucide-react";
 import { FieldError } from "@/components/ui/form-error";
+import { Input } from "@/components/ui/input";
+
+const PRIMARY_BUTTON_CLASSNAME =
+  "border border-primary bg-primary text-primary-foreground hover:bg-primary/90";
+
+const FIELD_LABEL_CLASSNAME =
+  "mb-2 block text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/80";
+
+const FIELD_CLASSNAME =
+  "h-12 rounded-[10px] border border-black/[0.08] bg-black/[0.015] pl-11 text-base shadow-[inset_0_1px_2px_rgba(0,0,0,0.03)] transition-all duration-150 placeholder:text-muted-foreground/50 hover:border-black/[0.14] focus-visible:border-primary/60 focus-visible:bg-background focus-visible:ring-[3px] focus-visible:ring-primary/15 focus-visible:shadow-none dark:border-white/[0.08] dark:bg-white/[0.03] dark:hover:border-white/[0.16] dark:focus-visible:border-primary/50";
 
 // Login accepts whatever the backend will accept (existing accounts may pre-date
 // our current username policy), so we only enforce "not empty" here and let the
@@ -301,81 +312,21 @@ function LoginPageContent() {
   const isLocked = !!(lockoutUntil && Date.now() < lockoutUntil);
 
   return (
-    <div className="relative grid min-h-screen grid-cols-1 bg-white lg:grid-cols-2">
-      {/* LEFT — brand */}
-      <div className="relative hidden overflow-hidden bg-[#05070d] lg:flex lg:flex-col lg:justify-between lg:px-14 lg:py-12">
-        {/* Soft glow */}
-        <div
-          aria-hidden
-          className="pointer-events-none absolute inset-0"
-          style={{
-            background:
-              "radial-gradient(ellipse 60% 50% at 25% 20%, rgba(34,211,238,0.18) 0%, transparent 65%)",
-          }}
-        />
-
-        {/* Brand */}
-        <div className="relative z-10 flex items-center gap-3">
-          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-white/[0.06] ring-1 ring-white/10">
-            <Image src="/logo.png" alt="PurveX" width={26} height={26} className="h-[26px] w-[26px] object-contain" />
-          </div>
-          <span className="text-[16px] font-semibold tracking-tight text-white">PurveX</span>
-        </div>
-
-        {/* Headline + bullets */}
-        <div className="relative z-10 max-w-md">
-          <h2 className="text-[40px] font-semibold leading-[1.1] tracking-[-0.02em] text-white">
-            Know your detections fire.{" "}
-            <span className="text-cyan-300">Before attackers do.</span>
-          </h2>
-          <p className="mt-5 text-[15px] leading-relaxed text-slate-400">
-            PurveX validates SIEM detections against real attack behavior and shows
-            where coverage, telemetry, or tuning will fail.
-          </p>
-
-          <ul className="mt-8 space-y-3">
-            {[
-              { icon: ShieldCheck, text: "See which detections are trusted, stale, or broken" },
-              { icon: Zap, text: "Run Atomic Red Team tests against live SIEM coverage" },
-              { icon: CheckCircle2, text: "Keep proof for tuning, audits, and leadership" },
-            ].map(({ icon: Icon, text }) => (
-              <li key={text} className="flex items-center gap-3 text-[14px] text-slate-300">
-                <Icon className="h-4 w-4 shrink-0 text-cyan-300" />
-                {text}
-              </li>
-            ))}
-          </ul>
-        </div>
-
-        <p className="relative z-10 text-[11px] text-slate-500">
-          &copy; {new Date().getFullYear()} PurveX
-        </p>
-      </div>
-
-      {/* RIGHT — form */}
-      <div className="relative flex items-center justify-center px-6 py-12 sm:px-10">
-        <div className="w-full max-w-[404px]">
-          {/* Mobile brand header */}
-            <div className="mb-10 flex items-center gap-3 lg:hidden">
-              <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-slate-950 ring-1 ring-slate-900">
-                <Image src="/logo.png" alt="PurveX" width={28} height={28} className="h-7 w-7 object-contain" />
-              </div>
-              <span className="text-[17px] font-semibold tracking-tight text-slate-950">PurveX</span>
-            </div>
-
-          <div className="mb-8">
-            <h1 className="text-[28px] font-semibold leading-[1.1] tracking-[-0.02em] text-slate-950">
+    <div className="flex min-h-screen flex-col bg-background text-foreground">
+      <div className="flex flex-1 items-center justify-center px-6 py-12">
+        <div className="w-full max-w-[440px]">
+          <div className="mb-10 flex flex-col items-center text-center">
+            <Image src="/logo.png" alt="PurveX" width={40} height={40} className="mb-4 rounded-md" />
+            <h1 className="text-3xl font-semibold tracking-tight">
               {isReturning ? "Welcome back" : "Sign in"}
             </h1>
-            <p className="mt-2 text-sm text-slate-500">
-              {isReturning
-                ? "Get back to your detections."
-                : "Access the PurveX workspace."}
+            <p className="mt-2 text-base text-muted-foreground">
+              {isReturning ? "Get back to your detections." : "Access the PurveX workspace."}
             </p>
           </div>
 
           {showExpiredBanner && !error && (
-            <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-xs text-amber-800">
+            <div className="mb-6 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:border-amber-500/25 dark:bg-amber-500/10 dark:text-amber-300">
               Session expired. Please sign in again.
             </div>
           )}
@@ -390,39 +341,52 @@ function LoginPageContent() {
               }}
             />
           ) : (
-            <form onSubmit={handleSubmit} noValidate>
-              <div className="mb-4">
-                <label htmlFor="username" className="mb-1.5 block text-xs font-medium text-slate-600">
+            <form onSubmit={handleSubmit} noValidate className="space-y-5">
+              <div>
+                <label htmlFor="username" className={FIELD_LABEL_CLASSNAME}>
                   Username
                 </label>
-                <input
-                  id="username"
-                  name="username"
-                  type="text"
-                  autoComplete="username"
-                  autoFocus
-                  placeholder="you@company.com"
-                  value={username}
-                  onChange={(e) => {
-                    setUsername(e.target.value);
-                    if (fieldErrors.username) {
-                      setFieldErrors((prev) => ({ ...prev, username: undefined }));
-                    }
-                  }}
-                  disabled={phase === "auth" || isLocked}
-                  aria-invalid={!!fieldErrors.username}
-                  aria-describedby="login-username-error"
-                  className="h-11 w-full rounded-xl border border-slate-200 bg-white/90 px-3.5 text-sm text-slate-950 placeholder:text-slate-400 focus:border-cyan-400/50 focus:bg-white focus:ring-2 focus:ring-cyan-400/15 focus:outline-none disabled:opacity-40 aria-[invalid=true]:border-rose-400/70 aria-[invalid=true]:focus:border-rose-400/70 aria-[invalid=true]:focus:ring-rose-400/20"
-                />
+                <div className="relative">
+                  <User className="pointer-events-none absolute left-3.5 top-1/2 h-[18px] w-[18px] -translate-y-1/2 text-muted-foreground/50" />
+                  <Input
+                    id="username"
+                    name="username"
+                    type="text"
+                    autoComplete="username"
+                    autoFocus
+                    placeholder="you@company.com"
+                    value={username}
+                    onChange={(e) => {
+                      setUsername(e.target.value);
+                      if (fieldErrors.username) {
+                        setFieldErrors((prev) => ({ ...prev, username: undefined }));
+                      }
+                    }}
+                    disabled={phase === "auth" || isLocked}
+                    aria-invalid={!!fieldErrors.username}
+                    aria-describedby="login-username-error"
+                    className={FIELD_CLASSNAME}
+                  />
+                </div>
                 <FieldError id="login-username-error" message={fieldErrors.username} />
               </div>
 
-              <div className="mb-5">
-                <label htmlFor="password" className="mb-1.5 block text-xs font-medium text-slate-600">
-                  Password
-                </label>
+              <div>
+                <div className="mb-2 flex items-center justify-between">
+                  <label htmlFor="password" className={`${FIELD_LABEL_CLASSNAME} mb-0`}>
+                    Password
+                  </label>
+                  <Link
+                    href="/forgot-password"
+                    className="text-xs font-medium text-muted-foreground transition hover:text-foreground"
+                    tabIndex={-1}
+                  >
+                    Forgot password?
+                  </Link>
+                </div>
                 <div className="relative">
-                  <input
+                  <Lock className="pointer-events-none absolute left-3.5 top-1/2 h-[18px] w-[18px] -translate-y-1/2 text-muted-foreground/50" />
+                  <Input
                     id="password"
                     name="password"
                     type={showPassword ? "text" : "password"}
@@ -440,49 +404,50 @@ function LoginPageContent() {
                     disabled={phase === "auth" || isLocked}
                     aria-invalid={!!fieldErrors.password}
                     aria-describedby="login-password-error"
-                    className="h-11 w-full rounded-xl border border-slate-200 bg-white/90 px-3.5 pr-10 text-sm text-slate-950 placeholder:text-slate-400 focus:border-cyan-400/50 focus:bg-white focus:ring-2 focus:ring-cyan-400/15 focus:outline-none disabled:opacity-40 aria-[invalid=true]:border-rose-400/70 aria-[invalid=true]:focus:border-rose-400/70 aria-[invalid=true]:focus:ring-rose-400/20"
+                    className={`${FIELD_CLASSNAME} pr-11`}
                   />
                   <button
                     type="button"
                     onClick={() => setShowPassword((v) => !v)}
-                    className="absolute inset-y-0 right-0 flex items-center pr-3 text-slate-400 transition hover:text-cyan-600"
+                    className="absolute inset-y-0 right-0 flex items-center pr-3.5 text-muted-foreground/60 transition hover:text-foreground"
                     tabIndex={-1}
+                    aria-label={showPassword ? "Hide password" : "Show password"}
                   >
                     {showPassword ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}
                   </button>
                 </div>
                 <FieldError id="login-password-error" message={fieldErrors.password} />
-                {capsLockOn && <p className="mt-1.5 text-xs text-amber-700">Caps Lock is on</p>}
+                {capsLockOn && <p className="mt-1.5 text-xs text-amber-600 dark:text-amber-400">Caps Lock is on</p>}
               </div>
 
               {error && (
                 <div
-                  className={`mb-4 flex items-start gap-2 rounded-xl border px-3 py-2.5 ${
+                  className={`flex items-start gap-2 rounded-lg border px-3 py-2.5 ${
                     errorKind === "network"
-                      ? "border-amber-500/20 bg-amber-500/[0.05]"
+                      ? "border-amber-200 bg-amber-50 dark:border-amber-500/20 dark:bg-amber-500/[0.08]"
                       : errorKind === "session"
-                        ? "border-blue-500/20 bg-blue-500/[0.05]"
-                        : "border-red-500/20 bg-red-500/[0.05]"
+                        ? "border-blue-200 bg-blue-50 dark:border-blue-500/20 dark:bg-blue-500/[0.08]"
+                        : "border-red-200 bg-red-50 dark:border-red-500/20 dark:bg-red-500/[0.08]"
                   }`}
                   role="alert"
                 >
                   <AlertCircle
                     className={`mt-0.5 h-3.5 w-3.5 shrink-0 ${
                       errorKind === "network"
-                        ? "text-amber-400/70"
+                        ? "text-amber-500"
                         : errorKind === "session"
-                          ? "text-blue-400/70"
-                          : "text-red-400/70"
+                          ? "text-blue-500"
+                          : "text-red-500"
                     }`}
                   />
                   <div className="min-w-0 flex-1">
                     <p
                       className={`text-xs leading-relaxed ${
                         errorKind === "network"
-                          ? "text-amber-900"
+                          ? "text-amber-800 dark:text-amber-200"
                           : errorKind === "session"
-                            ? "text-blue-900"
-                            : "text-red-900"
+                            ? "text-blue-800 dark:text-blue-200"
+                            : "text-red-800 dark:text-red-200"
                       }`}
                     >
                       {error}
@@ -491,7 +456,7 @@ function LoginPageContent() {
                       <button
                         type="button"
                         onClick={handleRetryConnection}
-                        className="mt-1.5 flex items-center gap-1 text-[11px] text-amber-700 transition hover:text-amber-900"
+                        className="mt-1.5 flex items-center gap-1 text-[11px] text-amber-700 transition hover:text-amber-900 dark:text-amber-300 dark:hover:text-amber-100"
                       >
                         <RefreshCw className={`h-3 w-3 ${backendStatus === "checking" ? "animate-spin" : ""}`} />
                         Retry
@@ -504,12 +469,8 @@ function LoginPageContent() {
               <button
                 type="submit"
                 disabled={phase === "auth" || isLocked}
-                className="group relative flex h-11 w-full items-center justify-center gap-2 overflow-hidden rounded-xl bg-slate-950 text-sm font-semibold text-white shadow-[0_10px_24px_-12px_rgba(15,23,42,0.45)] ring-1 ring-slate-950 transition hover:bg-slate-900 hover:shadow-[0_18px_36px_-16px_rgba(15,23,42,0.5)] focus:outline-none focus:ring-2 focus:ring-cyan-400/40 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-40"
+                className={`flex h-12 w-full items-center justify-center gap-2 rounded-lg text-base font-medium transition disabled:cursor-not-allowed disabled:opacity-50 ${PRIMARY_BUTTON_CLASSNAME}`}
               >
-                <span
-                  aria-hidden
-                  className="absolute inset-0 bg-[linear-gradient(120deg,transparent_20%,rgba(255,255,255,0.12)_50%,transparent_80%)] opacity-0 transition duration-500 group-hover:opacity-100"
-                />
                 {phase === "auth" ? (
                   <>
                     <Loader2 className="h-4 w-4 animate-spin" />
@@ -518,16 +479,13 @@ function LoginPageContent() {
                 ) : isLocked ? (
                   "Locked — try again later"
                 ) : (
-                  <>
-                    Sign in
-                    <ArrowRight className="h-4 w-4 transition group-hover:translate-x-0.5" />
-                  </>
+                  "Sign in"
                 )}
               </button>
             </form>
           )}
 
-          <div className="mt-6 flex items-center justify-center gap-2 text-[11px] text-slate-500">
+          <div className="mt-6 flex items-center justify-center gap-2 text-[11px] text-muted-foreground">
             <span
               className={`inline-block h-1.5 w-1.5 rounded-full ${
                 backendStatus === "online"
@@ -545,13 +503,17 @@ function LoginPageContent() {
           </div>
         </div>
       </div>
+
+      <p className="pb-6 text-center text-[11px] text-muted-foreground">
+        &copy; {new Date().getFullYear()} PurveX
+      </p>
     </div>
   );
 }
 
 export default function LoginPage() {
   return (
-    <Suspense fallback={<div className="min-h-screen bg-[#05070d]" />}>
+    <Suspense fallback={<div className="min-h-screen bg-background" />}>
       <LoginPageContent />
     </Suspense>
   );

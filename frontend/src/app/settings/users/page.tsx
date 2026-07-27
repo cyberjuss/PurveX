@@ -8,7 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
-import { getUsers, getUserRoles, assignRole, removeRole, listRoles, setUserPassword, apiFetch } from "@/lib/api";
+import { getUsers, getUserRoles, assignRole, removeRole, listRoles, setUserPassword, setUserActive, apiFetch } from "@/lib/api";
 import { usePermissions } from "@/hooks/usePermissions";
 import { Permission, ROLE_GUIDANCE, Role } from "@/lib/permissions";
 import { 
@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import { format, formatRelative } from "date-fns";
 import { cn } from "@/lib/utils";
+import { toneClasses, type Tone } from "@/lib/status-tone";
 import {
   SettingsPageShell,
   SettingsSection,
@@ -25,13 +26,14 @@ import {
 import { PageSkeleton } from "@/components/ui/skeleton";
 import { FieldError, FormError } from "@/components/ui/form-error";
 import { z } from "zod";
-import { emailSchema, passwordSchema } from "@/lib/validators";
+import { emailSchema } from "@/lib/validators";
 
 interface User {
   id: number;
   email: string;
   is_admin: boolean;
   is_active: boolean;
+  is_pending_activation?: boolean;
   created_at: string;
 }
 
@@ -51,9 +53,9 @@ function getErrorMessage(error: unknown, fallback: string): string {
 }
 
 function PasswordStrengthIndicator({ password }: { password: string }) {
-  const getStrength = () => {
-    if (!password) return { score: 0, label: "", color: "" };
-    
+  const getStrength = (): { score: number; label: string; tone: Tone | null } => {
+    if (!password) return { score: 0, label: "", tone: null };
+
     let score = 0;
     if (password.length >= 8) score++;
     if (password.length >= 12) score++;
@@ -61,11 +63,11 @@ function PasswordStrengthIndicator({ password }: { password: string }) {
     if (/[A-Z]/.test(password)) score++;
     if (/\d/.test(password)) score++;
     if (/[^a-zA-Z0-9]/.test(password)) score++;
-    
-    if (score <= 2) return { score, label: "Weak", color: "bg-red-500" };
-    if (score <= 4) return { score, label: "Fair", color: "bg-yellow-500" };
-    if (score <= 5) return { score, label: "Good", color: "bg-blue-500" };
-    return { score, label: "Strong", color: "bg-emerald-500" };
+
+    if (score <= 2) return { score, label: "Weak", tone: "danger" };
+    if (score <= 4) return { score, label: "Fair", tone: "warning" };
+    if (score <= 5) return { score, label: "Good", tone: "info" };
+    return { score, label: "Strong", tone: "success" };
   };
 
   const strength = getStrength();
@@ -75,19 +77,13 @@ function PasswordStrengthIndicator({ password }: { password: string }) {
     <div className="space-y-1.5">
       <div className="flex items-center justify-between text-xs">
         <span className="text-muted-foreground">Password strength</span>
-        <span className={cn(
-          "font-medium",
-          strength.score <= 2 && "text-red-400",
-          strength.score <= 4 && strength.score > 2 && "text-yellow-400",
-          strength.score <= 5 && strength.score > 4 && "text-blue-400",
-          strength.score === 6 && "text-emerald-400"
-        )}>
+        <span className={cn("font-medium", strength.tone && toneClasses(strength.tone).text)}>
           {strength.label}
         </span>
       </div>
-      <div className="h-1.5 w-full bg-slate-800 rounded-full overflow-hidden">
+      <div className="h-1.5 w-full bg-[var(--surface-subtle)] rounded-full overflow-hidden">
         <div
-          className={cn("h-full transition-all duration-300", strength.color)}
+          className={cn("h-full transition-all duration-300", strength.tone && toneClasses(strength.tone).bg)}
           style={{ width: `${percentage}%` }}
         />
       </div>
@@ -112,16 +108,11 @@ export default function UserManagementPage() {
   const [statusFilter, setStatusFilter] = useState<"all" | "active" | "inactive">("all");
   const [roleFilter, setRoleFilter] = useState<string>("all");
   const [selectedUsers, setSelectedUsers] = useState<Set<number>>(new Set());
+  const [togglingActiveId, setTogglingActiveId] = useState<number | null>(null);
   const [createUserOpen, setCreateUserOpen] = useState(false);
   const [newUserEmail, setNewUserEmail] = useState("");
-  const [newUserPassword, setNewUserPassword] = useState("");
-  const [newUserConfirmPassword, setNewUserConfirmPassword] = useState("");
   const [creatingUser, setCreatingUser] = useState(false);
-  const [inviteFieldErrors, setInviteFieldErrors] = useState<{
-    email?: string;
-    password?: string;
-    confirm?: string;
-  }>({});
+  const [inviteFieldErrors, setInviteFieldErrors] = useState<{ email?: string }>({});
   const [viewUserDetails, setViewUserDetails] = useState<number | null>(null);
   const fetchUsers = async () => {
       try {
@@ -246,34 +237,57 @@ export default function UserManagementPage() {
     }
   }
 
-  async function handleCreateUser() {
-    const inviteSchema = z
-      .object({
-        email: emailSchema,
-        password: passwordSchema,
-        confirm: z.string(),
-      })
-      .superRefine((v, ctx) => {
-        if (v.password !== v.confirm) {
-          ctx.addIssue({
-            code: z.ZodIssueCode.custom,
-            path: ["confirm"],
-            message: "Passwords do not match.",
-          });
-        }
-      });
+  function handleExportSelected() {
+    const rows = filteredUsers.filter((u) => selectedUsers.has(u.id));
+    const roleNames = (u: User) => {
+      const names = (userRoles[u.id] || []).map((r) => r.role_name);
+      if (u.is_admin) names.unshift("ADMINISTRATOR");
+      return names.join("; ");
+    };
+    const status = (u: User) => (u.is_pending_activation ? "pending" : u.is_active ? "active" : "inactive");
+    const escapeCsv = (value: string) => `"${value.replace(/"/g, '""')}"`;
 
-    const parsed = inviteSchema.safeParse({
-      email: newUserEmail,
-      password: newUserPassword,
-      confirm: newUserConfirmPassword,
-    });
+    const header = ["Email", "Roles", "Status", "Created"];
+    const lines = rows.map((u) =>
+      [u.email, roleNames(u), status(u), format(new Date(u.created_at), "yyyy-MM-dd")]
+        .map(escapeCsv)
+        .join(","),
+    );
+    const csv = [header.map(escapeCsv).join(","), ...lines].join("\n");
+
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `purvex-users-${format(new Date(), "yyyy-MM-dd")}.csv`;
+    link.click();
+    URL.revokeObjectURL(url);
+  }
+
+  async function handleToggleActive(userId: number, currentlyActive: boolean) {
+    const verb = currentlyActive ? "deactivate" : "reactivate";
+    if (!window.confirm(`Are you sure you want to ${verb} this member?`)) return;
+    try {
+      setTogglingActiveId(userId);
+      setError(null);
+      await setUserActive(userId, !currentlyActive);
+      setUsers((prev) =>
+        prev.map((u) => (u.id === userId ? { ...u, is_active: !currentlyActive } : u)),
+      );
+    } catch (err: unknown) {
+      setError(getErrorMessage(err, `Failed to ${verb} member.`));
+    } finally {
+      setTogglingActiveId(null);
+    }
+  }
+
+  async function handleCreateUser() {
+    const parsed = z.object({ email: emailSchema }).safeParse({ email: newUserEmail });
 
     if (!parsed.success) {
-      const next: { email?: string; password?: string; confirm?: string } = {};
+      const next: { email?: string } = {};
       for (const issue of parsed.error.issues) {
-        const key = issue.path[0] as "email" | "password" | "confirm" | undefined;
-        if (key && !next[key]) next[key] = issue.message;
+        if (issue.path[0] === "email" && !next.email) next.email = issue.message;
       }
       setInviteFieldErrors(next);
       setError(null);
@@ -284,20 +298,15 @@ export default function UserManagementPage() {
       setCreatingUser(true);
       setError(null);
       setInviteFieldErrors({});
-      await apiFetch("/auth/register", {
+      await apiFetch("/rbac/users/invite", {
         method: "POST",
-        body: JSON.stringify({
-          email: parsed.data.email,
-          password: parsed.data.password,
-        }),
+        body: JSON.stringify({ email: parsed.data.email }),
       });
       setCreateUserOpen(false);
       setNewUserEmail("");
-      setNewUserPassword("");
-      setNewUserConfirmPassword("");
       await fetchUsers();
     } catch (err: unknown) {
-      setError(getErrorMessage(err, "Failed to create user."));
+      setError(getErrorMessage(err, "Failed to send invite."));
     } finally {
       setCreatingUser(false);
     }
@@ -383,10 +392,10 @@ export default function UserManagementPage() {
             <DialogHeader>
               <DialogTitle className="flex items-center gap-2">
                 <UserPlus className="h-5 w-5" />
-                Add member
+                Invite member
               </DialogTitle>
               <DialogDescription>
-                Create a workspace account and set the initial password for that member.
+                We'll email an activation link so they can set their own password.
               </DialogDescription>
             </DialogHeader>
             <div className="space-y-4 py-4">
@@ -407,41 +416,6 @@ export default function UserManagementPage() {
                 />
                 <FieldError id="new-email-error" message={inviteFieldErrors.email} />
               </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="new-password">Password</Label>
-                <Input
-                  id="new-password"
-                  type="password"
-                  value={newUserPassword}
-                  onChange={(e) => {
-                    setNewUserPassword(e.target.value);
-                    if (inviteFieldErrors.password)
-                      setInviteFieldErrors((prev) => ({ ...prev, password: undefined }));
-                  }}
-                  placeholder="Enter password"
-                  aria-invalid={!!inviteFieldErrors.password}
-                  aria-describedby="new-password-error"
-                />
-                <PasswordStrengthIndicator password={newUserPassword} />
-                <FieldError id="new-password-error" message={inviteFieldErrors.password} />
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="new-confirm">Confirm password</Label>
-                <Input
-                  id="new-confirm"
-                  type="password"
-                  value={newUserConfirmPassword}
-                  onChange={(e) => {
-                    setNewUserConfirmPassword(e.target.value);
-                    if (inviteFieldErrors.confirm)
-                      setInviteFieldErrors((prev) => ({ ...prev, confirm: undefined }));
-                  }}
-                  placeholder="Confirm password"
-                  aria-invalid={!!inviteFieldErrors.confirm}
-                  aria-describedby="new-confirm-error"
-                />
-                <FieldError id="new-confirm-error" message={inviteFieldErrors.confirm} />
-              </div>
               <FormError message={error} />
             </div>
             <DialogFooter className="gap-2">
@@ -460,12 +434,12 @@ export default function UserManagementPage() {
                 {creatingUser ? (
                   <>
                     <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    Creating…
+                    Sending…
                   </>
                 ) : (
                   <>
                     <UserPlus className="mr-2 h-4 w-4" />
-                    Add member
+                    Send invite
                   </>
                 )}
               </Button>
@@ -560,7 +534,7 @@ export default function UserManagementPage() {
                   <X className="mr-2 h-4 w-4" />
                   Clear selection
                 </Button>
-                <Button variant="outline" size="sm">
+                <Button variant="outline" size="sm" onClick={handleExportSelected}>
                   <Download className="mr-2 h-4 w-4" />
                   Export selected
                 </Button>
@@ -587,7 +561,7 @@ export default function UserManagementPage() {
                         type="checkbox"
                         checked={selectedUsers.size === filteredUsers.length && filteredUsers.length > 0}
                         onChange={toggleSelectAll}
-                        className="rounded border-slate-600"
+                        className="rounded border-[var(--stroke-soft)]"
                       />
                     </TableHead>
                     <TableHead className="w-[300px]">User</TableHead>
@@ -610,11 +584,11 @@ export default function UserManagementPage() {
                     const isSelected = selectedUsers.has(user.id);
                     
                     return (
-                      <TableRow 
-                        key={user.id} 
+                      <TableRow
+                        key={user.id}
                         className={cn(
-                          "hover:bg-white/5 transition-colors",
-                          isSelected && "bg-blue-500/10 border-blue-500/20"
+                          "hover:bg-[var(--surface-subtle)] transition-colors",
+                          isSelected && "bg-[var(--accent-soft)] border-[var(--accent-line)]"
                         )}
                       >
                         <TableCell className="align-middle py-3">
@@ -622,14 +596,14 @@ export default function UserManagementPage() {
                             type="checkbox"
                             checked={isSelected}
                             onChange={() => toggleUserSelection(user.id)}
-                            className="rounded border-slate-600"
+                            className="rounded border-[var(--stroke-soft)]"
                           />
                         </TableCell>
                         <TableCell className="align-middle py-3">
                           <div className="space-y-1.5">
                             <div className="flex items-center gap-2">
-                              <div className="h-9 w-9 rounded-full bg-gradient-to-br from-blue-500/20 to-purple-500/20 border border-blue-500/30 flex items-center justify-center">
-                                <span className="text-xs font-medium text-blue-300">
+                              <div className="h-9 w-9 rounded-full bg-[var(--accent-soft)] border border-[var(--accent-line)] flex items-center justify-center">
+                                <span className="text-xs font-medium text-[var(--accent-strong)]">
                                   {user.email.charAt(0).toUpperCase()}
                                 </span>
                               </div>
@@ -659,7 +633,7 @@ export default function UserManagementPage() {
                                 <Button
                                   variant="ghost"
                                   size="sm"
-                                  className="ml-1.5 h-4 w-4 p-0 hover:bg-blue-500/30 text-xs"
+                                  className="ml-1.5 h-4 w-4 p-0 hover:bg-[var(--accent-soft)] text-xs"
                                   onClick={() => handleRemoveRole(user.id, ur.id)}
                                 >
                                   ×
@@ -672,8 +646,13 @@ export default function UserManagementPage() {
                           </div>
                         </TableCell>
                     <TableCell className="align-middle py-3">
-                          <Chip tone={user.is_active ? "success" : "neutral"}>
-                            {user.is_active ? (
+                          <Chip tone={user.is_pending_activation ? "warning" : user.is_active ? "success" : "neutral"}>
+                            {user.is_pending_activation ? (
+                              <>
+                                <Clock className="h-3 w-3" />
+                                Pending
+                              </>
+                            ) : user.is_active ? (
                               <>
                                 <CheckCircle2 className="h-3 w-3" />
                                 Active
@@ -772,7 +751,7 @@ export default function UserManagementPage() {
                                     />
                                   </div>
                                   {error && passwordDialogOpen === user.id && (
-                                    <div className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-600">
+                                    <div className={cn("rounded-xl border px-3 py-2 text-sm", toneClasses("danger").border, `${toneClasses("danger").bg}/10`, toneClasses("danger").text)}>
                                       {error}
                                     </div>
                                   )}
@@ -792,7 +771,7 @@ export default function UserManagementPage() {
                                     Cancel
                                   </Button>
                                   <Button
-                                    className="flex-1 bg-indigo-600 hover:bg-indigo-700"
+                                    className="flex-1 bg-[var(--accent-strong)] text-white hover:opacity-90"
                                     onClick={() => handleSetPassword(user.id)}
                                     disabled={settingPassword || !currentPassword || !newPassword || !confirmPassword}
                                   >
@@ -808,6 +787,30 @@ export default function UserManagementPage() {
                                 </DialogFooter>
                               </DialogContent>
                             </Dialog>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className={cn(
+                                "h-8 text-xs",
+                                user.is_active && toneClasses("danger").text,
+                              )}
+                              disabled={togglingActiveId === user.id}
+                              onClick={() => handleToggleActive(user.id, user.is_active)}
+                            >
+                              {togglingActiveId === user.id ? (
+                                <Loader2 className="h-3 w-3 animate-spin" />
+                              ) : user.is_active ? (
+                                <>
+                                  <XCircle className="h-3 w-3 mr-1.5" />
+                                  Deactivate
+                                </>
+                              ) : (
+                                <>
+                                  <CheckCircle2 className="h-3 w-3 mr-1.5" />
+                                  Reactivate
+                                </>
+                              )}
+                            </Button>
                           </div>
                     </TableCell>
                   </TableRow>
@@ -826,8 +829,8 @@ export default function UserManagementPage() {
           <DialogContent className="w-[min(calc(100vw-2rem),38rem)] max-h-[90vh] overflow-y-auto">
             <DialogHeader>
               <DialogTitle className="flex items-center gap-2">
-                <div className="h-10 w-10 rounded-full bg-gradient-to-br from-blue-500/20 to-purple-500/20 border border-blue-500/30 flex items-center justify-center">
-                  <span className="text-sm font-medium text-blue-300">
+                <div className="h-10 w-10 rounded-full bg-[var(--accent-soft)] border border-[var(--accent-line)] flex items-center justify-center">
+                  <span className="text-sm font-medium text-[var(--accent-strong)]">
                     {selectedUser.email.charAt(0).toUpperCase()}
                   </span>
                 </div>
@@ -925,7 +928,7 @@ export default function UserManagementPage() {
                   {guidance ? (
                     <dl className="mt-3 grid gap-2 text-xs">
                       <div>
-                        <dt className="font-semibold text-emerald-700 dark:text-emerald-300">
+                        <dt className={cn("font-semibold", toneClasses("success").text)}>
                           Can
                         </dt>
                         <dd className="mt-0.5 text-[var(--surface-subtle-foreground)]">
@@ -940,7 +943,7 @@ export default function UserManagementPage() {
                         </dd>
                       </div>
                       <div>
-                        <dt className="font-semibold text-rose-700 dark:text-rose-300">
+                        <dt className={cn("font-semibold", toneClasses("danger").text)}>
                           Can't
                         </dt>
                         <dd className="mt-0.5 text-[var(--surface-subtle-foreground)]">

@@ -5,7 +5,8 @@ import useSWR from "swr";
 import { useRouter } from "next/navigation";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
+import { Chip, type ChipProps } from "@/components/ui/chip";
+import { toneClasses, scoreToTone } from "@/lib/status-tone";
 import Link from "next/link";
 import {
   Detection,
@@ -96,6 +97,34 @@ function getDetectionReadiness(detection: Detection): DetectionReadinessKey {
   if (result === "FAIL" || status === "NEEDS_IMPROVEMENT") return "needs_tuning";
   if (result === "INCONCLUSIVE") return "telemetry_gap";
   return "needs_validation";
+}
+
+function coveragePercentTone(percent: number): NonNullable<ChipProps["tone"]> {
+  if (percent >= 75) return "success";
+  if (percent >= 50) return "info";
+  return "warning";
+}
+
+function coveragePercentLabel(percent: number): string {
+  if (percent >= 75) return "Excellent";
+  if (percent >= 50) return "Good";
+  if (percent >= 25) return "Fair";
+  return "Low coverage";
+}
+
+const READINESS_TONE: Record<DetectionReadinessKey, NonNullable<ChipProps["tone"]>> = {
+  ready: "success",
+  needs_tuning: "danger",
+  telemetry_gap: "warning",
+  needs_validation: "info",
+};
+
+function activityStatusTone(status?: string | null): NonNullable<ChipProps["tone"]> {
+  const value = (status || "").toUpperCase();
+  if (value === "FAIL") return "danger";
+  if (value === "PASS") return "success";
+  if (value === "INCONCLUSIVE") return "warning";
+  return "muted";
 }
 
 export default function DashboardPage() {
@@ -296,10 +325,10 @@ export default function DashboardPage() {
 
   // Prepare pie chart data for detection status
   const detectionStatusData = [
-    { name: "Passed", value: detectionsSummary.pass, color: "#10b981" },
-    { name: "Failed", value: detectionsSummary.fail, color: "#ef4444" },
-    { name: "Inconclusive", value: detectionsSummary.inconclusive, color: "#f59e0b" },
-    { name: "Untested", value: detectionsSummary.untested, color: "#64748b" },
+    { name: "Passed", value: detectionsSummary.pass, color: "var(--pvrx-success)" },
+    { name: "Failed", value: detectionsSummary.fail, color: "var(--pvrx-danger)" },
+    { name: "Inconclusive", value: detectionsSummary.inconclusive, color: "var(--pvrx-warning)" },
+    { name: "Untested", value: detectionsSummary.untested, color: "var(--surface-subtle-foreground)" },
   ].filter(item => item.value > 0);
 
   // Keyboard shortcuts
@@ -398,19 +427,9 @@ export default function DashboardPage() {
                               ? `${mitreStats.coveragePercent.toFixed(2)}%`
                               : mitreStats.coveragePercent}%
                           </p>
-                          <Badge className={cn(
-                            "text-xs",
-                            mitreStats.coveragePercent >= 75 ? "bg-emerald-500/20 text-emerald-300 border-emerald-500/40" :
-                            mitreStats.coveragePercent >= 50 ? "bg-blue-500/20 text-blue-300 border-blue-500/40" :
-                            mitreStats.coveragePercent >= 25 ? "bg-amber-500/20 text-amber-300 border-amber-500/40" :
-                            mitreStats.coveragePercent >= 5 ? "bg-amber-500/20 text-amber-300 border-amber-500/40" :
-                            "bg-amber-500/20 text-amber-300 border-amber-500/40"
-                          )}>
-                            {mitreStats.coveragePercent >= 75 ? "Excellent" :
-                             mitreStats.coveragePercent >= 50 ? "Good" :
-                             mitreStats.coveragePercent >= 25 ? "Fair" : 
-                             mitreStats.coveragePercent >= 5 ? "Low Coverage" : "Low Coverage"}
-                          </Badge>
+                          <Chip tone={coveragePercentTone(mitreStats.coveragePercent)}>
+                            {coveragePercentLabel(mitreStats.coveragePercent)}
+                          </Chip>
                         </div>
                         <p className="text-sm font-medium text-[var(--surface-subtle-foreground)]">Overall Coverage</p>
                       </div>
@@ -456,17 +475,17 @@ export default function DashboardPage() {
                     <div className="rounded-lg border border-[var(--stroke-soft)] bg-[var(--surface-elevated)] p-3 shadow-sm transition-colors hover:border-[var(--accent-line)]">
                       <div className="flex items-center justify-between mb-1.5">
                         <p className="text-xs font-medium uppercase tracking-wider text-[var(--surface-subtle-foreground)]">Covered</p>
-                        <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" />
+                        <CheckCircle2 className={cn("h-3.5 w-3.5", toneClasses("success").icon)} />
                       </div>
-                      <p className="text-3xl font-display font-bold text-emerald-600 mb-0.5 leading-tight">{mitreStats.covered}</p>
+                      <p className={cn("text-3xl font-display font-bold mb-0.5 leading-tight", toneClasses("success").text)}>{mitreStats.covered}</p>
                       <p className="text-xs font-medium text-[var(--surface-subtle-foreground)]">techniques covered</p>
                     </div>
                     <div className="rounded-lg border border-[var(--stroke-soft)] bg-[var(--surface-elevated)] p-3 shadow-sm transition-colors hover:border-[var(--accent-line)]">
                       <div className="flex items-center justify-between mb-1.5">
                         <p className="text-xs font-medium uppercase tracking-wider text-[var(--surface-subtle-foreground)]">Remaining</p>
-                        <Target className="h-3.5 w-3.5 text-amber-500" />
+                        <Target className={cn("h-3.5 w-3.5", toneClasses("warning").icon)} />
                       </div>
-                      <p className="text-3xl font-display font-bold text-amber-600 mb-0.5 leading-tight">{Math.max(0, mitreStats.total - mitreStats.covered)}</p>
+                      <p className={cn("text-3xl font-display font-bold mb-0.5 leading-tight", toneClasses("warning").text)}>{Math.max(0, mitreStats.total - mitreStats.covered)}</p>
                       <p className="text-xs font-medium text-[var(--surface-subtle-foreground)]">techniques remaining</p>
                     </div>
                   </div>
@@ -494,10 +513,10 @@ export default function DashboardPage() {
                   <div className="flex items-center gap-3">
                     <div className="relative">
                       <div className="flex h-12 w-12 items-center justify-center rounded-xl border border-[var(--stroke-soft)] bg-[var(--surface-subtle)] shadow-sm">
-                        <ShieldCheck className="h-6 w-6 text-emerald-500" />
+                        <ShieldCheck className={cn("h-6 w-6", toneClasses("success").icon)} />
                       </div>
                       {systemHealth.siemConnected > 0 && systemHealth.runnersActive > 0 && (
-                        <div className="absolute -top-1 -right-1 h-3 w-3 rounded-full bg-emerald-500 border-2 border-white animate-pulse" />
+                        <div className={cn("absolute -top-1 -right-1 h-3 w-3 rounded-full border-2 border-[var(--surface-card)] animate-pulse", toneClasses("success").bg)} />
                       )}
                     </div>
                     <div>
@@ -515,15 +534,15 @@ export default function DashboardPage() {
                     const allHealthy = siemFullyConfigured && runnersFullyConfigured;
                     
                     return allHealthy ? (
-                      <Badge className="bg-emerald-100 text-emerald-700 border-emerald-200 shadow-sm">
-                        <CheckCircle2 className="h-3 w-3 mr-1.5" />
-                        All Systems Healthy
-                      </Badge>
+                      <Chip tone="success">
+                        <CheckCircle2 className="h-3 w-3" />
+                        All systems healthy
+                      </Chip>
                     ) : (
-                      <Badge className="bg-amber-100 text-amber-700 border-amber-200 animate-pulse shadow-sm">
-                        <AlertTriangle className="h-3 w-3 mr-1.5" />
-                        Action Required
-                      </Badge>
+                      <Chip tone="warning">
+                        <AlertTriangle className="h-3 w-3" />
+                        Action required
+                      </Chip>
                     );
                   })()}
                 </div>
@@ -554,21 +573,21 @@ export default function DashboardPage() {
                               )}>
                                 <Shield className={cn(
                                   "h-6 w-6 transition-all duration-300",
-                                  systemHealth.siemConnected > 0 
-                                    ? "text-emerald-600" 
-                                    : "text-slate-500"
+                                  systemHealth.siemConnected > 0
+                                    ? toneClasses("success").icon
+                                    : toneClasses("muted").icon
                                 )} />
                                 {systemHealth.siemConnected > 0 && (
-                                  <div className="absolute -top-1 -right-1 h-3 w-3 rounded-full bg-emerald-500 border-2 border-white animate-pulse" />
+                                  <div className={cn("absolute -top-1 -right-1 h-3 w-3 rounded-full border-2 border-[var(--surface-card)] animate-pulse", toneClasses("success").bg)} />
                                 )}
                               </div>
-                              
+
                               {/* Content */}
                               <div className="flex-1 min-w-0 space-y-1.5">
                                 <div className="flex items-center gap-2">
                                   <h3 className="text-base font-display font-bold text-[var(--surface-card-foreground)]">SIEM Connections</h3>
                                   {systemHealth.siemConnected > 0 && (
-                                    <CheckCircle2 className="h-4 w-4 text-emerald-500 flex-shrink-0" />
+                                    <CheckCircle2 className={cn("h-4 w-4 flex-shrink-0", toneClasses("success").icon)} />
                                   )}
                                 </div>
                                 
@@ -630,24 +649,24 @@ export default function DashboardPage() {
                               )}>
                                 <Cpu className={cn(
                                   "h-6 w-6 transition-all duration-300",
-                                  systemHealth.runnersActive > 0 
-                                    ? "text-emerald-600" 
-                                    : "text-slate-500"
+                                  systemHealth.runnersActive > 0
+                                    ? toneClasses("success").icon
+                                    : toneClasses("muted").icon
                                 )} />
                                 {systemHealth.runnersActive > 0 && (
-                                  <div className="absolute -top-1 -right-1 h-3 w-3 rounded-full bg-emerald-500 border-2 border-white animate-pulse" />
+                                  <div className={cn("absolute -top-1 -right-1 h-3 w-3 rounded-full border-2 border-[var(--surface-card)] animate-pulse", toneClasses("success").bg)} />
                                 )}
                               </div>
-                              
+
                               {/* Content */}
                               <div className="flex-1 min-w-0 space-y-1.5">
                                 <div className="flex items-center gap-2">
                                   <h3 className="text-base font-display font-bold text-[var(--surface-card-foreground)]">Agents</h3>
                                   {systemHealth.runnersActive > 0 && (
-                                    <CheckCircle2 className="h-4 w-4 text-emerald-500 flex-shrink-0" />
+                                    <CheckCircle2 className={cn("h-4 w-4 flex-shrink-0", toneClasses("success").icon)} />
                                   )}
                                 </div>
-                                
+
                                 {/* Status */}
                                 <div>
                                   <p className="text-sm font-semibold text-[var(--surface-card-foreground)]">
@@ -674,7 +693,7 @@ export default function DashboardPage() {
                                 variant="outline"
                                 size="sm"
                                 className="w-full h-8 border-[var(--interactive-border)] bg-[var(--interactive-surface)] text-xs text-[var(--interactive-foreground)] hover:bg-[var(--interactive-surface-hover)]"
-                                onClick={() => router.push("/settings/test-runner")}
+                                onClick={() => router.push("/lab")}
                               >
                                 <Cpu className="h-3 w-3 mr-1.5" />
                                 Setup Agent
@@ -702,9 +721,9 @@ export default function DashboardPage() {
                   Start from trust, coverage, or validation. PurveX should route work, not act like a passive dashboard.
                 </CardDescription>
               </div>
-                <Badge className="border border-[var(--stroke-soft)] bg-[var(--surface-subtle)] text-[var(--surface-subtle-foreground)]">
+                <Chip tone="muted" appearance="outline">
                   4-step flow
-                </Badge>
+                </Chip>
             </CardHeader>
             <CardContent className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
               <button
@@ -776,15 +795,15 @@ export default function DashboardPage() {
 
           {/* Alert Banner */}
           {needsAttention && firstFailure && (
-            <div className="relative p-6 rounded-lg bg-amber-500/10 border border-amber-500/30">
+            <div className={cn("relative p-6 rounded-lg border", `${toneClasses("danger").bg}/10`, toneClasses("danger").border)}>
               <div className="flex flex-wrap items-center justify-between gap-4">
                 <div className="flex items-center gap-4">
-                  <div className="h-12 w-12 rounded-lg bg-amber-500/20 flex items-center justify-center">
-                    <AlertTriangle className="h-6 w-6 text-amber-300" />
+                  <div className={cn("h-12 w-12 rounded-lg flex items-center justify-center", `${toneClasses("danger").bg}/20`)}>
+                    <AlertTriangle className={cn("h-6 w-6", toneClasses("danger").icon)} />
                   </div>
                   <div>
-                    <p className="font-display font-bold text-amber-200 text-lg">Action Required: Test #{firstFailure.id} Failed</p>
-                    <p className="text-sm font-body text-amber-300/80 mt-1">
+                    <p className={cn("font-display font-bold text-lg", toneClasses("danger").text)}>Action Required: Test #{firstFailure.id} Failed</p>
+                    <p className="text-sm font-body text-[var(--surface-subtle-foreground)] mt-1">
                       {(firstFailure.detection_title || firstFailure.technique_id || `Test #${firstFailure.id}`)} - {(firstFailure.environment || "UNKNOWN").toUpperCase()}
                     </p>
                   </div>
@@ -935,30 +954,32 @@ export default function DashboardPage() {
                       Where detections stand before they can be trusted in steady-state operations
                     </CardDescription>
                   </div>
-                  <Badge className="bg-indigo-500/20 text-indigo-300 border-indigo-500/40 font-semibold">
+                  <Chip tone={scoreToTone(readinessSummary.progress)} size="md">
                     {readinessSummary.progress}% ready
-                  </Badge>
+                  </Chip>
                 </div>
               </CardHeader>
               <CardContent className="pt-6">
                 <div className="space-y-4 mb-6">
-                  {[
-                    { key: "ready", label: "Ready", stat: readinessSummary.ready, color: "emerald", icon: ShieldCheck },
-                    { key: "needs_tuning", label: "Needs tuning", stat: readinessSummary.needs_tuning, color: "rose", icon: AlertTriangle },
-                    { key: "telemetry_gap", label: "No logs", stat: readinessSummary.telemetry_gap, color: "amber", icon: Activity },
-                    { key: "needs_validation", label: "Needs validation", stat: readinessSummary.needs_validation, color: "indigo", icon: Target },
-                  ].map(entry => {
+                  {(
+                    [
+                      { key: "ready", label: "Ready", stat: readinessSummary.ready, icon: ShieldCheck },
+                      { key: "needs_tuning", label: "Needs tuning", stat: readinessSummary.needs_tuning, icon: AlertTriangle },
+                      { key: "telemetry_gap", label: "No logs", stat: readinessSummary.telemetry_gap, icon: Activity },
+                      { key: "needs_validation", label: "Needs validation", stat: readinessSummary.needs_validation, icon: Target },
+                    ] as Array<{ key: DetectionReadinessKey; label: string; stat: number; icon: typeof ShieldCheck }>
+                  ).map(entry => {
                     const Icon = entry.icon;
+                    const tone = READINESS_TONE[entry.key];
                     return (
                       <div key={entry.key} className="flex items-center justify-between rounded-xl border border-[var(--stroke-soft)] bg-[var(--surface-elevated)] p-3 shadow-sm">
                         <div className="flex items-center gap-3">
                           <span
                             className={cn(
                               "inline-flex h-8 w-8 items-center justify-center rounded-full border",
-                              entry.color === "emerald" && "border-emerald-500/40 bg-emerald-500/15 text-emerald-300",
-                              entry.color === "rose" && "border-rose-500/40 bg-rose-500/15 text-rose-300",
-                              entry.color === "amber" && "border-amber-500/40 bg-amber-500/15 text-amber-300",
-                              entry.color === "indigo" && "border-indigo-500/40 bg-indigo-500/15 text-indigo-300"
+                              toneClasses(tone).border,
+                              `${toneClasses(tone).bg}/15`,
+                              toneClasses(tone).text,
                             )}
                           >
                             <Icon className="h-4 w-4" />
@@ -969,13 +990,7 @@ export default function DashboardPage() {
                           <span className="text-lg font-display font-bold text-[var(--surface-card-foreground)]">{entry.stat}</span>
                           <div className="h-2 w-32 overflow-hidden rounded-full bg-[var(--surface-subtle)]">
                             <div
-                              className={cn(
-                                "h-full transition-all",
-                                entry.color === "emerald" && "bg-emerald-500",
-                                entry.color === "rose" && "bg-rose-500",
-                                entry.color === "indigo" && "bg-blue-500",
-                                entry.color === "amber" && "bg-amber-500"
-                              )}
+                              className={cn("h-full transition-all", toneClasses(tone).bg)}
                               style={{ width: `${(entry.stat / (readinessSummary.total || 1)) * 100}%` }}
                             />
                           </div>
@@ -1030,13 +1045,7 @@ export default function DashboardPage() {
                         className="group flex gap-3 rounded-lg border border-[var(--stroke-soft)] bg-[var(--surface-elevated)] p-3 shadow-sm transition-colors hover:border-[var(--accent-line)] hover:bg-[var(--interactive-surface-hover)]"
                       >
                         <div className="flex flex-col items-center">
-                          <div className={cn(
-                            "h-2.5 w-2.5 rounded-full",
-                            activity.status === "FAIL" ? "bg-red-400" :
-                            activity.status === "PASS" ? "bg-emerald-400" :
-                            activity.status === "INCONCLUSIVE" ? "bg-amber-400" :
-                            "bg-slate-400"
-                          )} />
+                          <div className={cn("h-2.5 w-2.5 rounded-full", toneClasses(activityStatusTone(activity.status)).bg)} />
                           {index < activities.length - 1 && (
                           <div className="mt-1 flex-1 w-px bg-[var(--stroke-soft)]" />
                         )}

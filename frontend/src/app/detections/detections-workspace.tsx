@@ -8,19 +8,18 @@ import { format, formatRelative } from "date-fns";
 import {
   AlertTriangle,
   CheckCircle2,
-  ChevronDown,
   ChevronRight,
   Clock3,
   Eye,
   Play,
-  Radar,
   Search,
-  Shield,
   XCircle,
 } from "lucide-react";
-import { getDetections, type Detection } from "@/lib/api";
+import { getDetections, getProposalStats, type Detection } from "@/lib/api";
 import { cn } from "@/lib/utils";
+import { toneClasses } from "@/lib/status-tone";
 import { SourceBadge } from "@/components/detections/source-badge";
+import { ProposalsPanel } from "@/components/detections/proposals-panel";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -46,11 +45,11 @@ import {
   SheetDescription,
 } from "@/components/ui/sheet";
 
-type WorkspaceView = "queue" | "library";
+type WorkspaceView = "queue" | "library" | "proposals";
 type HealthStateKey = "HEALTHY" | "DETECTION_FAILED" | "TELEMETRY_MISSING" | "UNKNOWN";
 type LifecycleStage = "DRAFT" | "ACTIVE" | "NEEDS_IMPROVEMENT" | "RETIRED";
 
-const WORKSPACE_VIEWS: WorkspaceView[] = ["queue", "library"];
+const WORKSPACE_VIEWS: WorkspaceView[] = ["queue", "library", "proposals"];
 
 // Map trust-state → Chip tone. Route all trust-state labels through the Chip
 // primitive so tone adjustments only have to happen in one place.
@@ -65,44 +64,42 @@ const HEALTH_META: Record<
   HealthStateKey,
   {
     label: string;
-    tone: string;
+    text: string;
     bg: string;
     border: string;
+    icon: string;
     headline: string;
     detail: string;
+    emptyLabel: string;
   }
 > = {
   HEALTHY: {
     label: "Ready",
-    tone: "text-emerald-600 dark:text-emerald-300",
-    bg: "bg-emerald-500",
-    border: "border-emerald-200 dark:border-emerald-500/30",
+    ...toneClasses(HEALTH_TONE.HEALTHY),
     headline: "Detection is ready for steady-state operations.",
     detail: "Telemetry arrived, the rule fired, and PurveX has current evidence for trust.",
+    emptyLabel: "Nothing ready yet",
   },
   DETECTION_FAILED: {
     label: "Needs tuning",
-    tone: "text-rose-600 dark:text-rose-300",
-    bg: "bg-rose-500",
-    border: "border-rose-200 dark:border-rose-500/30",
+    ...toneClasses(HEALTH_TONE.DETECTION_FAILED),
     headline: "Telemetry exists, but the detection did not trigger.",
     detail: "This usually points to rule logic drift, bad field mappings, or thresholds that now miss the signal.",
+    emptyLabel: "Nothing needs tuning right now",
   },
   TELEMETRY_MISSING: {
     label: "No logs",
-    tone: "text-amber-600 dark:text-amber-300",
-    bg: "bg-amber-400",
-    border: "border-amber-200 dark:border-amber-500/30",
+    ...toneClasses(HEALTH_TONE.TELEMETRY_MISSING),
     headline: "The test ran, but no usable telemetry reached the SIEM.",
     detail: "Treat this as a pipeline problem first. Validation cannot prove trust while data is missing.",
+    emptyLabel: "No telemetry gaps right now",
   },
   UNKNOWN: {
     label: "Untested",
-    tone: "text-slate-600 dark:text-slate-300",
-    bg: "bg-slate-300 dark:bg-slate-600",
-    border: "border-slate-200 dark:border-white/10",
+    ...toneClasses(HEALTH_TONE.UNKNOWN),
     headline: "PurveX has no validation evidence yet.",
     detail: "This detection may be important, but it is still a claim until it has passed a real validation flow.",
+    emptyLabel: "Nothing untested right now",
   },
 };
 
@@ -155,10 +152,6 @@ function getPriorityRank(detection: Detection) {
   return 4;
 }
 
-function hasTechniqueMapping(detection: Detection) {
-  return Boolean(detection.technique_id && detection.technique_id.trim().length > 0);
-}
-
 function getRelativeDate(value?: string | null) {
   if (!value) return "Never";
   const parsed = new Date(value);
@@ -187,7 +180,21 @@ export function DetectionsWorkspace({ initialDetections }: DetectionsWorkspacePr
 
   const [search, setSearch] = useState("");
   const [opened, setOpened] = useState<Detection | null>(null);
-  const [coverageOpen, setCoverageOpen] = useState(false);
+  const [pendingProposals, setPendingProposals] = useState<number | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    getProposalStats()
+      .then((stats) => {
+        if (!cancelled) setPendingProposals(stats.pending ?? 0);
+      })
+      .catch(() => {
+        if (!cancelled) setPendingProposals(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const requestedView = (searchParams.get("view") || "queue").toLowerCase() as WorkspaceView;
   const activeView = WORKSPACE_VIEWS.includes(requestedView) ? requestedView : "queue";
@@ -263,16 +270,6 @@ export function DetectionsWorkspace({ initialDetections }: DetectionsWorkspacePr
     return { total, trusted, needsTuning, telemetryGap, untested, stale };
   }, [detections]);
 
-  const workspaceGaps = useMemo(() => {
-    const unassigned = detections.filter((d) => !d.owner).length;
-    const unmapped = detections.filter((d) => !hasTechniqueMapping(d)).length;
-    const activeBlockers = detections.filter((d) => {
-      const health = deriveHealthState(d);
-      return health === "TELEMETRY_MISSING" || health === "DETECTION_FAILED";
-    }).length;
-    return { unassigned, unmapped, activeBlockers };
-  }, [detections]);
-
   function setView(view: WorkspaceView) {
     const params = new URLSearchParams(searchParams.toString());
     if (view === "queue") params.delete("view");
@@ -341,27 +338,22 @@ export function DetectionsWorkspace({ initialDetections }: DetectionsWorkspacePr
     );
   }
 
-  const trustPercent = counts.total > 0 ? Math.round((counts.trusted / counts.total) * 100) : 0;
-
   return (
     <PageContainer maxWidth="full" className="space-y-5">
-      {/* ── Trust posture hero ── */}
-      <div className="rounded-2xl border border-[var(--stroke-soft)] bg-[var(--surface-card)] p-6 shadow-[var(--shadow-soft)]">
-        <div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
-          <div className="flex items-center gap-4">
-            <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-slate-100 dark:bg-white/5">
-              <Shield className="h-6 w-6 text-slate-700 dark:text-slate-200" />
-            </div>
-            <div>
-              <h1 className="text-2xl font-bold text-[var(--foreground)]">Detections</h1>
-              <p className="text-sm text-slate-500 dark:text-slate-400">
-                {counts.total} detections &middot; {trustPercent}% trusted posture
-              </p>
-            </div>
+      {/* ── Header (always visible — trust posture only applies outside Proposals) ── */}
+      <div className="border-b border-[var(--stroke-soft)] pb-5">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+          <div>
+            <h1 className="text-2xl font-semibold tracking-tight text-[var(--foreground)]">Detections</h1>
+            <p className="mt-1 text-sm text-[var(--surface-subtle-foreground)]">
+              {activeView === "proposals"
+                ? "Pending create, update, and delete suggestions from the AI assistant, users, and git sync."
+                : `${counts.total} detection${counts.total === 1 ? "" : "s"}`}
+            </p>
           </div>
           <div className="flex items-center gap-2">
             <Link href="/run-test">
-              <Button className="h-10 rounded-full px-5">
+              <Button>
                 <Play className="mr-2 h-4 w-4" />
                 Start validation
               </Button>
@@ -370,9 +362,9 @@ export function DetectionsWorkspace({ initialDetections }: DetectionsWorkspacePr
         </div>
 
         {/* Segmented trust bar */}
-        {counts.total > 0 && (
+        {activeView !== "proposals" && counts.total > 0 && (
           <div className="mt-5">
-            <div className="flex h-3 overflow-hidden rounded-full bg-slate-100 dark:bg-white/5">
+            <div className="flex h-2 overflow-hidden rounded-full bg-[var(--surface-elevated)]">
               {counts.trusted > 0 && (
                 <div className="bg-emerald-500 transition-all" style={{ width: `${(counts.trusted / counts.total) * 100}%` }} />
               )}
@@ -404,22 +396,28 @@ export function DetectionsWorkspace({ initialDetections }: DetectionsWorkspacePr
       <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
           <div className="flex items-center gap-1 rounded-lg border border-[var(--stroke-soft)] bg-[var(--surface-elevated)] p-1">
-            {(["queue", "library"] as WorkspaceView[]).map((v) => (
+            {(["queue", "library", "proposals"] as WorkspaceView[]).map((v) => (
               <button
                 key={v}
                 type="button"
                 onClick={() => setView(v)}
                 className={cn(
-                  "rounded-md px-4 py-2 text-sm font-medium transition",
+                  "inline-flex items-center gap-1.5 rounded-md px-4 py-2 text-sm font-medium transition",
                   activeView === v
                     ? "bg-[var(--surface-card)] text-[var(--foreground)] shadow-sm"
                     : "text-slate-500 hover:text-[var(--foreground)] dark:text-slate-400"
                 )}
               >
-                {v === "queue" ? "Review" : "Library"}
+                {v === "queue" ? "Review" : v === "library" ? "Library" : "Proposals"}
+                {v === "proposals" && pendingProposals ? (
+                  <span className="inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-amber-500 px-1 text-[10px] font-semibold text-white">
+                    {pendingProposals}
+                  </span>
+                ) : null}
               </button>
             ))}
           </div>
+          {activeView !== "proposals" && (
           <div className="relative w-full sm:w-72">
             <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400 dark:text-slate-500" />
             <Input
@@ -429,59 +427,15 @@ export function DetectionsWorkspace({ initialDetections }: DetectionsWorkspacePr
               className="h-10 border-[var(--stroke-soft)] bg-[var(--surface-card)] pl-9"
             />
           </div>
-        </div>
-
-        <button
-          type="button"
-          onClick={() => setCoverageOpen(!coverageOpen)}
-          className={cn(
-            "inline-flex h-10 items-center gap-3 rounded-lg border border-[var(--stroke-soft)] bg-[var(--surface-card)] px-4 text-left shadow-[var(--shadow-soft)] transition hover:bg-[var(--surface-elevated)]",
-            coverageOpen && "border-[var(--accent-line)]"
           )}
-          aria-expanded={coverageOpen}
-        >
-          <Radar className="h-4 w-4 text-slate-500 dark:text-slate-400" />
-          <span className="text-sm font-semibold text-[var(--foreground)]">Coverage summary</span>
-          <Chip tone={workspaceGaps.activeBlockers > 0 ? "warning" : "success"}>
-            {workspaceGaps.activeBlockers} active blocker{workspaceGaps.activeBlockers === 1 ? "" : "s"}
-          </Chip>
-          <ChevronDown
-            className={cn(
-              "h-4 w-4 text-slate-400 transition-transform",
-              coverageOpen && "rotate-180"
-            )}
-          />
-        </button>
-      </div>
-
-      {/* ── Coverage summary (expandable) ── */}
-      {coverageOpen && (
-        <div className="rounded-2xl border border-[var(--stroke-soft)] bg-[var(--surface-card)] px-5 py-5 shadow-[var(--shadow-soft)]">
-          <div className="grid gap-6 lg:grid-cols-2">
-            <div className="space-y-3">
-              <h4 className="text-xs font-bold uppercase tracking-wider text-slate-400">Readiness blockers</h4>
-              <CoverageRow label="Untested" count={counts.untested} total={counts.total} color="bg-slate-400" />
-              <CoverageRow label="No logs" count={counts.telemetryGap} total={counts.total} color="bg-amber-400" />
-              <CoverageRow label="Needs tuning" count={counts.needsTuning} total={counts.total} color="bg-rose-400" />
-              <CoverageRow label="Stale readiness" count={counts.stale} total={counts.total} color="bg-emerald-300" />
-            </div>
-            <div className="space-y-3">
-              <h4 className="text-xs font-bold uppercase tracking-wider text-slate-400">Operational gaps</h4>
-              <GapRow label="Unassigned owners" value={workspaceGaps.unassigned} detail="Detections without someone accountable for tuning." />
-              <GapRow label="Unmapped technique" value={workspaceGaps.unmapped} detail="Missing a MITRE technique mapping." />
-            </div>
-          </div>
         </div>
-      )}
+      </div>
 
       {activeView === "queue" && (
         <div className="space-y-4">
-          <div className="rounded-2xl border border-[var(--stroke-soft)] bg-[var(--surface-card)] p-5 shadow-[var(--shadow-soft)]">
-            <h2 className="text-base font-semibold text-[var(--foreground)]">Detection queue</h2>
-            <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-              Start with the items blocking trust, then work through first validations and stale records.
-            </p>
-          </div>
+          <p className="text-sm text-[var(--surface-subtle-foreground)]">
+            Start with what's blocking trust, then work through first-time validations and records that have gone stale.
+          </p>
           <div className="grid gap-4 lg:grid-cols-4">
           {(["TELEMETRY_MISSING", "DETECTION_FAILED", "UNKNOWN", "HEALTHY"] as HealthStateKey[]).map((key) => {
             const meta = HEALTH_META[key];
@@ -498,7 +452,7 @@ export function DetectionsWorkspace({ initialDetections }: DetectionsWorkspacePr
                 <div className="flex-1 space-y-2 overflow-y-auto p-3" style={{ maxHeight: "520px" }}>
                   {items.length === 0 ? (
                     <p className="px-2 py-6 text-center text-xs text-slate-400 dark:text-slate-500">
-                      {key === "HEALTHY" ? "No ready detections yet" : "No items in queue"}
+                      {meta.emptyLabel}
                     </p>
                   ) : (
                     items.map((d) => (
@@ -539,12 +493,9 @@ export function DetectionsWorkspace({ initialDetections }: DetectionsWorkspacePr
       {/* ── Library (table) view ── */}
       {activeView === "library" && (
         <div className="space-y-4">
-          <div className="rounded-2xl border border-[var(--stroke-soft)] bg-[var(--surface-card)] p-5 shadow-[var(--shadow-soft)]">
-            <h2 className="text-base font-semibold text-[var(--foreground)]">Detection library</h2>
-            <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-              Browse the full set by readiness, lifecycle, ownership, and latest validation evidence.
-            </p>
-          </div>
+          <p className="text-sm text-[var(--surface-subtle-foreground)]">
+            Browse the full set by readiness, lifecycle, ownership, and latest validation evidence.
+          </p>
           <div className="rounded-2xl border border-[var(--stroke-soft)] bg-[var(--surface-card)] shadow-[var(--shadow-soft)] overflow-hidden">
             <Table>
             <TableHeader>
@@ -598,6 +549,10 @@ export function DetectionsWorkspace({ initialDetections }: DetectionsWorkspacePr
         </div>
       )}
 
+      {activeView === "proposals" && (
+        <ProposalsPanel onPendingCountChange={setPendingProposals} />
+      )}
+
       <Sheet open={!!opened} onOpenChange={(open) => { if (!open) setOpened(null); }}>
         <SheetContent
           side="right"
@@ -619,30 +574,6 @@ function LegendDot({ color, label }: { color: string; label: string }) {
   );
 }
 
-function CoverageRow({ label, count, total, color }: { label: string; count: number; total: number; color: string }) {
-  const pct = total > 0 ? Math.round((count / total) * 100) : 0;
-  return (
-    <div className="flex items-center gap-4">
-      <span className="w-28 text-sm text-slate-600 dark:text-slate-300">{label}</span>
-      <div className="flex-1 h-2.5 rounded-full bg-slate-100 dark:bg-white/5 overflow-hidden">
-        <div className={cn("h-full rounded-full transition-all", color)} style={{ width: `${pct}%` }} />
-      </div>
-      <span className="w-16 text-right text-sm font-semibold text-[var(--foreground)]">{count}</span>
-    </div>
-  );
-}
-
-function GapRow({ label, value, detail }: { label: string; value: number; detail: string }) {
-  return (
-    <div className="rounded-xl bg-[var(--surface-elevated)] px-4 py-3">
-      <div className="flex items-center justify-between gap-3">
-        <span className="text-sm font-medium text-[var(--foreground)]">{label}</span>
-        <span className="text-lg font-semibold text-[var(--foreground)]">{value}</span>
-      </div>
-      <p className="mt-1 text-xs leading-5 text-slate-500 dark:text-slate-400">{detail}</p>
-    </div>
-  );
-}
 
 function DetailPanel({ detection }: { detection: Detection }) {
   const health = deriveHealthState(detection);
@@ -660,7 +591,7 @@ function DetailPanel({ detection }: { detection: Detection }) {
     <>
       <SheetHeader className="border-[var(--stroke-soft)]">
         <div className="flex items-start gap-3 pr-8">
-          <div className={cn("flex h-11 w-11 items-center justify-center rounded-2xl border bg-[var(--surface-elevated)]", meta.border, meta.tone)}>
+          <div className={cn("flex h-11 w-11 items-center justify-center rounded-2xl border bg-[var(--surface-elevated)]", meta.border, meta.icon)}>
             <Icon className="h-5 w-5" />
           </div>
           <div className="min-w-0 flex-1 space-y-1">

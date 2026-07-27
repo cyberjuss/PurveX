@@ -7,10 +7,21 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
-import { Chip } from "@/components/ui/chip";
+import { Textarea } from "@/components/ui/textarea";
+import { Chip, type ChipProps } from "@/components/ui/chip";
+import { toneClasses } from "@/lib/status-tone";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from "@/components/ui/dialog";
+import {
   getDetections,
+  createDetection,
   runTest as runTestApi,
   Detection,
   TestRunMode,
@@ -24,10 +35,12 @@ import {
   getEnvironmentRunners,
 } from "@/lib/api";
 import { usePermissions } from "@/hooks/usePermissions";
+import { Permission } from "@/lib/permissions";
 import {
   Clock3,
   Loader2,
   Play,
+  Plus,
   AlertTriangle,
   CheckCircle2,
   XCircle,
@@ -41,9 +54,10 @@ import {
   Settings,
 } from "lucide-react";
 import { PageContainer } from "@/components/layout/page-container";
+import { TestsHubTabs } from "@/components/tests/tests-hub-tabs";
 import { cn } from "@/lib/utils";
 import { z } from "zod";
-import { FieldError } from "@/components/ui/form-error";
+import { FieldError, FormError } from "@/components/ui/form-error";
 
 // Validates the few free-form text inputs on /run-test. Precondition checks for
 // button-driven fields (test type, detection, environment) remain in
@@ -84,6 +98,7 @@ type UiTestType = "detection_validation" | "find_detection_coverage" | "telemetr
 
 type RunnerTargetRecord = {
   hostname?: string | null;
+  environment_name?: string | null;
 };
 
 const RUN_TEST_MAX_POLL_ATTEMPTS = 300;
@@ -208,59 +223,60 @@ function buildHighLevelResult(test: TestDetailResponse): RunTestResult {
 
 const EXEC_STATUS_META: Record<
   ExecutionStatus,
-  { label: string; tone: string; text: string; icon: ReactNode; pulse?: boolean }
+  { label: string; tone: NonNullable<ChipProps["tone"]>; text: string; icon: ReactNode; pulse?: boolean }
 > = {
   queued: {
     label: "Queued",
-    tone: "bg-slate-100 text-slate-800 ring-1 ring-slate-200",
+    tone: "muted",
     text: "Waiting for the runner to pick up the job",
-    icon: <Clock3 className="h-4 w-4 text-slate-600" />,
+    icon: <Clock3 className="h-4 w-4" />,
   },
   running: {
     label: "Running",
-    tone: "bg-sky-50 text-sky-800 ring-1 ring-sky-100",
+    tone: "info",
     text: "Executing the test on the target runner",
-    icon: <Loader2 className="h-4 w-4 animate-spin text-sky-600" />,
+    icon: <Loader2 className="h-4 w-4 animate-spin" />,
     pulse: true,
   },
   ingesting: {
     label: "Ingesting",
-    tone: "bg-indigo-50 text-indigo-800 ring-1 ring-indigo-100",
+    tone: "accent",
     text: "Waiting for telemetry and validation results",
-    icon: <Waves className="h-4 w-4 text-indigo-600" />,
+    icon: <Waves className="h-4 w-4" />,
     pulse: true,
   },
   validated: {
     label: "Validated",
-    tone: "bg-emerald-50 text-emerald-800 ring-1 ring-emerald-100",
+    tone: "success",
     text: "Validation completed successfully",
-    icon: <CheckCircle2 className="h-4 w-4 text-emerald-600" />,
+    icon: <CheckCircle2 className="h-4 w-4" />,
   },
   failed: {
     label: "Failed",
-    tone: "bg-rose-50 text-rose-800 ring-1 ring-rose-100",
+    tone: "danger",
     text: "Validation run failed",
-    icon: <XCircle className="h-4 w-4 text-rose-600" />,
+    icon: <XCircle className="h-4 w-4" />,
   },
   partial: {
     label: "Partial Telemetry",
-    tone: "bg-amber-50 text-amber-800 ring-1 ring-amber-100",
+    tone: "warning",
     text: "Validation finished with incomplete telemetry",
-    icon: <AlertTriangle className="h-4 w-4 text-amber-600" />,
+    icon: <AlertTriangle className="h-4 w-4" />,
   },
 };
 
 function LogStatusIcon({ status }: { status: ExecutionLogStatus }) {
-  if (status === "success") return <CheckCircle2 className="h-4 w-4 text-emerald-500" />;
-  if (status === "warning") return <AlertTriangle className="h-4 w-4 text-amber-500" />;
-  if (status === "error") return <XCircle className="h-4 w-4 text-rose-500" />;
-  return <Loader2 className="h-4 w-4 text-sky-500 animate-spin" />;
+  if (status === "success") return <CheckCircle2 className={cn("h-4 w-4", toneClasses("success").icon)} />;
+  if (status === "warning") return <AlertTriangle className={cn("h-4 w-4", toneClasses("warning").icon)} />;
+  if (status === "error") return <XCircle className={cn("h-4 w-4", toneClasses("danger").icon)} />;
+  return <Loader2 className={cn("h-4 w-4 animate-spin", toneClasses("info").icon)} />;
 }
 
 function useRunTest() {
   const [isRunning, setIsRunning] = useState(false);
   const [result, setResult] = useState<RunTestResult | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [stillProcessing, setStillProcessing] = useState<string | null>(null);
 
     const run = useCallback(
     async (
@@ -280,6 +296,7 @@ function useRunTest() {
     ) => {
       setIsRunning(true);
       setError(null);
+      setStillProcessing(null);
       setResult(null);
       callbacks?.onStatus?.("running");
       try {
@@ -385,7 +402,11 @@ function useRunTest() {
             window.dispatchEvent(new Event("purvex:test-notification"));
           }
         } else {
-          setError("This validation is still processing. You can keep this page open or review the live validation record from the Tests page.");
+          // Not a failure — the backend just hasn't reached a terminal status within
+          // our poll window. Keep this out of the error state so it doesn't read as broken.
+          setStillProcessing(
+            "This validation is taking longer than expected. It's still running on the backend — you can keep this page open or check the Tests page for the live record."
+          );
           callbacks?.onStatus?.("ingesting");
         }
       } catch (err: unknown) {
@@ -398,7 +419,7 @@ function useRunTest() {
     []
   );
 
-  return { run, isRunning, result, error, setResult };
+  return { run, isRunning, result, error, stillProcessing, setResult };
 }
 
 function LiveExecutionPanel({
@@ -428,24 +449,18 @@ function LiveExecutionPanel({
     <div className="rounded-2xl border border-[var(--stroke-soft)] bg-[var(--surface-card)] shadow-sm p-4 sm:p-5 space-y-4">
       <div className="flex items-start justify-between gap-3">
         <div className="flex items-center gap-2">
-          <span
-            className={cn(
-              "inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold",
-              meta.tone,
-              meta.pulse ? "animate-pulse" : ""
-            )}
-          >
+          <Chip tone={meta.tone} size="md" className={meta.pulse ? "animate-pulse" : undefined}>
             {meta.icon}
             {meta.label}
-          </span>
-          <span className="text-xs text-slate-600">{meta.text}</span>
+          </Chip>
+          <span className="text-xs text-[var(--surface-subtle-foreground)]">{meta.text}</span>
           {execution.status === "partial" && execution.missing_signal && (
-            <span className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-full px-2 py-0.5">
+            <Chip tone="warning" size="sm">
               {execution.missing_signal}
-            </span>
+            </Chip>
           )}
         </div>
-        <div className="text-[11px] text-slate-500 text-right">
+        <div className="text-[11px] text-[var(--surface-subtle-foreground)] text-right">
           <div>Started: {execution.started_at}</div>
           {execution.completed_at && <div>Finished: {execution.completed_at}</div>}
         </div>
@@ -455,14 +470,15 @@ function LiveExecutionPanel({
         {stages.map((stage, index) => {
           const isDone = index < currentStageIndex;
           const isCurrent = index === currentStageIndex;
+          const tone = isDone ? "success" : isCurrent ? "info" : "muted";
           return (
             <div
               key={stage.label}
               className={cn(
                 "rounded-lg border px-3 py-2 text-xs font-semibold",
-                isDone && "border-emerald-200 bg-emerald-50 text-emerald-700",
-                isCurrent && "border-sky-200 bg-sky-50 text-sky-700",
-                !isDone && !isCurrent && "border-slate-200 bg-slate-50 text-slate-500"
+                toneClasses(tone).border,
+                `${toneClasses(tone).bg}/10`,
+                toneClasses(tone).text,
               )}
             >
               {stage.label}
@@ -473,19 +489,19 @@ function LiveExecutionPanel({
 
       <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
         <div className="rounded-lg border border-[var(--stroke-soft)] bg-[var(--surface-elevated)] px-3 py-2">
-          <div className="text-[11px] uppercase tracking-[0.18em] text-slate-500">Validation ID</div>
+          <div className="text-[11px] uppercase tracking-[0.18em] text-[var(--surface-subtle-foreground)]">Validation ID</div>
           <div className="text-sm font-mono text-[var(--foreground)] break-all">{execution.id}</div>
         </div>
         <div className="rounded-lg border border-[var(--stroke-soft)] bg-[var(--surface-elevated)] px-3 py-2">
-          <div className="text-[11px] uppercase tracking-[0.18em] text-slate-500">Technique</div>
+          <div className="text-[11px] uppercase tracking-[0.18em] text-[var(--surface-subtle-foreground)]">Technique</div>
           <div className="text-sm font-semibold text-[var(--foreground)]">{execution.technique_id}</div>
         </div>
         <div className="rounded-lg border border-[var(--stroke-soft)] bg-[var(--surface-elevated)] px-3 py-2">
-          <div className="text-[11px] uppercase tracking-[0.18em] text-slate-500">Environment</div>
+          <div className="text-[11px] uppercase tracking-[0.18em] text-[var(--surface-subtle-foreground)]">Environment</div>
           <div className="text-sm font-semibold text-[var(--foreground)]">{execution.environment}</div>
         </div>
         <div className="md:col-span-2 lg:col-span-3 rounded-lg border border-[var(--stroke-soft)] bg-[var(--surface-elevated)] px-3 py-2">
-          <div className="text-[11px] uppercase tracking-[0.18em] text-slate-500">Runner command</div>
+          <div className="text-[11px] uppercase tracking-[0.18em] text-[var(--surface-subtle-foreground)]">Runner command</div>
           <div className="text-sm font-mono text-[var(--foreground)] whitespace-pre-wrap break-words">
             {execution.atomic_command}
           </div>
@@ -508,14 +524,14 @@ function LiveExecutionPanel({
         {logsExpanded && (
           <div className="mt-3 max-h-64 overflow-y-auto rounded-lg border border-[var(--stroke-soft)] bg-[var(--surface-elevated)]">
             {execution.logs.length === 0 && (
-              <div className="px-3 py-2 text-xs text-slate-500">Waiting for run updates...</div>
+              <div className="px-3 py-2 text-xs text-[var(--surface-subtle-foreground)]">Waiting for run updates...</div>
             )}
             {execution.logs.map((log) => (
               <div
                 key={log.id}
                 className="flex items-start gap-3 border-b border-[var(--stroke-soft)] last:border-0 px-3 py-2 text-xs font-mono text-slate-800 dark:text-slate-200"
               >
-                <div className="text-slate-500 whitespace-nowrap">{log.timestamp}</div>
+                <div className="text-[var(--surface-subtle-foreground)] whitespace-nowrap">{log.timestamp}</div>
                 <div className="flex items-center gap-2">
                   <LogStatusIcon status={log.status} />
                   <span className="text-[var(--foreground)]">{log.step}</span>
@@ -525,7 +541,7 @@ function LiveExecutionPanel({
           </div>
         )}
         {!logsExpanded && isRunning && (
-          <div className="mt-2 text-xs text-slate-600">Live updates are streaming. Expand to view details.</div>
+          <div className="mt-2 text-xs text-[var(--surface-subtle-foreground)]">Live updates are streaming. Expand to view details.</div>
         )}
       </div>
     </div>
@@ -586,8 +602,18 @@ function RunTestPageContent() {
   const [fieldErrors, setFieldErrors] = useState<RunTestFieldErrors>({});
   const [testType, setTestType] = useState<UiTestType | null>(null);
   const [targetHost, setTargetHost] = useState<string>("");
-  const [runnerTargets, setRunnerTargets] = useState<string[]>([]);
+  const [environmentRunners, setEnvironmentRunners] = useState<RunnerTargetRecord[]>([]);
   const [detectionSearch, setDetectionSearch] = useState<string>("");
+  const [prodConfirmOpen, setProdConfirmOpen] = useState(false);
+  const [prodConfirmReason, setProdConfirmReason] = useState("");
+  const [prodConfirmError, setProdConfirmError] = useState<string | null>(null);
+  const [newDetectionOpen, setNewDetectionOpen] = useState(false);
+  const [newDetectionSaving, setNewDetectionSaving] = useState(false);
+  const [newDetectionError, setNewDetectionError] = useState<string | null>(null);
+  const [newDetectionTitle, setNewDetectionTitle] = useState("");
+  const [newDetectionTechnique, setNewDetectionTechnique] = useState("");
+  const [newDetectionSiemType, setNewDetectionSiemType] = useState("");
+  const [newDetectionQuery, setNewDetectionQuery] = useState("");
   const [lastRunType, setLastRunType] = useState<UiTestType | null>(null);
   const [labOs, setLabOs] = useState<"windows" | "linux" | "both">("windows");
   const [runMode, setRunMode] = useState<"now" | "schedule">("now");
@@ -608,8 +634,8 @@ function RunTestPageContent() {
   const [techniquePickerTactic, setTechniquePickerTactic] = useState<string>("all");
   const [techniquePickerPage, setTechniquePickerPage] = useState<number>(0);
 
-  const { run: runTest, isRunning, result, error: runError, setResult } = useRunTest();
-  const { canRunTest, canScheduleTest, loading: permissionsLoading } = usePermissions();
+  const { run: runTest, isRunning, result, error: runError, stillProcessing, setResult } = useRunTest();
+  const { canRunTest, canScheduleTest, hasPermission, loading: permissionsLoading } = usePermissions();
   const addExecutionLog = useCallback((entry: ExecutionLogEntry) => {
     setExecution((prev) => {
       if (!prev) return prev;
@@ -777,10 +803,11 @@ function RunTestPageContent() {
         const runners = await getEnvironmentRunners();
         if (cancelled) return;
         if (Array.isArray(runners)) {
-          const hosts = runners
-            .map((runner: RunnerTargetRecord) => runner.hostname)
-            .filter((hostname): hostname is string => typeof hostname === "string" && hostname.trim().length > 0);
-          setRunnerTargets(Array.from(new Set(hosts)));
+          const withHostnames = (runners as RunnerTargetRecord[]).filter(
+            (runner): runner is RunnerTargetRecord & { hostname: string } =>
+              typeof runner.hostname === "string" && runner.hostname.trim().length > 0
+          );
+          setEnvironmentRunners(withHostnames);
         }
         setRunnerLoadWarning(null);
       } catch {
@@ -817,7 +844,42 @@ function RunTestPageContent() {
     return Object.keys(atomic).length > 0 ? atomic : undefined;
   }, [atomicIdFromExplore, atomicNameFromExplore, atomicNumberFromExplore]);
 
-  async function handleRunTest() {
+  async function handleCreateDetection(e: React.FormEvent) {
+    e.preventDefault();
+    const title = newDetectionTitle.trim();
+    const technique = newDetectionTechnique.trim().toUpperCase();
+    const siemType = newDetectionSiemType.trim();
+    const query = newDetectionQuery.trim();
+
+    if (!title || !technique || !siemType || !query) {
+      setNewDetectionError("Fill in title, technique, SIEM type, and query.");
+      return;
+    }
+
+    setNewDetectionSaving(true);
+    setNewDetectionError(null);
+    try {
+      const created = await createDetection({
+        technique_id: technique,
+        title,
+        siem_type: siemType,
+        siem_query: query,
+      });
+      setDetections((prev) => [created, ...prev]);
+      setSelectedDetection(created.id);
+      setNewDetectionOpen(false);
+      setNewDetectionTitle("");
+      setNewDetectionTechnique("");
+      setNewDetectionSiemType("");
+      setNewDetectionQuery("");
+    } catch (err) {
+      setNewDetectionError(err instanceof Error ? err.message : "Failed to create detection.");
+    } finally {
+      setNewDetectionSaving(false);
+    }
+  }
+
+  async function handleRunTest(opts?: { prodOverride?: boolean; prodReason?: string }) {
     if (!testType) {
       setError("Choose what you want to test first.");
       return;
@@ -862,6 +924,14 @@ function RunTestPageContent() {
 
     if (!environment) {
       setError("Select an environment for this run.");
+      return;
+    }
+
+    // Production runs execute a real payload against a real production host.
+    // Require an explicit, named confirmation before anything is submitted —
+    // permission alone isn't the same as "approved for this specific run."
+    if (environment === "prod" && !opts?.prodOverride) {
+      setProdConfirmOpen(true);
       return;
     }
 
@@ -957,6 +1027,16 @@ function RunTestPageContent() {
       technique_id: techniqueIdDisplay,
       environment: environment.toUpperCase(),
       logs: [
+        ...(environment === "prod" && opts?.prodReason
+          ? [
+              {
+                id: `${executionId}-prod-confirm`,
+                timestamp: startTs,
+                step: `Production run confirmed. Reason: ${opts.prodReason}`,
+                status: "success" as const,
+              },
+            ]
+          : []),
         {
           id: `${executionId}-start`,
           timestamp: startTs,
@@ -1083,12 +1163,37 @@ function RunTestPageContent() {
     (techniquePickerPage + 1) * TECHNIQUE_PICKER_PAGE_SIZE
   );
 
-  const TECHNIQUE_STATUS_META = {
-    validated: { label: "Validated", badge: "bg-emerald-50 text-emerald-700 border-emerald-200", dot: "bg-emerald-500" },
-    at_risk: { label: "At risk", badge: "bg-amber-50 text-amber-700 border-amber-200", dot: "bg-amber-500" },
-    mapped: { label: "Mapped only", badge: "bg-sky-50 text-sky-700 border-sky-200", dot: "bg-sky-500" },
-    unmapped: { label: "Unmapped", badge: "bg-slate-100 text-slate-600 border-slate-200", dot: "bg-slate-400" },
-  } as const;
+  const TECHNIQUE_STATUS_META: Record<
+    "validated" | "at_risk" | "mapped" | "unmapped",
+    { label: string; tone: NonNullable<ChipProps["tone"]> }
+  > = {
+    validated: { label: "Validated", tone: "success" },
+    at_risk: { label: "At risk", tone: "warning" },
+    mapped: { label: "Mapped only", tone: "info" },
+    unmapped: { label: "Unmapped", tone: "muted" },
+  };
+
+  // Only offer runners actually registered for the environment that's selected —
+  // a lab-only runner must never show up as a selectable target while Prod is chosen.
+  const runnerTargets = useMemo(() => {
+    const hosts = environmentRunners
+      .filter((runner) => !environment || runner.environment_name === environment)
+      .map((runner) => runner.hostname as string);
+    return Array.from(new Set(hosts));
+  }, [environmentRunners, environment]);
+
+  useEffect(() => {
+    if (targetHost && runnerTargets.length > 0 && !runnerTargets.includes(targetHost)) {
+      setTargetHost("");
+    }
+  }, [environment, runnerTargets, targetHost]);
+
+  // A prod confirmation is only valid for the run config it was given for —
+  // if the target changes underneath it, make the operator confirm again.
+  useEffect(() => {
+    setProdConfirmReason("");
+    setProdConfirmError(null);
+  }, [environment, selectedDetection, selectedScenario, techniqueFromExplore, targetHost]);
 
   const canSelectTargetHost =
     !!testType &&
@@ -1168,65 +1273,8 @@ function RunTestPageContent() {
 
   return (
     <PageContainer>
-      {/* Step Progress Indicator */}
-      <div className="mb-8 flex justify-center">
-        <div className="relative w-full max-w-4xl px-6">
-          {/* Base connectors */}
-          <div className="absolute top-[28px] left-[16.6667%] w-[33.3333%] h-[3px] rounded-full bg-slate-200" />
-          <div className="absolute top-[28px] left-[50%] w-[33.3333%] h-[3px] rounded-full bg-slate-200" />
-          {/* Active connectors */}
-          <div
-            className={cn(
-              "absolute top-[28px] left-[16.6667%] w-[33.3333%] h-[3px] rounded-full transition-colors",
-              currentStep > 1 ? "bg-indigo-200" : "bg-slate-200"
-            )}
-          />
-          <div
-            className={cn(
-              "absolute top-[28px] left-[50%] w-[33.3333%] h-[3px] rounded-full transition-colors",
-              currentStep > 2 ? "bg-indigo-200" : "bg-slate-200"
-            )}
-          />
-
-          <div className="relative z-10 grid grid-cols-3 items-start text-center">
-            {[1, 2, 3].map((step) => {
-              const isActive = currentStep === step;
-              const isCompleted = currentStep > step;
-              return (
-                <div key={step} className="flex flex-col items-center gap-2">
-                  <div
-                    className={cn(
-                      "flex items-center justify-center w-14 h-14 rounded-full border-2 transition-all bg-white shadow-sm",
-                      isCompleted
-                        ? "border-indigo-400 text-indigo-500 bg-indigo-50"
-                        : isActive
-                        ? "border-[#5b7bff] text-[#4d6dff] shadow-[0_0_0_4px_rgba(91,123,255,0.18)]"
-                        : "border-slate-200 text-slate-400"
-                    )}
-                  >
-                    {isCompleted ? (
-                      <CheckCircle2 className="h-6 w-6" />
-                    ) : (
-                      <span className="text-[22px] font-display font-bold">{step}</span>
-                    )}
-                  </div>
-                  <span
-                    className={cn(
-                      "text-sm font-medium",
-                      isActive ? "text-[#4d6dff]" : "text-slate-500"
-                    )}
-                  >
-                    {step === 1
-                      ? "Validation"
-                      : step === 2
-                      ? TEST_MODES.find((m) => m.id === testType)?.step2Label || "Pick Target"
-                      : "Environment"}
-                  </span>
-                </div>
-              );
-            })}
-          </div>
-        </div>
+      <div className="mb-6">
+        <TestsHubTabs />
       </div>
 
       {/* Main Configuration Card */}
@@ -1238,12 +1286,12 @@ function RunTestPageContent() {
               <div className="flex items-start justify-between">
                 <div className="space-y-1">
                   <h2 className="text-xl font-display font-semibold text-[var(--foreground)] flex items-center gap-2">
-                    <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-indigo-100 text-indigo-700 border border-indigo-200 text-[18px] font-bold">
+                    <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-[var(--accent-soft)] text-[var(--accent-strong)] border border-[var(--accent-line)] text-[18px] font-bold">
                       1
                     </span>
                     Select Validation Mode
                   </h2>
-                  <p className="text-sm text-slate-600 ml-9">
+                  <p className="text-sm text-[var(--surface-subtle-foreground)] ml-9">
                     Choose the kind of validation you need
                   </p>
                     </div>
@@ -1267,33 +1315,35 @@ function RunTestPageContent() {
                         setCurrentStep(2);
                       }}
                       className={cn(
-                        "relative overflow-hidden p-4 rounded-xl border-2 transition-all text-left group bg-white",
+                        "relative overflow-hidden p-4 rounded-xl border-2 transition-all text-left group bg-[var(--surface-card)]",
                         isActive
-                          ? "border-[#5b7bff] shadow-[0_12px_32px_rgba(77,109,255,0.18)] ring-1 ring-[#4d6dff]/30"
-                          : "border-slate-200 hover:border-[#5b7bff] hover:shadow-[0_10px_24px_rgba(91,123,255,0.12)]"
+                          ? "border-[var(--accent-strong)] shadow-sm"
+                          : "border-[var(--stroke-soft)] hover:border-[var(--accent-line)]"
                       )}
                     >
                       <div
                         className={cn(
                           "absolute inset-x-0 top-0 h-1 transition-all",
-                          isActive ? "bg-[#4d6dff]" : "bg-transparent"
+                          isActive ? "bg-[var(--accent-strong)]" : "bg-transparent"
                         )}
                       />
                       <div className="flex items-start gap-3">
                         <div
                           className={cn(
                             "h-10 w-10 rounded-lg flex items-center justify-center transition-colors",
-                            isActive ? "bg-indigo-50 text-indigo-700" : "bg-slate-100 text-slate-500"
+                            isActive
+                              ? "bg-[var(--accent-soft)] text-[var(--accent-strong)]"
+                              : "bg-[var(--surface-subtle)] text-[var(--surface-subtle-foreground)]"
                           )}
                         >
                           <Icon className="h-5 w-5" />
                         </div>
                         <div className="flex-1 space-y-1">
                           <h3 className="font-display font-semibold text-[var(--foreground)]">{mode.title}</h3>
-                          <p className="text-xs text-slate-600 leading-relaxed">{mode.question}</p>
+                          <p className="text-xs text-[var(--surface-subtle-foreground)] leading-relaxed">{mode.question}</p>
                         </div>
                         {isActive && (
-                          <CheckCircle2 className="h-5 w-5 text-indigo-500 flex-shrink-0" />
+                          <CheckCircle2 className="h-5 w-5 text-[var(--accent-strong)] flex-shrink-0" />
                         )}
                       </div>
                     </button>
@@ -1308,7 +1358,7 @@ function RunTestPageContent() {
                 <div className="flex items-start justify-between">
                   <div className="space-y-1">
                     <h2 className="text-xl font-display font-semibold text-[var(--foreground)] flex items-center gap-2">
-                      <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-indigo-100 text-indigo-700 border border-indigo-200 text-[18px] font-bold">
+                      <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-[var(--accent-soft)] text-[var(--accent-strong)] border border-[var(--accent-line)] text-[18px] font-bold">
                       2
                     </span>
                         {testType === "telemetry_check"
@@ -1317,7 +1367,7 @@ function RunTestPageContent() {
                         ? "Select Detection to Validate"
                         : "Choose ATT&CK Technique"}
                     </h2>
-                    <p className="text-sm text-slate-600 ml-9">
+                    <p className="text-sm text-[var(--surface-subtle-foreground)] ml-9">
                       {testType === "detection_validation"
                         ? "Select the detection rule you want to validate"
                         : testType === "find_detection_coverage"
@@ -1326,7 +1376,7 @@ function RunTestPageContent() {
                     </p>
                   </div>
                 {loading && (
-                  <div className="flex items-center gap-2 text-sm text-slate-400">
+                  <div className="flex items-center gap-2 text-sm text-[var(--surface-subtle-foreground)]">
                     <Loader2 className="h-4 w-4 animate-spin" />
                     Loading...
                   </div>
@@ -1335,7 +1385,7 @@ function RunTestPageContent() {
 
               {!testType && (
                 <div className="ml-9 p-4 rounded-lg border border-[var(--stroke-soft)] bg-[var(--surface-elevated)]">
-                  <p className="text-sm text-slate-600">
+                  <p className="text-sm text-[var(--surface-subtle-foreground)]">
                     Select a validation mode in Step 1 to continue
                   </p>
                   </div>
@@ -1343,16 +1393,30 @@ function RunTestPageContent() {
 
                 {testType && testType === "detection_validation" && (
                     <div className="ml-9 space-y-4">
-                      <div className="relative">
-                        <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-slate-400" />
-                        <Input
-                          type="text"
-                          value={detectionSearch}
-                          onChange={(e) => setDetectionSearch(e.target.value)}
-                          placeholder="Search detections by name, MITRE technique, or SIEM type..."
-                        className="pl-10 h-10 bg-[var(--surface-card)] border-[var(--stroke-soft)] text-sm text-[var(--foreground)] placeholder:text-slate-500"
-                          disabled={isRunning}
-                        />
+                      <div className="flex items-center gap-2">
+                        <div className="relative flex-1">
+                          <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-[var(--surface-subtle-foreground)]" />
+                          <Input
+                            type="text"
+                            value={detectionSearch}
+                            onChange={(e) => setDetectionSearch(e.target.value)}
+                            placeholder="Search detections by name, MITRE technique, or SIEM type..."
+                          className="pl-10 h-10 bg-[var(--surface-card)] border-[var(--stroke-soft)] text-sm text-[var(--foreground)] placeholder:text-[var(--surface-subtle-foreground)]"
+                            disabled={isRunning}
+                          />
+                        </div>
+                        {hasPermission(Permission.DETECTIONS_CREATE) && (
+                          <Button
+                            type="button"
+                            variant="outline"
+                            className="h-10 shrink-0"
+                            onClick={() => setNewDetectionOpen(true)}
+                            disabled={isRunning}
+                          >
+                            <Plus className="mr-1.5 h-4 w-4" />
+                            New detection
+                          </Button>
+                        )}
                       </div>
                     <div className="max-h-64 overflow-y-auto overflow-x-hidden hide-scrollbar space-y-2 border border-[var(--stroke-soft)] rounded-lg p-2 bg-[var(--surface-card)]">
                         {detectionsForUi
@@ -1388,37 +1452,43 @@ function RunTestPageContent() {
                                 title={tooltipParts.join(" • ")}
                                 disabled={isRunning}
                                 className={cn(
-                                  "w-full text-left px-4 py-3 rounded-lg border-2 transition-all bg-white",
+                                  "w-full text-left px-4 py-3 rounded-lg border-2 transition-all bg-[var(--surface-card)]",
                                   isRunning
-                                    ? "border-slate-200 text-slate-400 cursor-not-allowed"
+                                    ? "border-[var(--stroke-soft)] text-[var(--surface-subtle-foreground)] cursor-not-allowed"
                                     : isSelected
-                                    ? "border-indigo-400 bg-indigo-50 text-[var(--foreground)] shadow-sm"
-                                    : "border-slate-200 text-slate-700 hover:border-indigo-200 hover:bg-indigo-50 cursor-pointer"
+                                    ? "border-[var(--accent-strong)] bg-[var(--accent-soft)] text-[var(--foreground)] shadow-sm"
+                                    : "border-[var(--stroke-soft)] text-[var(--foreground)] hover:border-[var(--accent-line)] hover:bg-[var(--accent-soft)] cursor-pointer"
                                 )}
                               >
                                 <div className="flex items-center justify-between">
                                   <div className="flex-1 min-w-0">
                                     <div className="font-medium text-sm truncate text-[var(--foreground)]">{det.title}</div>
-                                    <div className="text-xs text-slate-600 mt-0.5">
+                                    <div className="text-xs text-[var(--surface-subtle-foreground)] mt-0.5">
                                     {det.technique_id} · {det.siem_type?.toUpperCase() || "SIEM"}
                                     </div>
                                   </div>
                                   {isSelected && (
-                                    <CheckCircle2 className="h-5 w-5 text-indigo-500 flex-shrink-0 ml-2" />
+                                    <CheckCircle2 className="h-5 w-5 text-[var(--accent-strong)] flex-shrink-0 ml-2" />
                                   )}
                                 </div>
                               </button>
                             );
                           })}
                         {detectionsForUi.length === 0 && (
-                          <div className="p-4 rounded-lg border border-[var(--stroke-soft)] bg-[var(--surface-elevated)] text-center">
-                            <p className="text-sm text-slate-600">
-                              No detections found. Add a detection on the{" "}
-                              <Link href="/detections" className="text-indigo-600 hover:text-indigo-700 underline">
-                                Detections page
-                              </Link>{" "}
-                              first.
-                          </p>
+                          <div className="p-4 rounded-lg border border-[var(--stroke-soft)] bg-[var(--surface-elevated)] text-center space-y-2">
+                            <p className="text-sm text-[var(--surface-subtle-foreground)]">
+                              No detections yet.
+                            </p>
+                            {hasPermission(Permission.DETECTIONS_CREATE) ? (
+                              <Button type="button" variant="outline" size="sm" onClick={() => setNewDetectionOpen(true)}>
+                                <Plus className="mr-1.5 h-3.5 w-3.5" />
+                                Add a detection
+                              </Button>
+                            ) : (
+                              <p className="text-xs text-[var(--surface-subtle-foreground)]">
+                                Ask an admin to add one, or sync detections from git in Settings.
+                              </p>
+                            )}
                           </div>
                         )}
                       </div>
@@ -1434,14 +1504,14 @@ function RunTestPageContent() {
                             );
                           }).length;
                         return (
-                          <p className="text-xs text-slate-600 mt-2">
+                          <p className="text-xs text-[var(--surface-subtle-foreground)] mt-2">
                             Showing <span className="font-semibold text-[var(--foreground)]">{visibleCount}</span> of{" "}
                             <span className="font-semibold text-[var(--foreground)]">{detections.length}</span> detections
                           </p>
                         );
                       })()}
                       {techniqueFromExplore && scenarioNameFromExplore && (
-                        <p className="mt-1 text-[11px] text-slate-600">
+                        <p className="mt-1 text-[11px] text-[var(--surface-subtle-foreground)]">
                           Scenario from Explore:{" "}
                           <span className="font-semibold text-[var(--foreground)]">
                             {scenarioNameFromExplore}
@@ -1478,7 +1548,7 @@ function RunTestPageContent() {
                               <p className="text-sm font-semibold text-[var(--foreground)]">
                                 Optional: Choose Subtechnique
                             </p>
-                              <p className="text-xs text-slate-600 mt-0.5">
+                              <p className="text-xs text-[var(--surface-subtle-foreground)] mt-0.5">
                                 Select a specific ATT&CK subtechnique, or skip to use the detection&apos;s primary technique
                             </p>
                             </div>
@@ -1495,10 +1565,10 @@ function RunTestPageContent() {
                                       )
                                     }
                                     className={cn(
-                                      "w-full text-left px-4 py-2 rounded-lg border-2 transition-all bg-white",
+                                      "w-full text-left px-4 py-2 rounded-lg border-2 transition-all bg-[var(--surface-card)]",
                                       isSelected
-                                        ? "border-indigo-400 bg-indigo-50 text-[var(--foreground)] shadow-sm"
-                                        : "border-slate-200 text-slate-700 hover:border-indigo-200 hover:bg-indigo-50 cursor-pointer"
+                                        ? "border-[var(--accent-strong)] bg-[var(--accent-soft)] text-[var(--foreground)] shadow-sm"
+                                        : "border-[var(--stroke-soft)] text-[var(--foreground)] hover:border-[var(--accent-line)] hover:bg-[var(--accent-soft)] cursor-pointer"
                                     )}
                                   >
                                     <div className="flex items-center justify-between">
@@ -1506,12 +1576,12 @@ function RunTestPageContent() {
                                         <div className="font-medium text-sm truncate text-[var(--foreground)]">
                                         {t.id} · {t.name}
                                         </div>
-                                        <div className="text-xs text-slate-600 mt-0.5">
+                                        <div className="text-xs text-[var(--surface-subtle-foreground)] mt-0.5">
                                         {t.tactics.join(", ")}
                                         </div>
                                       </div>
                                       {isSelected && (
-                                        <CheckCircle2 className="h-5 w-5 text-indigo-500 flex-shrink-0 ml-2" />
+                                        <CheckCircle2 className="h-5 w-5 text-[var(--accent-strong)] flex-shrink-0 ml-2" />
                                       )}
                                     </div>
                                   </button>
@@ -1539,7 +1609,7 @@ function RunTestPageContent() {
                           <SelectItem key={scenario.id} value={scenario.id}>
                             <div className="flex flex-col">
                               <span className="font-medium text-[var(--foreground)]">{scenario.label}</span>
-                              <span className="text-xs text-slate-600">{scenario.subtitle}</span>
+                              <span className="text-xs text-[var(--surface-subtle-foreground)]">{scenario.subtitle}</span>
                             </div>
                   </SelectItem>
                 ))}
@@ -1555,16 +1625,16 @@ function RunTestPageContent() {
                               <span>Scenario:</span>
                               <span>{selectedScenarioData.label}</span>
                               {selectedScenarioData.subtitle && (
-                                <span className="text-xs text-slate-600">{selectedScenarioData.subtitle}</span>
+                                <span className="text-xs text-[var(--surface-subtle-foreground)]">{selectedScenarioData.subtitle}</span>
                               )}
                             </div>
                             {selectedDetectionData?.technique_id && (
-                              <p className="text-xs text-slate-600 mt-0.5">
+                              <p className="text-xs text-[var(--surface-subtle-foreground)] mt-0.5">
                                 Technique: {selectedDetectionData.technique_id}
                               </p>
                             )}
                           </div>
-                            <p className="text-sm text-slate-700">
+                            <p className="text-sm text-[var(--foreground)]">
                               {selectedScenarioData.subtitle
                                 ? selectedScenarioData.subtitle
                                 : "PurveX will run this scenario and look for telemetry and evidence in your SIEM, even without an onboarded detection rule."}
@@ -1574,7 +1644,7 @@ function RunTestPageContent() {
                     })()}
                     {telemetryScenarios.length === 0 && (
                       <div className="p-4 rounded-lg border border-[var(--stroke-soft)] bg-[var(--surface-elevated)]">
-                        <p className="text-sm text-slate-600">
+                        <p className="text-sm text-[var(--surface-subtle-foreground)]">
                           No validation scenarios are available yet. Add at least one detection or scenario template first.
                       </p>
                       </div>
@@ -1590,23 +1660,24 @@ function RunTestPageContent() {
                             <p className="text-sm font-medium text-[var(--foreground)]">
                               Scenario: {scenarioCardTitle}
                           </p>
-                            <p className="text-xs text-slate-600 mt-0.5">
+                            <p className="text-xs text-[var(--surface-subtle-foreground)] mt-0.5">
                               Technique ID: {techniqueFromExplore}
                               {scenarioNameFromExplore && (
-                                <span className="ml-2 text-slate-700">
+                                <span className="ml-2 text-[var(--foreground)]">
                                   • {scenarioNameFromExplore}
                                 </span>
                               )}
                             </p>
                         </div>
-                        <p className="text-sm text-slate-700">
+                        <p className="text-sm text-[var(--foreground)]">
                           {scenarioDescriptionFromExplore ||
                             "PurveX will run this scenario and look for telemetry and evidence in your SIEM, even without an onboarded detection rule."}
                         </p>
                           <div className="flex items-center gap-3">
                             <Button
                               size="sm"
-                              className="h-9 px-3 bg-white hover:bg-slate-50 text-[var(--foreground)] border border-slate-200 shadow-sm"
+                              variant="outline"
+                              className="h-9 px-3"
                               onClick={() => setCoverageScenarioConfirmed(true)}
                               disabled={coverageScenarioConfirmed}
                             >
@@ -1617,8 +1688,8 @@ function RunTestPageContent() {
                             )}
                           </div>
                         {detections.filter((d) => d.technique_id === techniqueFromExplore).length === 0 && (
-                          <div className="p-3 rounded-lg border border-amber-200 bg-amber-50">
-                            <p className="text-sm text-amber-700">
+                          <div className={cn("p-3 rounded-lg border", toneClasses("warning").border, `${toneClasses("warning").bg}/10`)}>
+                            <p className={cn("text-sm", toneClasses("warning").text)}>
                               No detection rules match {techniqueFromExplore}. You can still run this test to verify telemetry and discover gaps.
                             </p>
                           </div>
@@ -1628,7 +1699,7 @@ function RunTestPageContent() {
                       <div className="rounded-2xl border border-[var(--stroke-soft)] bg-[var(--surface-card)]">
                         <div className="flex flex-wrap items-center gap-3 border-b border-[var(--stroke-soft)]/60 p-4">
                           <div className="relative min-w-[240px] flex-1">
-                            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--surface-subtle-foreground)]" />
                             <Input
                               value={techniquePickerSearch}
                               onChange={(e) => {
@@ -1662,7 +1733,7 @@ function RunTestPageContent() {
                             variant="outline"
                             size="sm"
                             asChild
-                            className="border-slate-200 text-[var(--foreground)] hover:border-indigo-200 hover:bg-indigo-50"
+                            className="border-[var(--stroke-soft)] text-[var(--foreground)] hover:border-[var(--accent-line)] hover:bg-[var(--accent-soft)]"
                           >
                             <Link href="/tests/explore">
                               Open full explore view
@@ -1671,14 +1742,14 @@ function RunTestPageContent() {
                         </div>
 
                         {mitreTechniques.length === 0 ? (
-                          <div className="flex items-center justify-center p-12 text-sm text-slate-500">
+                          <div className="flex items-center justify-center p-12 text-sm text-[var(--surface-subtle-foreground)]">
                             <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                             Loading techniques...
                           </div>
                         ) : techniquePickerPageSlice.length === 0 ? (
                           <div className="p-12 text-center">
                             <p className="text-sm font-semibold text-[var(--foreground)]">No techniques match your filters</p>
-                            <p className="mt-1 text-xs text-slate-500">Try broadening your search or clearing filters.</p>
+                            <p className="mt-1 text-xs text-[var(--surface-subtle-foreground)]">Try broadening your search or clearing filters.</p>
                           </div>
                         ) : (
                           <>
@@ -1694,43 +1765,37 @@ function RunTestPageContent() {
                                         `/run-test?technique_id=${encodeURIComponent(item.id)}&focus=validation&step=2`
                                       );
                                     }}
-                                    className="group flex flex-col rounded-xl border border-[var(--stroke-soft)] bg-[var(--surface-card)] p-4 text-left transition hover:border-indigo-300 hover:shadow-md"
+                                    className="group flex flex-col rounded-xl border border-[var(--stroke-soft)] bg-[var(--surface-card)] p-4 text-left transition hover:border-[var(--accent-line)]"
                                   >
                                     <div className="flex items-start justify-between gap-2">
-                                      <span className="font-mono text-xs font-bold text-indigo-700">{item.id}</span>
-                                      <span
-                                        className={cn(
-                                          "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-semibold",
-                                          meta.badge
-                                        )}
-                                      >
-                                        <span className={cn("h-1.5 w-1.5 rounded-full", meta.dot)} />
+                                      <span className="font-mono text-xs font-bold text-[var(--accent-strong)]">{item.id}</span>
+                                      <Chip tone={meta.tone} dot>
                                         {meta.label}
-                                      </span>
+                                      </Chip>
                                     </div>
                                     <p className="mt-2 line-clamp-2 min-h-[2.5rem] text-sm font-semibold text-[var(--foreground)]">
                                       {item.name}
                                     </p>
-                                    <p className="mt-1 truncate text-xs text-slate-500">
+                                    <p className="mt-1 truncate text-xs text-[var(--surface-subtle-foreground)]">
                                       {item.tactics[0] || "No tactic"}
                                     </p>
-                                    <div className="mt-3 flex items-center justify-between border-t border-[var(--stroke-soft)]/60 pt-3 text-xs text-slate-600">
+                                    <div className="mt-3 flex items-center justify-between border-t border-[var(--stroke-soft)]/60 pt-3 text-xs text-[var(--surface-subtle-foreground)]">
                                       <div>
-                                        <p className="text-[10px] uppercase tracking-wider text-slate-400">Mapped</p>
+                                        <p className="text-[10px] uppercase tracking-wider text-[var(--surface-subtle-foreground)]">Mapped</p>
                                         <p className="font-semibold text-[var(--foreground)]">{item.mappedCount}</p>
                                       </div>
                                       <div>
-                                        <p className="text-[10px] uppercase tracking-wider text-slate-400">Passing</p>
+                                        <p className="text-[10px] uppercase tracking-wider text-[var(--surface-subtle-foreground)]">Passing</p>
                                         <p className="font-semibold text-[var(--foreground)]">{item.validatedCount}</p>
                                       </div>
                                       <div>
-                                        <p className="text-[10px] uppercase tracking-wider text-slate-400">Best</p>
+                                        <p className="text-[10px] uppercase tracking-wider text-[var(--surface-subtle-foreground)]">Best</p>
                                         <p className="font-semibold text-[var(--foreground)]">
                                           {typeof item.highestScore === "number" ? item.highestScore : "—"}
                                         </p>
                                       </div>
                                     </div>
-                                    <div className="mt-3 inline-flex items-center justify-center gap-1.5 rounded-md border border-[var(--stroke-soft)] bg-[var(--surface-elevated)] py-1.5 text-xs font-semibold text-slate-700 transition group-hover:border-indigo-200 group-hover:bg-indigo-50 group-hover:text-indigo-700">
+                                    <div className="mt-3 inline-flex items-center justify-center gap-1.5 rounded-md border border-[var(--stroke-soft)] bg-[var(--surface-elevated)] py-1.5 text-xs font-semibold text-[var(--foreground)] transition group-hover:border-[var(--accent-line)] group-hover:bg-[var(--accent-soft)] group-hover:text-[var(--accent-strong)]">
                                       <Play className="h-3 w-3" />
                                       Select technique
                                     </div>
@@ -1741,7 +1806,7 @@ function RunTestPageContent() {
 
                             {techniquePickerTotalPages > 1 && (
                               <div className="flex items-center justify-between border-t border-[var(--stroke-soft)]/60 px-4 py-3">
-                                <p className="text-xs text-slate-500">
+                                <p className="text-xs text-[var(--surface-subtle-foreground)]">
                                   Showing {techniquePickerPage * TECHNIQUE_PICKER_PAGE_SIZE + 1}–
                                   {Math.min(
                                     (techniquePickerPage + 1) * TECHNIQUE_PICKER_PAGE_SIZE,
@@ -1759,7 +1824,7 @@ function RunTestPageContent() {
                                   >
                                     <ChevronLeft className="h-4 w-4" />
                                   </Button>
-                                  <span className="text-xs text-slate-600">
+                                  <span className="text-xs text-[var(--surface-subtle-foreground)]">
                                     {techniquePickerPage + 1} / {techniquePickerTotalPages}
                                   </span>
                                   <Button
@@ -1792,12 +1857,12 @@ function RunTestPageContent() {
             <div className="space-y-8 border-t border-[var(--stroke-soft)] pt-8">
                 <div className="space-y-2">
                   <h2 className="text-xl font-display font-semibold text-[var(--foreground)] flex items-center gap-3">
-                    <span className="flex h-11 w-11 items-center justify-center rounded-lg bg-indigo-100 text-indigo-700 border border-indigo-200 text-[18px] font-bold">
+                    <span className="flex h-11 w-11 items-center justify-center rounded-lg bg-[var(--accent-soft)] text-[var(--accent-strong)] border border-[var(--accent-line)] text-[18px] font-bold">
                       3
                     </span>
                     Environment & Target
                   </h2>
-                  <p className="text-sm text-slate-600 pl-11">
+                  <p className="text-sm text-[var(--surface-subtle-foreground)] pl-11">
                     Configure where and how to run this validation
                   </p>
                 </div>
@@ -1805,7 +1870,7 @@ function RunTestPageContent() {
                 {/* Configuration Summary */}
                 {step2Done && (
                   <div className="p-4 rounded-lg border border-[var(--stroke-soft)] bg-[var(--surface-elevated)] space-y-3">
-                    <p className="text-xs uppercase tracking-wider text-slate-600 font-medium">Configuration Summary</p>
+                    <p className="text-xs uppercase tracking-wider text-[var(--surface-subtle-foreground)] font-medium">Configuration Summary</p>
                     <div className="flex flex-wrap gap-2">
                       <Chip tone="accent">
                         Mode: {testType === "detection_validation"
@@ -1832,7 +1897,7 @@ function RunTestPageContent() {
                 <div className="grid gap-6 md:grid-cols-2">
                   <div className="space-y-3">
                     <Label htmlFor="environment-select" className="text-[var(--foreground)] text-sm font-medium flex items-center gap-2">
-                      <Server className="h-4 w-4 text-slate-500" />
+                      <Server className="h-4 w-4 text-[var(--surface-subtle-foreground)]" />
                       Environment
                     </Label>
                     <Select
@@ -1855,14 +1920,14 @@ function RunTestPageContent() {
                         )}
                       </SelectContent>
                     </Select>
-                    <p className="text-xs text-slate-600 leading-relaxed">
+                    <p className="text-xs text-[var(--surface-subtle-foreground)] leading-relaxed">
                       Choose the environment where this validation will run
                     </p>
                   </div>
 
                   <div className="space-y-3">
                     <Label htmlFor="target-host" className="text-[var(--foreground)] text-sm font-medium flex items-center gap-2">
-                      <Settings className="h-4 w-4 text-slate-500" />
+                      <Settings className="h-4 w-4 text-[var(--surface-subtle-foreground)]" />
                       Target Host
                     </Label>
                     {runnerTargets.length > 0 ? (
@@ -1903,13 +1968,15 @@ function RunTestPageContent() {
                         aria-invalid={!!fieldErrors.targetHost}
                         aria-describedby="target-host-error"
                         placeholder="e.g. win-lab-01 or 10.0.0.5"
-                        className="h-11 bg-[var(--surface-card)] border-[var(--stroke-soft)] text-[var(--foreground)] placeholder:text-slate-500"
+                        className="h-11 bg-[var(--surface-card)] border-[var(--stroke-soft)] text-[var(--foreground)] placeholder:text-[var(--surface-subtle-foreground)]"
                         disabled={isRunning || !canSelectTargetHost}
                       />
                     )}
                     <FieldError id="target-host-error" message={fieldErrors.targetHost} />
-                    <p className="text-xs text-slate-600 leading-relaxed">
-                      The specific host where the scenario will run. Telemetry and validation evidence will be tied to this host.
+                    <p className="text-xs text-[var(--surface-subtle-foreground)] leading-relaxed">
+                      {runnerTargets.length === 0 && environmentRunners.length > 0
+                        ? `No runners are registered for ${environment}. Double-check this hostname belongs to that environment before running.`
+                        : "The specific host where the scenario will run. Telemetry and validation evidence will be tied to this host."}
                     </p>
                   </div>
                 </div>
@@ -1920,7 +1987,7 @@ function RunTestPageContent() {
                       <Label className="text-[var(--foreground)] text-sm font-medium">
                         Lab Operating System
                       </Label>
-                      <p className="text-xs text-slate-600 leading-relaxed">
+                      <p className="text-xs text-[var(--surface-subtle-foreground)] leading-relaxed">
                         Choose which lab VMs this scenario should exercise
                       </p>
                       <div className="inline-flex rounded-lg border border-[var(--stroke-soft)] bg-[var(--surface-elevated)] p-1">
@@ -1930,7 +1997,7 @@ function RunTestPageContent() {
                             "px-4 py-2 rounded-md text-sm font-medium transition-all border",
                             labOs === "windows"
                               ? "bg-[var(--surface-card)] text-[var(--foreground)] border-[var(--stroke-soft)] shadow-sm"
-                              : "text-slate-600 dark:text-slate-300 border-transparent hover:text-[var(--foreground)] hover:bg-[var(--surface-card)]"
+                              : "text-[var(--surface-subtle-foreground)] border-transparent hover:text-[var(--foreground)] hover:bg-[var(--surface-card)]"
                           )}
                           onClick={() => setLabOs("windows")}
                           disabled={isRunning}
@@ -1943,7 +2010,7 @@ function RunTestPageContent() {
                             "px-4 py-2 rounded-md text-sm font-medium transition-all border",
                             labOs === "linux"
                               ? "bg-[var(--surface-card)] text-[var(--foreground)] border-[var(--stroke-soft)] shadow-sm"
-                              : "text-slate-600 dark:text-slate-300 border-transparent hover:text-[var(--foreground)] hover:bg-[var(--surface-card)]"
+                              : "text-[var(--surface-subtle-foreground)] border-transparent hover:text-[var(--foreground)] hover:bg-[var(--surface-card)]"
                           )}
                           onClick={() => setLabOs("linux")}
                           disabled={isRunning}
@@ -1956,7 +2023,7 @@ function RunTestPageContent() {
                             "px-4 py-2 rounded-md text-sm font-medium transition-all border",
                             labOs === "both"
                               ? "bg-[var(--surface-card)] text-[var(--foreground)] border-[var(--stroke-soft)] shadow-sm"
-                              : "text-slate-600 dark:text-slate-300 border-transparent hover:text-[var(--foreground)] hover:bg-[var(--surface-card)]"
+                              : "text-[var(--surface-subtle-foreground)] border-transparent hover:text-[var(--foreground)] hover:bg-[var(--surface-card)]"
                           )}
                           onClick={() => setLabOs("both")}
                           disabled={isRunning}
@@ -1976,6 +2043,14 @@ function RunTestPageContent() {
         </div>
       </div>
     )}
+        {!error && stillProcessing && (
+                  <div className={cn("p-4 rounded-lg border", toneClasses("info").border, `${toneClasses("info").bg}/10`)}>
+                    <div className="flex items-center gap-2">
+                      <Loader2 className={cn("h-5 w-5 animate-spin", toneClasses("info").icon)} />
+                      <p className={cn("text-sm", toneClasses("info").text)}>{stillProcessing}</p>
+                    </div>
+                  </div>
+                )}
         {(mitreLoadWarning || runnerLoadWarning) && (
                   <div className="p-4 rounded-lg border border-amber-300 bg-amber-50">
                     <div className="space-y-2 text-sm text-amber-900">
@@ -2007,7 +2082,7 @@ function RunTestPageContent() {
                 <div className="space-y-4 pt-6 border-t border-[var(--stroke-soft)]">
                   <div className="space-y-3">
                     <Label className="text-[var(--foreground)] text-sm font-medium">Run Mode</Label>
-                    <p className="text-xs text-slate-600 leading-relaxed">
+                    <p className="text-xs text-[var(--surface-subtle-foreground)] leading-relaxed">
                       Choose to run immediately or set a schedule.
                     </p>
                     <div className="inline-flex rounded-lg border border-[var(--stroke-soft)] bg-[var(--surface-elevated)] p-1">
@@ -2017,7 +2092,7 @@ function RunTestPageContent() {
                             "px-4 py-2 rounded-md text-sm font-medium transition-all border",
                             runMode === "now"
                               ? "bg-[var(--surface-card)] text-[var(--foreground)] border-[var(--stroke-soft)] shadow-sm"
-                              : "text-slate-600 dark:text-slate-300 border-transparent hover:text-[var(--foreground)] hover:bg-[var(--surface-card)]"
+                              : "text-[var(--surface-subtle-foreground)] border-transparent hover:text-[var(--foreground)] hover:bg-[var(--surface-card)]"
                           )}
                           onClick={() => setRunMode("now")}
                           disabled={isRunning || isScheduling}
@@ -2030,7 +2105,7 @@ function RunTestPageContent() {
                             "px-4 py-2 rounded-md text-sm font-medium transition-all border",
                             runMode === "schedule"
                               ? "bg-[var(--surface-card)] text-[var(--foreground)] border-[var(--stroke-soft)] shadow-sm"
-                              : "text-slate-600 dark:text-slate-300 border-transparent hover:text-[var(--foreground)] hover:bg-[var(--surface-card)]"
+                              : "text-[var(--surface-subtle-foreground)] border-transparent hover:text-[var(--foreground)] hover:bg-[var(--surface-card)]"
                           )}
                           onClick={() => setRunMode("schedule")}
                           disabled={isRunning || isScheduling || !canScheduleTest(environment)}
@@ -2046,7 +2121,7 @@ function RunTestPageContent() {
                       <p className="text-sm font-medium text-[var(--foreground)]">Schedule Configuration</p>
                           <div className="grid gap-4 md:grid-cols-2">
                             <div className="space-y-3">
-                          <Label htmlFor="schedule-type" className="text-sm text-slate-700 font-medium">
+                          <Label htmlFor="schedule-type" className="text-sm text-[var(--foreground)] font-medium">
                             Schedule Type
                               </Label>
                               <Select
@@ -2065,7 +2140,7 @@ function RunTestPageContent() {
                             <div className="space-y-3">
                               {scheduleType === "once" ? (
                                 <>
-                              <Label htmlFor="schedule-time" className="text-sm text-slate-700 font-medium">
+                              <Label htmlFor="schedule-time" className="text-sm text-[var(--foreground)] font-medium">
                                 Date & Time
                                   </Label>
                                   <Input
@@ -2087,7 +2162,7 @@ function RunTestPageContent() {
                                 </>
                               ) : (
                                 <>
-                              <Label htmlFor="schedule-interval" className="text-sm text-slate-700 font-medium">
+                              <Label htmlFor="schedule-interval" className="text-sm text-[var(--foreground)] font-medium">
                                 Interval (minutes)
                                   </Label>
                                     <Input
@@ -2111,8 +2186,8 @@ function RunTestPageContent() {
                               )}
                             </div>
                           </div>
-                      <div className="p-3 rounded-lg bg-slate-100 border border-slate-200">
-                        <p className="text-xs text-slate-700">
+                      <div className="p-3 rounded-lg bg-[var(--surface-subtle)] border border-[var(--stroke-soft)]">
+                        <p className="text-xs text-[var(--foreground)]">
                           Scheduling is permission-scoped by environment. Production scheduling requires explicit production scheduling permission.
                         </p>
                       </div>
@@ -2125,20 +2200,20 @@ function RunTestPageContent() {
                       <Button
                         onClick={handlePrevious}
                         variant="outline"
-                        className="border-slate-200 text-slate-700 hover:border-indigo-200 hover:bg-indigo-50 h-11 px-4"
+                        className="h-11 px-4"
                       >
                         <ChevronLeft className="h-4 w-4 mr-2" />
                         Previous
                       </Button>
                     )}
                   <Button
-                    onClick={handleRunTest}
+                    onClick={() => void handleRunTest()}
                     disabled={!canRun}
                     className={cn(
-                      "flex-1 h-12 text-base font-semibold border focus-visible:ring-2 focus-visible:ring-slate-200 transition-all",
+                      "flex-1 h-12 text-base font-semibold border transition-all",
                       canRun
-                        ? "border-slate-300 bg-white text-black hover:bg-slate-50 shadow-sm"
-                        : "border-slate-200 bg-slate-200 text-slate-500 cursor-not-allowed"
+                        ? "border-transparent bg-[var(--accent-strong)] text-white hover:opacity-90 shadow-sm focus-visible:ring-[var(--accent-line)]"
+                        : "border-[var(--stroke-soft)] bg-[var(--surface-subtle)] text-[var(--surface-subtle-foreground)] cursor-not-allowed"
                     )}
                     aria-label={isRunning ? "Validation is running" : canRun ? "Run the validation" : "Complete all steps to run validation"}
                   >
@@ -2182,48 +2257,48 @@ function RunTestPageContent() {
               </Chip>
             )}
           </CardHeader>
-          <CardContent className="space-y-4 text-sm text-slate-700 dark:text-slate-200">
+          <CardContent className="space-y-4 text-sm text-[var(--foreground)]">
             {(() => {
               const isTelemetryRun = lastRunType === "telemetry_check";
               const bannerByType: Record<
                 HighLevelResultType,
-                { color: string; icon: ReactNode; title: string; sub: string }
+                { tone: NonNullable<ChipProps["tone"]>; icon: ReactNode; title: string; sub: string }
               > = {
                 PASS: isTelemetryRun
                   ? {
-                      color: "bg-emerald-50 border-emerald-200 text-emerald-800",
-                      icon: <CheckCircle2 className="h-4 w-4 text-emerald-600" />,
+                      tone: "success" as const,
+                      icon: <CheckCircle2 className={cn("h-4 w-4", toneClasses("success").icon)} />,
                       title: "Telemetry confirmed",
                       sub: "Matching events arrived in the SIEM. Detection rule was not evaluated.",
                     }
                   : {
-                      color: "bg-emerald-50 border-emerald-200 text-emerald-800",
-                      icon: <CheckCircle2 className="h-4 w-4 text-emerald-600" />,
+                      tone: "success" as const,
+                      icon: <CheckCircle2 className={cn("h-4 w-4", toneClasses("success").icon)} />,
                       title: "Detection validated",
                       sub: "Evidence was ingested and the detection fired.",
                     },
                 FAIL_RULE_VISIBILITY: {
-                  color: "bg-amber-50 border-amber-200 text-amber-800",
-                  icon: <AlertTriangle className="h-4 w-4 text-amber-600" />,
+                  tone: "warning" as const,
+                  icon: <AlertTriangle className={cn("h-4 w-4", toneClasses("warning").icon)} />,
                   title: "Detection needs tuning",
                   sub: "Logs were ingested, but the detection rule did not fire.",
                 },
                 NO_LOGS: isTelemetryRun
                   ? {
-                      color: "bg-red-50 border-red-200 text-red-800",
-                      icon: <XCircle className="h-4 w-4 text-red-600" />,
+                      tone: "danger" as const,
+                      icon: <XCircle className={cn("h-4 w-4", toneClasses("danger").icon)} />,
                       title: "No logs",
                       sub: "No matching events arrived in the SIEM. Check log sources, agents, and ingestion pipelines.",
                     }
                   : {
-                      color: "bg-red-50 border-red-200 text-red-800",
-                      icon: <XCircle className="h-4 w-4 text-red-600" />,
+                      tone: "danger" as const,
+                      icon: <XCircle className={cn("h-4 w-4", toneClasses("danger").icon)} />,
                       title: "No evidence found",
                       sub: "No expected evidence was seen in your SIEM. This indicates a telemetry or ingestion issue.",
                     },
                 SYSTEM_ERROR: {
-                  color: "bg-slate-100 border-slate-200 text-slate-800",
-                  icon: <Slash className="h-4 w-4 text-slate-500" />,
+                  tone: "muted" as const,
+                  icon: <Slash className={cn("h-4 w-4", toneClasses("muted").icon)} />,
                   title: "System error",
                   sub: "PurveX could not evaluate this validation run due to a system or SIEM error.",
                 },
@@ -2234,30 +2309,35 @@ function RunTestPageContent() {
               return (
                 <>
                   <div
-                    className={`flex items-start gap-3 rounded-xl border px-3 py-3 text-xs ${meta.color}`}
+                    className={cn(
+                      "flex items-start gap-3 rounded-xl border px-3 py-3 text-xs",
+                      toneClasses(meta.tone).border,
+                      `${toneClasses(meta.tone).bg}/10`,
+                      toneClasses(meta.tone).text,
+                    )}
                   >
                     <div className="mt-0.5">{meta.icon}</div>
                     <div className="space-y-0.5">
-                      <div className="text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-500">
+                      <div className="text-[11px] font-semibold uppercase tracking-[0.2em] text-[var(--surface-subtle-foreground)]">
                         {result.result_type}
                       </div>
                       <p className="text-[var(--foreground)] text-sm">{meta.title}</p>
-                      <p className="text-[11px] text-slate-600">{meta.sub}</p>
+                      <p className="text-[11px] text-[var(--surface-subtle-foreground)]">{meta.sub}</p>
                     </div>
                   </div>
 
                   <div className="grid gap-4 md:grid-cols-2">
                     <div className="rounded-lg border border-[var(--stroke-soft)] bg-[var(--surface-card)] p-3 space-y-1.5">
-                      <div className="text-[11px] uppercase tracking-[0.2em] text-slate-500">
+                      <div className="text-[11px] uppercase tracking-[0.2em] text-[var(--surface-subtle-foreground)]">
                         Telemetry
                       </div>
-                      <p className="text-[11px] text-slate-700">
+                      <p className="text-[11px] text-[var(--foreground)]">
                         Evidence present:{" "}
                         <span className="font-semibold text-[var(--foreground)]">
                           {result.telemetry_summary.has_logs ? "Yes" : "No"}
                         </span>
                       </p>
-                      <p className="text-[11px] text-slate-700">
+                      <p className="text-[11px] text-[var(--foreground)]">
                         Records found:{" "}
                         <span className="font-semibold text-[var(--foreground)]">{result.telemetry_summary.events_found}</span>
                       </p>
@@ -2265,16 +2345,16 @@ function RunTestPageContent() {
 
                     {lastRunType !== "telemetry_check" && result.detection_summary && (
                       <div className="rounded-lg border border-[var(--stroke-soft)] bg-[var(--surface-card)] p-3 space-y-1.5">
-                        <div className="text-[11px] uppercase tracking-[0.2em] text-slate-500">
+                        <div className="text-[11px] uppercase tracking-[0.2em] text-[var(--surface-subtle-foreground)]">
                           Detection
                         </div>
-                        <p className="text-[11px] text-slate-700">
+                        <p className="text-[11px] text-[var(--foreground)]">
                           Detection fired:{" "}
                           <span className="font-semibold text-[var(--foreground)]">
                             {result.detection_summary.rule_fired ? "Yes" : "No"}
                           </span>
                         </p>
-                        <p className="text-[11px] text-slate-700">
+                        <p className="text-[11px] text-[var(--foreground)]">
                           Matches found:{" "}
                           <span className="font-semibold text-[var(--foreground)]">
                             {result.detection_summary.alerts_found}
@@ -2288,8 +2368,8 @@ function RunTestPageContent() {
                     <Button
                       size="sm"
                       variant="outline"
-                      className="border-slate-200 text-[11px] text-slate-700 hover:border-indigo-200 hover:bg-indigo-50"
-                      onClick={handleRunTest}
+                      className="border-[var(--stroke-soft)] text-[11px] text-[var(--foreground)] hover:border-[var(--accent-line)] hover:bg-[var(--accent-soft)]"
+                      onClick={() => void handleRunTest()}
                       disabled={!canRun}
                     >
                       Run validation again
@@ -2297,7 +2377,7 @@ function RunTestPageContent() {
                     <Button
                       size="sm"
                       variant="outline"
-                      className="border-slate-200 text-[11px] text-slate-700 hover:border-indigo-200 hover:bg-indigo-50"
+                      className="border-[var(--stroke-soft)] text-[11px] text-[var(--foreground)] hover:border-[var(--accent-line)] hover:bg-[var(--accent-soft)]"
                       onClick={() => router.push(`/tests/${result.run_id}`)}
                     >
                       View validation report
@@ -2318,13 +2398,161 @@ function RunTestPageContent() {
         - Designed to keep the UI deterministic and safe while remaining flexible enough to grow
           with future execution backends and richer SIEM integrations.
       */}
+
+      <Dialog
+        open={prodConfirmOpen}
+        onOpenChange={(open) => {
+          setProdConfirmOpen(open);
+          if (!open) setProdConfirmError(null);
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <AlertTriangle className={cn("h-5 w-5", toneClasses("danger").icon)} />
+              Confirm production run
+            </DialogTitle>
+            <DialogDescription>
+              This executes a real payload against a real production host. Name the reason so there's a record of who
+              approved this run and why.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="rounded-lg border border-[var(--stroke-soft)] bg-[var(--surface-elevated)] p-3 text-xs text-[var(--surface-subtle-foreground)] space-y-1">
+              <p>
+                <span className="font-medium text-[var(--foreground)]">Target host:</span> {targetHost || "—"}
+              </p>
+              <p>
+                <span className="font-medium text-[var(--foreground)]">Environment:</span> Production
+              </p>
+            </div>
+            <div>
+              <Label htmlFor="prod-confirm-reason">Reason for this run</Label>
+              <Textarea
+                id="prod-confirm-reason"
+                value={prodConfirmReason}
+                onChange={(e) => {
+                  setProdConfirmReason(e.target.value);
+                  if (prodConfirmError) setProdConfirmError(null);
+                }}
+                placeholder="e.g. Validating T1059.001 coverage ahead of the Q3 audit — ticket SEC-482"
+                rows={3}
+              />
+            </div>
+            <FormError message={prodConfirmError} />
+          </div>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setProdConfirmOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              onClick={() => {
+                const reason = prodConfirmReason.trim();
+                if (reason.length < 10) {
+                  setProdConfirmError("Give a specific reason (at least 10 characters) so this run is traceable.");
+                  return;
+                }
+                setProdConfirmOpen(false);
+                void handleRunTest({ prodOverride: true, prodReason: reason });
+              }}
+            >
+              Run in production
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={newDetectionOpen}
+        onOpenChange={(open) => {
+          setNewDetectionOpen(open);
+          if (!open) setNewDetectionError(null);
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>New detection</DialogTitle>
+            <DialogDescription>
+              Add a minimal detection record so you can validate it right away, without leaving this flow.
+            </DialogDescription>
+          </DialogHeader>
+          <form onSubmit={handleCreateDetection} className="space-y-4">
+            <div>
+              <Label htmlFor="new-detection-title">Title</Label>
+              <Input
+                id="new-detection-title"
+                value={newDetectionTitle}
+                onChange={(e) => setNewDetectionTitle(e.target.value)}
+                placeholder="e.g. Suspicious PowerShell Execution"
+                disabled={newDetectionSaving}
+                autoFocus
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <Label htmlFor="new-detection-technique">MITRE technique</Label>
+                <Input
+                  id="new-detection-technique"
+                  value={newDetectionTechnique}
+                  onChange={(e) => setNewDetectionTechnique(e.target.value)}
+                  placeholder="T1059.001"
+                  disabled={newDetectionSaving}
+                />
+              </div>
+              <div>
+                <Label htmlFor="new-detection-siem">SIEM type</Label>
+                <Input
+                  id="new-detection-siem"
+                  value={newDetectionSiemType}
+                  onChange={(e) => setNewDetectionSiemType(e.target.value)}
+                  placeholder="splunk"
+                  disabled={newDetectionSaving}
+                />
+              </div>
+            </div>
+            <div>
+              <Label htmlFor="new-detection-query">SIEM query</Label>
+              <Textarea
+                id="new-detection-query"
+                value={newDetectionQuery}
+                onChange={(e) => setNewDetectionQuery(e.target.value)}
+                placeholder="index=main sourcetype=powershell ..."
+                rows={4}
+                disabled={newDetectionSaving}
+              />
+            </div>
+            <FormError message={newDetectionError} />
+            <DialogFooter>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setNewDetectionOpen(false)}
+                disabled={newDetectionSaving}
+              >
+                Cancel
+              </Button>
+              <Button type="submit" disabled={newDetectionSaving}>
+                {newDetectionSaving ? (
+                  <>
+                    <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
+                    Creating
+                  </>
+                ) : (
+                  "Create detection"
+                )}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
       </PageContainer>
   );
 }
 
 export default function RunTestPage() {
   return (
-    <Suspense fallback={<div className="min-h-screen bg-slate-950" />}>
+    <Suspense fallback={<div className="min-h-screen bg-[var(--background)]" />}>
       <RunTestPageContent />
     </Suspense>
   );

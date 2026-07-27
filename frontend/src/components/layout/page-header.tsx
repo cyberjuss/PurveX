@@ -16,28 +16,26 @@ export function PageHeader({ title, subtitle, eyebrow, icon, actions, className 
   return (
     <div
       className={cn(
-        "rounded-[28px] border border-[var(--stroke-soft)] bg-[var(--surface-card)] px-6 py-6 shadow-[var(--shadow-soft)] flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between",
+        "flex flex-col gap-3 pb-1 sm:flex-row sm:items-end sm:justify-between",
         className
       )}
     >
-      <div className="flex items-start gap-4 max-w-4xl">
-        {icon ? (
-          <span className="inline-flex h-12 w-12 items-center justify-center rounded-2xl border border-[var(--accent-line)] bg-[var(--surface-elevated)] text-[var(--accent-strong)] shadow-sm">
-            {icon}
-          </span>
+      <div className="min-w-0 max-w-4xl">
+        {eyebrow ? (
+          <p className="text-xs font-medium uppercase tracking-wide text-[var(--surface-subtle-foreground)]">{eyebrow}</p>
         ) : null}
-        <div className="space-y-1.5">
-          {eyebrow ? (
-            <p className="text-xs uppercase tracking-[0.36em] text-[var(--surface-subtle-foreground)]">{eyebrow}</p>
+        <h1 className="mt-1 flex items-center gap-2 text-2xl font-semibold tracking-tight text-[var(--foreground)]">
+          {icon ? (
+            <span className="text-[var(--surface-subtle-foreground)] [&_svg]:h-5 [&_svg]:w-5">{icon}</span>
           ) : null}
-          <h1 className="text-[28px] font-display font-semibold tracking-tight text-[var(--surface-card-foreground)]">{title}</h1>
+          {title}
+        </h1>
         {subtitle ? (
-          <p className="text-sm leading-relaxed text-[var(--surface-subtle-foreground)]">{subtitle}</p>
+          <p className="mt-1 text-sm leading-relaxed text-[var(--surface-subtle-foreground)]">{subtitle}</p>
         ) : null}
-        </div>
       </div>
       {actions ? (
-        <div className="flex flex-wrap gap-2 lg:justify-end">{actions}</div>
+        <div className="flex flex-wrap gap-2 sm:justify-end">{actions}</div>
       ) : null}
     </div>
   );

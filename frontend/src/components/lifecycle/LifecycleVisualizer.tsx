@@ -109,7 +109,7 @@ export function LifecycleVisualizer({ status, detectionId, onAdvanceStage }: Lif
         </div>
         <div className="h-2 bg-[var(--surface-subtle)] rounded-full overflow-hidden">
           <div
-            className="h-full bg-gradient-to-r from-blue-500 via-purple-500 to-green-500 transition-all duration-500"
+            className="h-full bg-[var(--accent-strong)] transition-all duration-500"
             style={{ width: `${status.progress_percent}%` }}
           />
         </div>
@@ -348,7 +348,7 @@ export function LifecycleProgress({ progressPercent }: { progressPercent: number
       </div>
       <div className="h-1.5 bg-[var(--surface-subtle)] rounded-full overflow-hidden">
         <div
-          className="h-full bg-gradient-to-r from-sky-500 via-blue-500 to-emerald-400 transition-all duration-500"
+          className="h-full bg-[var(--accent-strong)] transition-all duration-500"
           style={{ width: `${progressPercent}%` }}
         />
       </div>

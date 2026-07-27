@@ -5,23 +5,23 @@ import { cva, type VariantProps } from "class-variance-authority"
 import { cn } from "@/lib/utils"
 
 const buttonVariants = cva(
-  "inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-full text-sm font-medium transition-all duration-200 disabled:pointer-events-none disabled:opacity-100 disabled:cursor-not-allowed disabled:text-slate-400 disabled:bg-[var(--interactive-surface)] disabled:border-[var(--interactive-border)] [&_svg]:pointer-events-none [&_svg:not([class*='size-'])]:size-4 shrink-0 [&_svg]:shrink-0 outline-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40 aria-invalid:border-destructive",
+  "inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg text-sm font-medium transition-all duration-200 disabled:pointer-events-none disabled:opacity-100 disabled:cursor-not-allowed disabled:text-slate-400 disabled:bg-[var(--interactive-surface)] disabled:border-[var(--interactive-border)] [&_svg]:pointer-events-none [&_svg:not([class*='size-'])]:size-4 shrink-0 [&_svg]:shrink-0 outline-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40 aria-invalid:border-destructive",
   {
     variants: {
       variant: {
         default:
-          "bg-[var(--interactive-surface)] text-[var(--interactive-foreground)] border border-[var(--interactive-border)] shadow-sm hover:bg-[var(--interactive-surface-hover)] hover:border-[var(--accent-line)] hover:shadow-md hover:-translate-y-0.5 active:translate-y-0 transition-all",
+          "bg-[var(--interactive-surface)] text-[var(--interactive-foreground)] border border-[var(--interactive-border)] shadow-sm hover:bg-[var(--interactive-surface-hover)] hover:border-[var(--accent-line)] hover:shadow-md transition-all",
         destructive:
-          "bg-[var(--interactive-surface)] text-[var(--interactive-foreground)] border border-[var(--interactive-border)] shadow-sm hover:bg-[var(--interactive-surface-hover)] hover:border-[var(--accent-line)] hover:shadow-md hover:-translate-y-0.5 active:translate-y-0 focus-visible:ring-destructive/20 dark:focus-visible:ring-destructive/40",
+          "bg-[var(--interactive-surface)] text-[var(--interactive-foreground)] border border-[var(--interactive-border)] shadow-sm hover:bg-[var(--interactive-surface-hover)] hover:border-[var(--accent-line)] hover:shadow-md focus-visible:ring-destructive/20 dark:focus-visible:ring-destructive/40",
         outline:
-          "bg-[var(--interactive-surface)] text-[var(--interactive-foreground)] border border-[var(--interactive-border)] shadow-sm hover:bg-[var(--interactive-surface-hover)] hover:border-[var(--accent-line)] hover:shadow-md hover:-translate-y-0.5 active:translate-y-0 transition-all",
+          "bg-[var(--interactive-surface)] text-[var(--interactive-foreground)] border border-[var(--interactive-border)] shadow-sm hover:bg-[var(--interactive-surface-hover)] hover:border-[var(--accent-line)] hover:shadow-md transition-all",
         secondary:
-          "bg-[var(--interactive-surface)] text-[var(--interactive-foreground)] border border-[var(--interactive-border)] shadow-sm hover:bg-[var(--interactive-surface-hover)] hover:border-[var(--accent-line)] hover:shadow-md hover:-translate-y-0.5 active:translate-y-0",
+          "bg-[var(--interactive-surface)] text-[var(--interactive-foreground)] border border-[var(--interactive-border)] shadow-sm hover:bg-[var(--interactive-surface-hover)] hover:border-[var(--accent-line)] hover:shadow-md",
         ghost:
           "hover:bg-[var(--surface-subtle)] hover:text-[var(--interactive-foreground)] active:bg-[var(--interactive-surface-hover)]",
         link: "text-[var(--interactive-foreground)] underline-offset-4 hover:underline hover:text-[var(--interactive-foreground)] hover:bg-[var(--surface-subtle)] px-3 py-1",
         elite:
-          "bg-[var(--interactive-surface)] text-[var(--interactive-foreground)] border border-[var(--interactive-border)] shadow-sm hover:bg-[var(--interactive-surface-hover)] hover:border-[var(--accent-line)] hover:shadow-md hover:-translate-y-0.5 active:translate-y-0 transition-all",
+          "bg-[var(--interactive-surface)] text-[var(--interactive-foreground)] border border-[var(--interactive-border)] shadow-sm hover:bg-[var(--interactive-surface-hover)] hover:border-[var(--accent-line)] hover:shadow-md transition-all",
       },
       size: {
         default: "h-10 px-5 py-2 has-[>svg]:px-4",
