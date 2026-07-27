@@ -170,6 +170,11 @@ async def list_detections(
                 select(models.Test).where(
                     models.Test.detection_id.in_(detection_ids),
                     models.Test.mode != "TELEMETRY_CHECK",
+                    # SECURITY: defense in depth — detection_id alone doesn't
+                    # imply this Test row belongs to the requesting org (see
+                    # create_test's own org check), so never trust it without
+                    # this filter too.
+                    models.Test.organization_id == org_id,
                 )
             )
             epoch = datetime(1970, 1, 1)

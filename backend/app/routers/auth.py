@@ -3,6 +3,7 @@ from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, status, Request, Response
 from fastapi.security import OAuth2PasswordRequestForm
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import or_, select
 
@@ -110,6 +111,20 @@ async def get_current_user(
             detail="Could not validate credentials",
         )
 
+    # SECURITY: single-purpose tokens (2FA-pending, password-reset, invite)
+    # are minted with the same signing key/algorithm as a real session so
+    # they must never be usable as a general Bearer credential. Each of
+    # those tokens is validated and consumed directly by its own endpoint
+    # (auth_2fa.verify_2fa_token, password_reset.confirm_password_reset,
+    # auth.accept_invite) via decode_access_token — none of them depend on
+    # get_current_user — so rejecting any such claim here is safe and closes
+    # the bypass without affecting those flows.
+    if payload.get("two_factor_pending") or payload.get("purpose"):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Could not validate credentials",
+        )
+
     # Check if token has been revoked (logout)
     from ..utils.token_blacklist import is_blacklisted
     jti = payload.get("jti")
@@ -131,6 +146,14 @@ async def get_current_user(
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="User not found",
+        )
+
+    # Re-checked on every request (not just at login) so a deactivation
+    # takes effect immediately instead of waiting for the session to expire.
+    if not getattr(user, "is_active", True):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="This account has been deactivated",
         )
 
     if user.organization_id is None:
@@ -320,10 +343,12 @@ async def login(
     
     user = await get_user_by_email(db, form_data.username)
     if not user:
-        # Use same error message to prevent user enumeration
+        # SECURITY: must match the wrong-password/locked-account message
+        # below verbatim — a nonexistent account is otherwise trivially
+        # distinguishable from a wrong password by text alone.
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Incorrect username or password",
+            detail="Incorrect email or password",
         )
 
     # SECURITY: Check if account is locked.
@@ -360,6 +385,12 @@ async def login(
     is_active = getattr(user, 'is_active', True)
     if not is_active:
         raise HTTPException(status_code=400, detail="Inactive user")
+
+    if getattr(user, "is_pending_activation", False):
+        raise HTTPException(
+            status_code=400,
+            detail="Account not yet activated. Use the invite link sent to your email to set a password.",
+        )
 
     if not verify_password(form_data.password, user.hashed_password):
         # SECURITY: Increment failed login attempts and lock account after
@@ -518,3 +549,80 @@ async def get_csrf_token(current_user: CurrentUser):
         "csrf_token": token,
         "header_name": "X-CSRF-Token"
     }
+
+
+class AcceptInviteRequest(BaseModel):
+    token: str
+    new_password: str
+
+
+@router.post("/invite/accept", response_model=dict)
+async def accept_invite(payload: AcceptInviteRequest, db: DBSession):
+    """Public endpoint: an invited user sets their password and activates
+    their account. Mirrors /auth/password-reset/confirm's validation shape,
+    but against UserInviteToken and clearing is_pending_activation."""
+    from ..utils.security import sanitize_string
+
+    token = sanitize_string(payload.token, max_length=4096)
+    new_password = sanitize_string(payload.new_password, max_length=128)
+    if not token or not new_password:
+        raise HTTPException(status_code=400, detail="Token and new password are required")
+
+    claims = decode_access_token(token)
+    if not claims or claims.get("purpose") != "user_invite":
+        raise HTTPException(status_code=400, detail="Invalid or expired invite link")
+
+    user_id = claims.get("uid")
+    email = claims.get("sub")
+    jti = claims.get("jti")
+    if not user_id or not email or not jti:
+        raise HTTPException(status_code=400, detail="Invalid invite token payload")
+
+    user = await db.get(models.User, user_id)
+    if not user or user.email != email:
+        raise HTTPException(status_code=400, detail="Invalid invite token payload")
+
+    token_result = await db.execute(
+        select(models.UserInviteToken).where(
+            models.UserInviteToken.user_id == user.id,
+            models.UserInviteToken.jti == str(jti),
+        )
+    )
+    invite_record = token_result.scalars().first()
+    now = datetime.now(timezone.utc)
+    if not invite_record or invite_record.used_at:
+        raise HTTPException(status_code=400, detail="Invalid or expired invite link")
+
+    expires_at = invite_record.expires_at
+    if expires_at and expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
+    if expires_at and expires_at < now:
+        raise HTTPException(status_code=400, detail="Invalid or expired invite link")
+
+    if not user.is_pending_activation:
+        raise HTTPException(status_code=400, detail="This account has already been activated")
+
+    is_valid, error_msg = validate_password_complexity(new_password)
+    if not is_valid:
+        raise HTTPException(status_code=400, detail=error_msg)
+
+    user.hashed_password = hash_password(new_password)
+    user.is_pending_activation = False
+    invite_record.used_at = now
+    db.add(models.PasswordHistory(user_id=user.id, hashed_password=user.hashed_password))
+    await db.commit()
+
+    async with async_sessionmaker() as session:
+        session.add(
+            models.AuditEvent(
+                user_id=user.id,
+                user_email=user.email,
+                action="USER_INVITE_ACCEPTED",
+                resource_type="user",
+                resource_id=str(user.id),
+                details="User activated account via invite",
+            )
+        )
+        await session.commit()
+
+    return {"message": "Account activated. You can now sign in."}

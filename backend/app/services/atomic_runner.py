@@ -22,6 +22,12 @@ from ..services.scoring import validate_detection_for_test, validate_telemetry_f
 logger = logging.getLogger(__name__)
 _TECHNIQUE_ID_RE = r"^T\d{4}(?:\.\d{3})?$"
 _SSH_SHA256_RE = re.compile(r"(?:SHA256:)?([A-Za-z0-9+/]{32,}=*)")
+# Atomic Red Team test names are short human-readable descriptions (e.g.
+# "PowerShell -Version 2 Downgrade Attack"). This allowlist covers legitimate
+# names while excluding every shell/PowerShell metacharacter ("`$&|;<>\)
+# that would let atomic_test_name break out of the quoted argument it's
+# embedded in when the command string is parsed by the remote runner's shell.
+_ATOMIC_TEST_NAME_RE = re.compile(r"^[A-Za-z0-9 ,.\-_()/:]+$")
 
 
 def generate_marker(environment: str, connection: Optional[models.SIEMConnection] = None) -> str:
@@ -111,6 +117,15 @@ def _atomic_selector(
         return f"-TestNumbers {atomic_test_number}"
 
     if atomic_test_name:
+        # SECURITY: this string is embedded directly into a remote shell
+        # command sent over SSH (see _build_atomic_command). Quote-escaping
+        # alone is not sufficient — a literal `"` breaks out of the outer
+        # quoted -Command argument on Win32-OpenSSH's default cmd.exe exec
+        # shell regardless of how the inner single quotes are escaped — so
+        # reject anything outside a strict allowlist instead of trying to
+        # escape it.
+        if not _ATOMIC_TEST_NAME_RE.fullmatch(atomic_test_name):
+            raise RuntimeError(f"Invalid atomic_test_name: {atomic_test_name!r}")
         safe_name = atomic_test_name.replace("'", "''" if powershell else "'\"'\"'")
         return f"-TestNames '{safe_name}'"
 

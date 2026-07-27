@@ -56,9 +56,26 @@ async def create_test(
     # SECURITY: Sanitize all input fields
     from ..utils.sanitize_inputs import sanitize_model_inputs
     sanitized_data = sanitize_model_inputs(test)
-    
+
+    org_id = require_org_id(current_user)
+
+    # SECURITY: detection_id is client-supplied. Without this check a caller
+    # could attach a fabricated Test row to another organization's Detection
+    # (the FK only requires the id to exist in *some* org), which then gets
+    # surfaced as that detection's "latest result" by list_detections's
+    # cross-org-unaware aggregation query.
+    detection_id = sanitized_data.get("detection_id")
+    if detection_id:
+        det_result = await db.execute(
+            select(models.Detection.id).where(
+                models.Detection.id == detection_id,
+                models.Detection.organization_id == org_id,
+            )
+        )
+        if det_result.scalar_one_or_none() is None:
+            raise HTTPException(status_code=404, detail="Detection not found")
+
     try:
-        org_id = require_org_id(current_user)
         db_test = models.Test(organization_id=org_id, **sanitized_data)
         db.add(db_test)
         await db.commit()

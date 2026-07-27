@@ -3,6 +3,7 @@ from datetime import date, datetime, timedelta, timezone
 from typing import Any, Optional, List, Dict
 from pydantic import Field # Added for explicit field definition if needed
 import ipaddress
+import re
 from urllib.parse import urlparse
 
 
@@ -242,6 +243,21 @@ class TestRunCreate(BaseModel):
                 f"mode must be one of {TEST_RUN_MODES}, got {value!r}"
             )
         return normalized
+
+    @field_validator("atomic_test_name")
+    @classmethod
+    def _validate_atomic_test_name(cls, value: Optional[str]) -> Optional[str]:
+        # SECURITY: this value is later embedded in a remote shell command
+        # sent over SSH to run the atomic test (services/atomic_runner.py).
+        # Reject anything outside a strict allowlist here too, so bad input
+        # 422s at the API boundary instead of failing deep in the execution
+        # pipeline. Keep this in sync with atomic_runner._ATOMIC_TEST_NAME_RE.
+        if value is not None and not re.fullmatch(r"[A-Za-z0-9 ,.\-_()/:]+", value):
+            raise ValueError(
+                "atomic_test_name may only contain letters, numbers, spaces, "
+                "and , . - _ ( ) / :"
+            )
+        return value
 
 # Removed TestRunRequest as it is replaced by TestRunCreate
 

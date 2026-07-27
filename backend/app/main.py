@@ -10,6 +10,7 @@ from pathlib import Path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from fastapi import FastAPI, HTTPException, Request, status
+from fastapi.encoders import jsonable_encoder
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
@@ -763,9 +764,16 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
     
     headers.update(security_headers)
     
+    # BUGFIX: exc.errors() can contain raw exception objects (e.g.
+    # ctx.error is the actual ValueError instance whenever a
+    # @field_validator raises ValueError(...) — a very common pattern
+    # throughout this codebase). Passing that straight to JSONResponse's
+    # plain json.dumps crashes with a 500 instead of returning the 422 this
+    # handler exists to produce. jsonable_encoder converts non-serializable
+    # values (like the exception object) to strings first.
     return JSONResponse(
         status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-        content={"detail": exc.errors()},
+        content={"detail": jsonable_encoder(exc.errors())},
         headers=headers,
     )
 
