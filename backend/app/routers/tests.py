@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, status, Query
 from typing import List
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing_extensions import Annotated
 import logging
 import json
@@ -21,6 +21,8 @@ from ..schemas import TestDetailResponse
 from ..routers.auth import get_current_user
 from ..utils.tenant import require_org_id
 from ..utils.authz import require_permission, require_test_run, Permission
+from ..utils.runner_health import is_runner_stale
+from ..services.notifications import notify
 
 router = APIRouter(
     prefix="/tests",
@@ -124,7 +126,30 @@ async def run_test(
                     status_code=status.HTTP_409_CONFLICT,
                     detail=f"Runner '{test_run.endpoint}' is {runner.status}. Resume it before running tests.",
                 )
-        
+            if runner and is_runner_stale(runner):
+                minutes = runner.alert_offline_minutes or 5
+                await notify(
+                    db,
+                    organization_id=org_id,
+                    title="Validation agent stopped checking in",
+                    description=(
+                        f"{runner.hostname or 'Runner'} hasn't sent a heartbeat in over "
+                        f"{minutes} minutes. Test runs against it are blocked."
+                    ),
+                    action_url="/lab",
+                    status="error",
+                    source_type="runner_stale",
+                    source_id=str(runner.id),
+                )
+                await db.commit()
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=(
+                        f"Runner '{test_run.endpoint}' hasn't checked in for over {minutes} "
+                        "minutes; results would be unreliable. Verify the agent is running."
+                    ),
+                )
+
         # RBAC: Check permission to run tests in this environment
         await require_test_run(current_user, db, test_run.environment)
 

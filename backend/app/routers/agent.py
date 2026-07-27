@@ -7,6 +7,7 @@ from sqlalchemy.future import select
 
 from ..db import get_db
 from .. import models, schemas
+from ..services.notifications import notify
 
 router = APIRouter(
     prefix="/agent",
@@ -47,12 +48,24 @@ async def agent_heartbeat(
     db: AsyncSession = Depends(get_db),
 ):
     runner = await get_current_runner(request, db)
+    is_first_check_in = runner.last_check_in is None
     update_data = heartbeat.model_dump(exclude_unset=True)
     if "status" not in update_data:
         update_data["status"] = "online"
     update_data["last_check_in"] = datetime.utcnow()
     for key, value in update_data.items():
         setattr(runner, key, value)
+    if is_first_check_in and runner.organization_id is not None:
+        await notify(
+            db,
+            organization_id=runner.organization_id,
+            title="New validation agent connected",
+            description=f"{runner.hostname or 'Runner'} ({runner.environment_name or 'unknown'})",
+            action_url="/lab",
+            status="success",
+            source_type="runner_new",
+            source_id=str(runner.id),
+        )
     await db.commit()
     await db.refresh(runner)
     return runner

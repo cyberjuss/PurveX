@@ -23,6 +23,7 @@ import {
 } from "lucide-react";
 
 import { PageContainer } from "@/components/layout/page-container";
+import { RegisterAgentDialog } from "@/components/lab/register-agent-dialog";
 import { Button } from "@/components/ui/button";
 import { Chip, type ChipProps } from "@/components/ui/chip";
 import {
@@ -49,6 +50,7 @@ type LabRunner = {
   runner_type?: string | null;
   port?: number | null;
   username?: string | null;
+  is_stale?: boolean;
 };
 
 type LabTestSummary = {
@@ -127,7 +129,7 @@ function mapOsFamily(os: string): OsFilter {
 function mapStatusBucket(status?: string | null): EndpointBucket {
   const value = (status || "").toLowerCase();
   if (value === "online" || value === "idle" || value === "resuming") return "online";
-  if (value === "degraded" || value === "stopping" || value === "pausing") {
+  if (value === "degraded" || value === "stale" || value === "stopping" || value === "pausing") {
     return "degraded";
   }
   if (value === "paused" || value === "stopped") return "paused";
@@ -172,6 +174,7 @@ function LabPageContent() {
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [expandedRows, setExpandedRows] = useState<Set<number>>(new Set());
 
+  const [registerOpen, setRegisterOpen] = useState(false);
   const [deleteEndpoint, setDeleteEndpoint] = useState<{ id: number; name: string } | null>(null);
   const [pauseEndpoint, setPauseEndpoint] = useState<{ id: number; name: string } | null>(null);
   const [resumeEndpoint, setResumeEndpoint] = useState<{ id: number; name: string } | null>(null);
@@ -265,7 +268,12 @@ function LabPageContent() {
             .slice(0, 4);
 
           const os = runner.os || "Unknown";
-          const status = runner.status || (runner.last_check_in ? "online" : "unknown");
+          const rawStatus = runner.status || (runner.last_check_in ? "online" : "unknown");
+          // is_stale is computed server-side from last_check_in vs.
+          // alert_offline_minutes — it can be true even while the stored
+          // status still says "online" if the runner stopped heartbeating
+          // without a clean pause/stop.
+          const status = runner.is_stale ? "stale" : rawStatus;
 
           return {
             id: runner.id,
@@ -274,7 +282,7 @@ function LabPageContent() {
             osFamily: mapOsFamily(os),
             ipAddress: runner.ip_address || "--",
             status,
-            statusBucket: mapStatusBucket(status),
+            statusBucket: runner.is_stale ? "degraded" : mapStatusBucket(rawStatus),
             lastCheckInAt: runner.last_check_in || null,
             recentTests,
             agentVersion: runner.agent_version || "--",
@@ -493,11 +501,9 @@ function LabPageContent() {
             <RefreshCw className={cn("h-3.5 w-3.5", refreshing && "animate-spin")} />
             Sync board
           </Button>
-          <Button asChild size="sm">
-            <Link href="/settings/test-runner">
-              <ServerCog className="h-3.5 w-3.5" />
-              Add runner
-            </Link>
+          <Button size="sm" onClick={() => setRegisterOpen(true)}>
+            <ServerCog className="h-3.5 w-3.5" />
+            Add runner
           </Button>
         </div>
       </header>
@@ -933,7 +939,7 @@ function LabPageContent() {
           <div className="space-y-5 px-5 py-5">
             <div className="rounded-full bg-[var(--surface-subtle)] p-1">
               <div
-                className="h-2 rounded-full bg-gradient-to-r from-sky-500 via-emerald-500 to-sky-500 transition-all duration-500"
+                className="h-2 rounded-full bg-[var(--accent-strong)] transition-all duration-500"
                 style={{ width: `${currentTestProgress}%` }}
               />
             </div>
@@ -1005,6 +1011,12 @@ function LabPageContent() {
           void handleResumeEndpoint(resumeEndpoint.id);
           setResumeEndpoint(null);
         }}
+      />
+
+      <RegisterAgentDialog
+        open={registerOpen}
+        onOpenChange={setRegisterOpen}
+        onRegistered={() => void fetchEndpoints()}
       />
     </PageContainer>
   );

@@ -34,13 +34,13 @@ from .routers import audit as audit_router
 from .routers import assistant as assistant_router
 from .routers import atomic as atomic_router
 from .routers import mitre as mitre_router
-from .routers import sandbox as sandbox_router
 from .routers import rbac as rbac_router
 from .routers import auth_2fa as auth_2fa_router
 from .routers import password_reset as password_reset_router
 from .routers import reports as reports_router
 from .routers import onboarding as onboarding_router
 from .routers import proposals as proposals_router
+from .routers import notifications as notifications_router
 from .routers import detection_sources as detection_sources_router
 from .routers import detection_mirrors as detection_mirrors_router
 from .security import hash_password, verify_password
@@ -834,13 +834,13 @@ app.include_router(audit_router.router)
 app.include_router(assistant_router.router)
 app.include_router(atomic_router.router)
 app.include_router(mitre_router.router)
-app.include_router(sandbox_router.router)
 app.include_router(rbac_router.router)  # /rbac/me/roles, /rbac/me/permissions, etc.
 app.include_router(auth_2fa_router.router)  # /auth/2fa/setup, /auth/2fa/verify, etc.
 app.include_router(password_reset_router.router)
 app.include_router(reports_router.router)  # /reports/generate, /reports/, /reports/{report_id}/download
 app.include_router(onboarding_router.router)  # /onboarding/status
 app.include_router(proposals_router.router)  # /proposals (AI remediation guardrails)
+app.include_router(notifications_router.router)  # /notifications (persisted platform inbox)
 app.include_router(detection_sources_router.router)  # /detection-sources (DaC sync)
 app.include_router(detection_mirrors_router.router)  # /detection-mirrors (SIEM-to-Git audit mirror)
 

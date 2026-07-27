@@ -44,7 +44,11 @@ class User(Base):
     two_factor_enabled = Column(Boolean, default=False, nullable=False)
     two_factor_secret = Column(String, nullable=True)  # TOTP secret key (encrypted in production)
     two_factor_backup_codes = Column(Text, nullable=True)  # JSON array of backup codes
-    
+
+    # Invite flow: True for accounts created via admin invite that haven't
+    # set a password yet. Login is blocked while pending — see auth.py login.
+    is_pending_activation = Column(Boolean, default=False, nullable=False)
+
     # RBAC: User roles relationship
     user_roles = relationship("UserRole", back_populates="user", foreign_keys="UserRole.user_id")
     password_history = relationship("PasswordHistory", back_populates="user", cascade="all, delete-orphan")
@@ -72,6 +76,27 @@ class PasswordResetToken(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    jti = Column(String, unique=True, index=True, nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    expires_at = Column(DateTime(timezone=True), nullable=False)
+    used_at = Column(DateTime(timezone=True), nullable=True)
+
+
+class UserInviteToken(Base):
+    """Track admin-issued invite tokens so each invite link is single-use.
+
+    Separate table from PasswordResetToken even though the shape is
+    identical — invites and resets have different lifecycles (7 days vs 30
+    minutes) and different semantics (activates a pending account vs.
+    changes an existing password), and keeping them apart avoids a token
+    minted for one purpose ever being replayable for the other.
+    """
+
+    __tablename__ = "user_invite_tokens"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    invited_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     jti = Column(String, unique=True, index=True, nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     expires_at = Column(DateTime(timezone=True), nullable=False)
@@ -355,6 +380,44 @@ class AuditEvent(Base):
     resource_id = Column(String, nullable=True)
     details = Column(Text, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class Notification(Base):
+    """A persisted, org-scoped inbox item surfaced on the /notifications page.
+
+    Only covers events with no other durable home — new-runner-connected,
+    runner-gone-stale, and proposal-outcome pings. Test/detection activity
+    is still derived live from their own tables at read time, so it isn't
+    duplicated here.
+
+    ``source_type`` + ``source_id`` let callers dedup: e.g. don't create a
+    second "runner went stale" notification for the same runner while an
+    earlier one is still unread/undismissed (see
+    ``services/notifications.py::notify``).
+    """
+
+    __tablename__ = "notifications"
+    __table_args__ = (
+        Index(
+            "ix_notifications_org_source",
+            "organization_id", "source_type", "source_id",
+        ),
+        Index("ix_notifications_org_created_at", "organization_id", "created_at"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    organization_id = Column(Integer, ForeignKey("organizations.id"), nullable=False, index=True)
+    type = Column(String, nullable=False, default="platform")
+    title = Column(String, nullable=False)
+    description = Column(Text, nullable=True)
+    action_url = Column(String, nullable=True)
+    status = Column(String, nullable=False, default="info")  # success | warning | error | info
+    source_type = Column(String, nullable=True)  # "runner_new" | "runner_stale" | "proposal_approved" | ...
+    source_id = Column(String, nullable=True)
+    extra_metadata = Column(Text, nullable=True)  # JSON string
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    read_at = Column(DateTime(timezone=True), nullable=True)
+    dismissed_at = Column(DateTime(timezone=True), nullable=True)
 
 
 class Report(Base):
@@ -690,21 +753,6 @@ class AIAssistantSettings(Base):
     max_tokens = Column(Integer, default=2000)
     temperature = Column(Integer, default=7)  # 0-10 scale
     analysis_mode = Column(String, default="fast")
-
-
-class SandboxEnvironment(Base):
-    __tablename__ = "sandbox_environments"
-
-    id = Column(Integer, primary_key=True, index=True)
-    organization_id = Column(Integer, ForeignKey("organizations.id"), nullable=False, index=True)
-    external_id = Column(String, unique=True, nullable=False)
-    display_name = Column(String, nullable=False)
-    status = Column(String, nullable=False)  # "provisioning", "ready", "error"
-    size = Column(String, nullable=True)  # "small", "medium", "large"
-    provider = Column(String, nullable=True)  # "purvex_stub", "aws", "azure", etc.
-    extra_metadata = Column(Text, nullable=True)  # JSON string
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
 
 class TestSchedule(Base):

@@ -259,8 +259,19 @@ function normalizeHeaders(input?: HeadersInit): Record<string, string> {
  * Clear local session state and optionally bounce the user back to /login.
  * This is used on hard auth failures (401/403) and when the session is stale.
  */
+// Set while an intentional logout is in flight. Logging out blacklists the
+// session token immediately, so any request racing against it (e.g. a
+// background poll) sees a 401 too. Without this flag, that race would fire
+// the "session expired" hard redirect and stomp on the clean post-logout
+// redirect to a plain /login.
+let _isLoggingOut = false;
+export function setLoggingOut(value: boolean) {
+  _isLoggingOut = value;
+}
+
 function clearSessionAndRedirect(reason: "expired" | "unauthorized") {
   if (typeof window === "undefined") return;
+  if (_isLoggingOut) return;
 
   try {
     localStorage.removeItem("purvex_username");
@@ -1079,6 +1090,43 @@ export async function approveProposal(
   });
 }
 
+export interface PlatformNotification {
+  id: number;
+  organization_id: number;
+  type: string;
+  title: string;
+  description: string | null;
+  action_url: string | null;
+  status: "success" | "warning" | "error" | "info";
+  source_type: string | null;
+  source_id: string | null;
+  created_at: string;
+  read_at: string | null;
+  dismissed_at: string | null;
+}
+
+export async function getNotifications(params: {
+  unreadOnly?: boolean;
+} = {}): Promise<PlatformNotification[]> {
+  const qs = new URLSearchParams();
+  if (params.unreadOnly) qs.set("status", "unread");
+  const query = qs.toString();
+  const path = query ? `/notifications?${query}` : "/notifications";
+  return apiFetch(path, { cache: "no-store" });
+}
+
+export async function markNotificationRead(id: number): Promise<PlatformNotification> {
+  return apiFetch(`/notifications/${id}/read`, { method: "POST" });
+}
+
+export async function dismissNotification(id: number): Promise<PlatformNotification> {
+  return apiFetch(`/notifications/${id}/dismiss`, { method: "POST" });
+}
+
+export async function dismissAllNotifications(): Promise<{ dismissed: number }> {
+  return apiFetch("/notifications/dismiss-all", { method: "POST" });
+}
+
 export async function rejectProposal(
   id: string,
   note?: string,
@@ -1411,6 +1459,13 @@ export async function setUserPassword(
   return apiFetch(`/rbac/users/${userId}/password`, {
     method: "POST",
     body: JSON.stringify({ current_password: currentPassword, password }),
+  });
+}
+
+export async function setUserActive(userId: number, isActive: boolean): Promise<{ message: string }> {
+  return apiFetch(`/rbac/users/${userId}/status`, {
+    method: "PATCH",
+    body: JSON.stringify({ is_active: isActive }),
   });
 }
 

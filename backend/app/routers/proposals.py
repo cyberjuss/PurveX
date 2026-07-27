@@ -29,6 +29,7 @@ from typing_extensions import Annotated
 from .. import models, schemas
 from ..db import get_db
 from ..routers.auth import get_current_user
+from ..services.notifications import notify
 from ..services.proposal_policy import (
     enforce_create_policy,
     enforce_review_policy,
@@ -255,13 +256,23 @@ async def create_proposal(
     )
 
     # update proposals need a non-empty patch; create proposals need at
-    # least the non-nullable Detection columns. We only enforce the former
-    # here — create is behind a flag and routed through the DaC path later.
+    # least the non-nullable Detection columns, since approval now builds
+    # the Detection row directly from target_fields (see approve_proposal).
     if body.action == "update" and not body.target_fields:
         raise HTTPException(
             status_code=400,
             detail="target_fields cannot be empty for update proposals",
         )
+    if body.action == "create":
+        missing = [
+            f for f in ("siem_type", "siem_query")
+            if not (body.target_fields or {}).get(f)
+        ]
+        if missing:
+            raise HTTPException(
+                status_code=400,
+                detail=f"target_fields missing required field(s) for create: {', '.join(missing)}",
+            )
 
     # Human proposers have a user_id; AI proposers don't.
     proposed_by_user_id: Optional[int] = None
@@ -534,16 +545,36 @@ async def approve_proposal(
         )
         await db.delete(live)
     elif proposal.action == "create":
-        # Create proposals go through a separate codepath (DaC) so we
-        # intentionally don't apply them here in V1. Mark approved but
-        # not applied so an operator can pick it up manually.
-        proposal.status = "approved"
-        proposal.reviewed_at = datetime.now(timezone.utc)
-        proposal.reviewed_by_user_id = reviewer_user_id
-        proposal.review_note = body.note
-        await db.commit()
-        await db.refresh(proposal)
-        return await _to_out(db, proposal)
+        # Materialize the Detection now — "approved" is documented as
+        # transitional (models.py: DetectionProposal.status) precisely
+        # because we're supposed to eagerly apply on approval. Leaving a
+        # create proposal at "approved" without a live Detection violated
+        # that invariant and silently required a human to finish the job.
+        missing = [f for f in ("siem_type", "siem_query") if not target_fields.get(f)]
+        if missing:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Cannot approve: proposal is missing required field(s) {', '.join(missing)}.",
+            )
+        new_detection = models.Detection(
+            id=str(uuid.uuid4()),
+            organization_id=org_id,
+            technique_id=target_fields.get("technique_id"),
+            title=target_fields.get("title") or "Untitled detection",
+            description=target_fields.get("description"),
+            sigma_rule=target_fields.get("sigma_rule"),
+            siem_type=target_fields["siem_type"],
+            siem_query=target_fields["siem_query"],
+            status=target_fields.get("status"),
+            criticality=target_fields.get("criticality") or "MEDIUM",
+            owner=target_fields.get("owner"),
+            notes=target_fields.get("notes"),
+            lifecycle_stage=target_fields.get("lifecycle_stage") or "identify",
+            source="manual",
+        )
+        db.add(new_detection)
+        await db.flush()
+        proposal.detection_id = new_detection.id
 
     proposal.status = "applied"
     proposal.reviewed_at = datetime.now(timezone.utc)
@@ -573,6 +604,19 @@ async def approve_proposal(
             ),
         )
     )
+
+    if proposal.action == "create" and proposal.detection_id:
+        await notify(
+            db,
+            organization_id=org_id,
+            title="Detection proposal approved and deployed",
+            description=f"\"{target_fields.get('title', 'New detection')}\" is now live.",
+            action_url=f"/detections/{proposal.detection_id}",
+            status="success",
+            source_type="proposal_approved",
+            source_id=proposal.id,
+        )
+
     await db.commit()
     await db.refresh(proposal)
     return await _to_out(db, proposal)

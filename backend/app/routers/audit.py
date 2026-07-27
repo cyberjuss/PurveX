@@ -46,7 +46,6 @@ async def list_audit_events(
     - Tests: RUN_TEST, SCHEDULE_TEST
     - Settings: UPDATE_SETTINGS_ORGANIZATION, CREATE_SIEM_CONNECTION, etc.
     - RBAC: SET_USER_PASSWORD, ASSIGN_ROLE, REMOVE_ROLE
-    - Sandbox: PROVISION_SANDBOX, RESET_SANDBOX
     """
     await require_permission(current_user, Permission.SETTINGS_USERS_MANAGE, db)
     

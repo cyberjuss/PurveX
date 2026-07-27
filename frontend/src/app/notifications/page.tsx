@@ -3,13 +3,16 @@
 import { useEffect, useState, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
+import { Chip, type ChipProps } from "@/components/ui/chip";
+import { toneClasses } from "@/lib/status-tone";
 import {
   getTests,
   getDetections,
-  getEnvironmentRunners,
+  getNotifications,
+  dismissNotification as apiDismissNotification,
   type TestWithDetectionTitle,
   type Detection,
-  type EnvironmentRunnerConfig,
+  type PlatformNotification,
 } from "@/lib/api";
 import {
   Activity,
@@ -47,6 +50,7 @@ interface UnifiedNotification {
     environment?: string | null;
     score?: number | null;
     testId?: number;
+    notificationId?: number;
   };
 }
 
@@ -57,20 +61,16 @@ const CATEGORY_LABELS: Record<NotificationCategory, string> = {
   platform: "Setup",
 };
 
-const PLATFORM_NOTIFICATIONS_KEY = "purvex_platform_notifications";
-const PLATFORM_RUNNER_SEEN_KEY = "purvex_platform_runner_ids";
+// Test/detection categories are still derived client-side from their own
+// tables, so "dismiss" for those two is local-only. The "platform" category
+// (runner/proposal events) is a real persisted Notification row — dismissing
+// it goes through the API instead (see dismissNotification below).
 const DISMISSED_NOTIFICATIONS_KEY = "purvex_dismissed_notifications";
 const NOTIFICATION_RETENTION_DAYS = 14;
 const DISMISSED_RETENTION_DAYS = 30;
 const MAX_NOTIFICATIONS = 80;
 
-type StoredNotification = Omit<UnifiedNotification, "timestamp"> & { timestamp: string };
 type StoredDismissal = { id: string; dismissedAt: string };
-type RunnerSummary = EnvironmentRunnerConfig & {
-  id?: number;
-  hostname?: string;
-  environment_name?: string;
-};
 
 function safeReadArray<T>(key: string): T[] {
   if (typeof window === "undefined") return [];
@@ -134,46 +134,25 @@ export default function NotificationsPage() {
       try {
       setRefreshing(true);
         setError(null);
-        const [recentTests, recentDetections, runners] = await Promise.all([
+        const [recentTests, recentDetections, platformItems] = await Promise.all([
           getTests().catch(() => []),
           getDetections().catch(() => []),
-          getEnvironmentRunners().catch(() => []),
+          getNotifications().catch(() => []),
         ]);
       setTests(recentTests.slice(0, 20));
       setDetections(recentDetections.slice(0, 10));
-      if (typeof window !== "undefined") {
-        const storedIds = safeReadArray<number>(PLATFORM_RUNNER_SEEN_KEY);
-        const newRunners = (runners || []).filter(
-          (runner: RunnerSummary) => typeof runner.id === "number" && !storedIds.includes(runner.id)
-        );
-        const storedNotifications = safeReadArray<StoredNotification>(PLATFORM_NOTIFICATIONS_KEY)
-          .filter((item) => isFreshTimestamp(item.timestamp));
-        const newNotifications: StoredNotification[] = newRunners.map((runner: RunnerSummary) => ({
-          id: `platform-runner-${runner.id}-${Date.now()}`,
-          type: "platform",
-          title: "New validation agent connected",
-          description: `${runner.hostname || "Runner"} - ${(runner.environment_name || "unknown").toUpperCase()}`,
-          timestamp: new Date().toISOString(),
-          status: "success",
-          actionUrl: "/settings/test-runner",
-          metadata: {
-            environment: runner.environment_name,
-          },
-        }));
-
-        const mergedNotifications = [...newNotifications, ...storedNotifications].slice(0, MAX_NOTIFICATIONS);
-        const mergedIds = Array.from(new Set([...storedIds, ...newRunners.map((runner: RunnerSummary) => runner.id)]));
-
-        window.localStorage.setItem(PLATFORM_NOTIFICATIONS_KEY, JSON.stringify(mergedNotifications));
-        window.localStorage.setItem(PLATFORM_RUNNER_SEEN_KEY, JSON.stringify(mergedIds));
-
-        setPlatformNotifications(
-          mergedNotifications.map((item) => ({
-            ...item,
-            timestamp: new Date(item.timestamp),
-          }))
-        );
-      }
+      setPlatformNotifications(
+        (platformItems as PlatformNotification[]).map((item) => ({
+          id: `platform-${item.id}`,
+          type: "platform" as const,
+          title: item.title,
+          description: item.description || "",
+          timestamp: new Date(item.created_at),
+          status: item.status,
+          actionUrl: item.action_url || "/lab",
+          metadata: { notificationId: item.id },
+        }))
+      );
       } catch (err: unknown) {
         setError(err instanceof Error ? err.message : "Unable to load notifications.");
       } finally {
@@ -183,22 +162,12 @@ export default function NotificationsPage() {
   };
 
   useEffect(() => {
-    let handler: (() => void) | null = null;
     // Visiting the notifications page marks test notifications as read.
     if (typeof window !== "undefined") {
       window.localStorage.removeItem("purvex_unread_test_notification");
       setDismissedIds(readDismissedIds());
-      handler = () => {
-        loadData();
-      };
-      window.addEventListener("purvex:platform-notification", handler);
     }
     loadData();
-    return () => {
-      if (handler && typeof window !== "undefined") {
-        window.removeEventListener("purvex:platform-notification", handler);
-      }
-    };
   }, []);
 
   // Transform data into unified notifications
@@ -289,16 +258,23 @@ export default function NotificationsPage() {
     return groups.filter((group) => group.items.length > 0);
   }, [filteredNotifications]);
 
+  const statusTone = (status?: string): NonNullable<ChipProps["tone"]> => {
+    if (status === "success") return "success";
+    if (status === "error") return "danger";
+    if (status === "warning") return "warning";
+    return "muted";
+  };
+
   const getStatusIcon = (status?: string) => {
     switch (status) {
       case "success":
-        return <CheckCircle2 className="h-4 w-4 text-emerald-500" />;
+        return <CheckCircle2 className={cn("h-4 w-4", toneClasses("success").icon)} />;
       case "error":
-        return <XCircle className="h-4 w-4 text-rose-500" />;
+        return <XCircle className={cn("h-4 w-4", toneClasses("danger").icon)} />;
       case "warning":
-        return <AlertTriangle className="h-4 w-4 text-amber-500" />;
+        return <AlertTriangle className={cn("h-4 w-4", toneClasses("warning").icon)} />;
       default:
-        return <Activity className="h-4 w-4 text-slate-400" />;
+        return <Activity className={cn("h-4 w-4", toneClasses("muted").icon)} />;
     }
   };
 
@@ -330,41 +306,50 @@ export default function NotificationsPage() {
       success: notifications.filter((n) => n.status === "success").length,
     };
   }, [notifications]);
-  const dismissNotification = (id: string) => {
+  const dismissNotification = (notification: UnifiedNotification) => {
+    if (notification.type === "platform" && notification.metadata?.notificationId != null) {
+      const backendId = notification.metadata.notificationId;
+      setPlatformNotifications((prev) => prev.filter((n) => n.id !== notification.id));
+      void apiDismissNotification(backendId).catch(() => void loadData());
+      return;
+    }
     setDismissedIds((prev) => {
       const next = new Set(prev);
-      next.add(id);
+      next.add(notification.id);
       writeDismissedIds(next);
       return next;
     });
   };
 
-  const dismissMany = (ids: string[]) => {
-    setDismissedIds((prev) => {
-      const next = new Set(prev);
-      ids.forEach((id) => next.add(id));
-      writeDismissedIds(next);
-      return next;
-    });
+  const dismissMany = (items: UnifiedNotification[]) => {
+    const platformBackendIds = items
+      .filter((n) => n.type === "platform" && n.metadata?.notificationId != null)
+      .map((n) => n.metadata!.notificationId as number);
+    const otherIds = items.filter((n) => n.type !== "platform").map((n) => n.id);
+
+    if (platformBackendIds.length > 0) {
+      setPlatformNotifications((prev) =>
+        prev.filter((n) => !platformBackendIds.includes(n.metadata?.notificationId as number))
+      );
+      void Promise.all(platformBackendIds.map((id) => apiDismissNotification(id).catch(() => {})));
+    }
+    if (otherIds.length > 0) {
+      setDismissedIds((prev) => {
+        const next = new Set(prev);
+        otherIds.forEach((id) => next.add(id));
+        writeDismissedIds(next);
+        return next;
+      });
+    }
   };
 
   const clearVisibleNotifications = () => {
-    dismissMany(filteredNotifications.map((notification) => notification.id));
+    dismissMany(filteredNotifications);
   };
 
   const cleanOldNotifications = () => {
     const cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000;
-    dismissMany(
-      notifications
-        .filter((notification) => notification.timestamp.getTime() < cutoff)
-        .map((notification) => notification.id)
-    );
-    if (typeof window !== "undefined") {
-      const freshPlatform = safeReadArray<StoredNotification>(PLATFORM_NOTIFICATIONS_KEY)
-        .filter((notification) => new Date(notification.timestamp).getTime() >= cutoff);
-      window.localStorage.setItem(PLATFORM_NOTIFICATIONS_KEY, JSON.stringify(freshPlatform));
-    }
-    setPlatformNotifications((prev) => prev.filter((notification) => notification.timestamp.getTime() >= cutoff));
+    dismissMany(notifications.filter((notification) => notification.timestamp.getTime() < cutoff));
   };
 
   if (loading) {
@@ -389,31 +374,31 @@ export default function NotificationsPage() {
 
   const categoryOrder: NotificationCategory[] = ["all", "tests", "detections", "platform"];
   const categoryIcons: Record<NotificationCategory, React.ReactNode> = {
-    all: <Inbox className="h-3.5 w-3.5" />,
-    tests: <Activity className="h-3.5 w-3.5" />,
-    detections: <ShieldCheck className="h-3.5 w-3.5" />,
-    platform: <Sparkles className="h-3.5 w-3.5" />,
+    all: <Inbox className="h-4 w-4" />,
+    tests: <Activity className="h-4 w-4" />,
+    detections: <ShieldCheck className="h-4 w-4" />,
+    platform: <Sparkles className="h-4 w-4" />,
   };
 
   return (
     <PageContainer maxWidth="full" className={cn("pt-4", refreshing && "page-refreshing")}>
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-2 pb-10">
         {/* Inline header — no boxed card */}
-        <header className="flex flex-wrap items-end justify-between gap-4 border-b border-slate-200 pb-5">
+        <header className="flex flex-wrap items-end justify-between gap-4 border-b border-[var(--stroke-soft)] pb-5">
           <div className="min-w-0">
-            <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">
+            <p className="text-xs font-medium uppercase tracking-wide text-[var(--surface-subtle-foreground)]">
               Validation updates
             </p>
-            <h1 className="mt-1 flex items-center gap-2.5 text-[26px] font-display font-semibold tracking-tight text-slate-900">
-              <Bell className="h-5 w-5 text-slate-500" />
+            <h1 className="mt-1 flex items-center gap-2 text-2xl font-semibold tracking-tight text-[var(--foreground)]">
+              <Bell className="h-5 w-5 text-[var(--surface-subtle-foreground)]" />
               Notifications
               {notifications.length > 0 && (
-                <span className="inline-flex h-6 min-w-[1.5rem] items-center justify-center rounded-full bg-slate-900 px-2 text-xs font-semibold text-white tabular-nums">
+                <span className="inline-flex h-6 min-w-[1.5rem] items-center justify-center rounded-full bg-[var(--foreground)] px-2 text-xs font-semibold text-[var(--background)] tabular-nums">
                   {notifications.length}
                 </span>
               )}
             </h1>
-            <p className="mt-1 text-sm text-slate-500">
+            <p className="mt-1 text-sm text-[var(--surface-subtle-foreground)]">
               Validation runs, trust changes, and setup issues that need attention.
             </p>
           </div>
@@ -423,20 +408,20 @@ export default function NotificationsPage() {
               size="sm"
               onClick={cleanOldNotifications}
               disabled={notifications.length === 0}
-              className="h-8 whitespace-nowrap text-xs text-slate-600"
+              className="h-8 whitespace-nowrap text-xs"
             >
               <Trash2 className="mr-1.5 h-3.5 w-3.5" />
-              Clean old
+              Dismiss old
             </Button>
             <Button
               variant="ghost"
               size="sm"
               onClick={clearVisibleNotifications}
               disabled={filteredNotifications.length === 0}
-              className="h-8 whitespace-nowrap text-xs text-slate-600"
+              className="h-8 whitespace-nowrap text-xs"
             >
               <X className="mr-1.5 h-3.5 w-3.5" />
-              Clear view
+              Dismiss all
             </Button>
             <Button
               variant="outline"
@@ -453,35 +438,26 @@ export default function NotificationsPage() {
 
         {/* Status breakdown strip */}
         <div className="mt-4 flex flex-wrap items-center gap-2 text-xs">
-          <StatusChip
-            tone="rose"
-            label="Errors"
-            count={statusBreakdown.error}
-            icon={<XCircle className="h-3 w-3" />}
-          />
-          <StatusChip
-            tone="amber"
-            label="Warnings"
-            count={statusBreakdown.warning}
-            icon={<AlertTriangle className="h-3 w-3" />}
-          />
-          <StatusChip
-            tone="emerald"
-            label="Successful"
-            count={statusBreakdown.success}
-            icon={<CheckCircle2 className="h-3 w-3" />}
-          />
-          <span className="ml-auto text-[11px] text-slate-400">
-            Auto-expire after {NOTIFICATION_RETENTION_DAYS} days · dismissed pruned after {DISMISSED_RETENTION_DAYS}
-          </span>
+          <Chip tone={statusBreakdown.error > 0 ? "danger" : "muted"}>
+            <XCircle className="h-3 w-3" />
+            Failed {statusBreakdown.error}
+          </Chip>
+          <Chip tone={statusBreakdown.warning > 0 ? "warning" : "muted"}>
+            <AlertTriangle className="h-3 w-3" />
+            Warnings {statusBreakdown.warning}
+          </Chip>
+          <Chip tone={statusBreakdown.success > 0 ? "success" : "muted"}>
+            <CheckCircle2 className="h-3 w-3" />
+            Passed {statusBreakdown.success}
+          </Chip>
         </div>
 
         {/* Two-column inbox */}
         <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-[220px_minmax(0,1fr)]">
-          {/* Left rail — categories with live counts */}
+          {/* Left rail — categories with live counts, styled like the app sidebar's active state */}
           <aside className="space-y-1">
-            <p className="px-2 pb-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400">
-              Filter
+            <p className="px-3 pb-2 text-[11px] uppercase tracking-[0.22em] text-[var(--surface-subtle-foreground)]">
+              Categories
             </p>
             {categoryOrder.map((cat) => {
               const active = category === cat;
@@ -492,27 +468,26 @@ export default function NotificationsPage() {
                   onClick={() => setCategory(cat)}
                   aria-pressed={active}
                   className={cn(
-                    "group flex w-full items-center justify-between gap-2 rounded-lg border px-2.5 py-1.5 text-left text-[13px] transition",
+                    "group relative flex w-full items-center gap-3 rounded-lg border px-3 py-2 text-left text-sm font-medium transition-all",
                     active
-                      ? "border-slate-900 bg-slate-900 text-white"
-                      : "border-transparent text-slate-700 hover:border-slate-200 hover:bg-slate-50"
+                      ? "border-[var(--accent-line)] bg-[var(--accent-soft)] text-[var(--foreground)]"
+                      : "border-transparent text-[var(--surface-subtle-foreground)] hover:border-[var(--stroke-soft)] hover:bg-[var(--surface-elevated)] hover:text-[var(--foreground)]"
                   )}
                 >
-                  <span className="flex items-center gap-2 truncate">
-                    <span
-                      className={cn(
-                        "flex h-5 w-5 shrink-0 items-center justify-center rounded-md",
-                        active ? "bg-white/10 text-white" : "bg-slate-100 text-slate-500"
-                      )}
-                    >
-                      {categoryIcons[cat]}
-                    </span>
-                    <span className="truncate">{CATEGORY_LABELS[cat]}</span>
-                  </span>
                   <span
                     className={cn(
-                      "shrink-0 rounded px-1.5 text-[11px] tabular-nums",
-                      active ? "bg-white/15 text-white" : "text-slate-500"
+                      "absolute inset-y-1.5 left-0 w-[3px] rounded-full transition-all",
+                      active ? "bg-[var(--accent-strong)]" : "bg-transparent"
+                    )}
+                  />
+                  <span className={cn(active ? "text-[var(--accent-strong)]" : "text-slate-400")}>
+                    {categoryIcons[cat]}
+                  </span>
+                  <span className="min-w-0 flex-1 truncate">{CATEGORY_LABELS[cat]}</span>
+                  <span
+                    className={cn(
+                      "shrink-0 rounded-full px-1.5 py-0.5 text-[11px] tabular-nums",
+                      active ? "bg-[var(--surface-card)] text-[var(--foreground)]" : "text-[var(--surface-subtle-foreground)]"
                     )}
                   >
                     {counts[cat]}
@@ -525,19 +500,17 @@ export default function NotificationsPage() {
           {/* Right — feed */}
           <section>
             {filteredNotifications.length === 0 ? (
-              <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-slate-200 bg-slate-50/40 px-6 py-16 text-center">
-                <div className="flex h-12 w-12 items-center justify-center rounded-full bg-white shadow-sm ring-1 ring-slate-200">
-                  <Bell className="h-5 w-5 text-slate-400" />
-                </div>
-                <p className="mt-4 text-sm font-semibold text-slate-900">
+              <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-[var(--stroke-soft)] px-6 py-16 text-center">
+                <Bell className="h-6 w-6 text-[var(--surface-subtle-foreground)]" />
+                <p className="mt-3 text-sm font-semibold text-[var(--foreground)]">
                   {category === "all"
                     ? "Inbox zero"
                     : `No ${CATEGORY_LABELS[category].toLowerCase()} yet`}
                 </p>
-                <p className="mt-1 max-w-sm text-xs text-slate-500">
+                <p className="mt-1 max-w-sm text-xs text-[var(--surface-subtle-foreground)]">
                   {category === "all"
                     ? "Validation runs, trust changes, and setup issues will appear here as your workspace produces evidence."
-                    : "Try a different category to see what is currently in the inbox."}
+                    : "Switch categories to see other updates, or view everything below."}
                 </p>
                 {category !== "all" && (
                   <Button
@@ -551,18 +524,18 @@ export default function NotificationsPage() {
                 )}
               </div>
             ) : (
-              <div className="overflow-hidden rounded-xl border border-slate-200 bg-white">
+              <div className="overflow-hidden rounded-xl border border-[var(--stroke-soft)] bg-[var(--surface-card)]">
                 {groupedNotifications.map((group, groupIndex) => (
                   <div key={group.label}>
-                    <div className="sticky top-0 z-[1] flex items-center justify-between border-b border-slate-200 bg-slate-50/80 px-4 py-2 backdrop-blur">
-                      <span className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-500">
+                    <div className="sticky top-0 z-[1] flex items-center justify-between border-b border-[var(--stroke-soft)] bg-[var(--surface-subtle)]/80 px-4 py-2 backdrop-blur">
+                      <span className="text-[10px] font-semibold uppercase tracking-[0.16em] text-[var(--surface-subtle-foreground)]">
                         {group.label}
                       </span>
-                      <span className="text-[11px] tabular-nums text-slate-400">
+                      <span className="text-[11px] tabular-nums text-[var(--surface-subtle-foreground)]">
                         {group.items.length}
                       </span>
                     </div>
-                    <ul className="divide-y divide-slate-100">
+                    <ul className="divide-y divide-[var(--stroke-soft)]">
                       {group.items.map((notification) => {
                         const meta = getTypeMeta(notification.type);
                         return (
@@ -570,7 +543,7 @@ export default function NotificationsPage() {
                             key={notification.id}
                             onClick={() => router.push(notification.actionUrl)}
                             className={cn(
-                              "group relative flex cursor-pointer items-center gap-3 px-4 py-3 transition hover:bg-slate-50",
+                              "group relative flex cursor-pointer items-center gap-3 px-4 py-3 transition hover:bg-[var(--surface-subtle)]",
                               groupIndex === 0 && "first:rounded-t-none"
                             )}
                           >
@@ -579,62 +552,56 @@ export default function NotificationsPage() {
                               aria-hidden
                               className={cn(
                                 "absolute left-0 top-2 bottom-2 w-[3px] rounded-r",
-                                notification.status === "error"
-                                  ? "bg-rose-500"
-                                  : notification.status === "warning"
-                                    ? "bg-amber-500"
-                                    : notification.status === "success"
-                                      ? "bg-emerald-500"
-                                      : "bg-slate-300"
+                                toneClasses(statusTone(notification.status)).bg,
                               )}
                             />
 
-                            <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-slate-50 ring-1 ring-slate-200">
+                            <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-[var(--surface-subtle)] ring-1 ring-[var(--stroke-soft)]">
                               {getStatusIcon(notification.status)}
                             </div>
 
                             <div className="min-w-0 flex-1">
                               <div className="flex items-center gap-2">
-                                <span className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-slate-600">
+                                <Chip tone="muted" size="sm">
                                   {meta.icon}
                                   {meta.label}
-                                </span>
+                                </Chip>
                                 {notification.metadata?.environment && (
-                                  <span className="text-[10px] uppercase tracking-wide text-slate-400">
+                                  <span className="text-[10px] uppercase tracking-wide text-[var(--surface-subtle-foreground)]">
                                     {notification.metadata.environment}
                                   </span>
                                 )}
                                 {notification.metadata?.score !== undefined &&
                                   notification.metadata.score !== null && (
-                                    <span className="text-[10px] font-semibold text-emerald-600">
+                                    <span className={cn("text-[10px] font-semibold", toneClasses("success").text)}>
                                       Score {notification.metadata.score}
                                     </span>
                                   )}
                               </div>
-                              <p className="mt-0.5 truncate text-sm font-medium text-slate-900">
+                              <p className="mt-0.5 truncate text-sm font-medium text-[var(--foreground)]">
                                 {notification.title}
                               </p>
-                              <p className="truncate text-xs text-slate-500">
+                              <p className="truncate text-xs text-[var(--surface-subtle-foreground)]">
                                 {notification.description}
                               </p>
                             </div>
 
                             <div className="flex shrink-0 items-center gap-3">
-                              <span className="text-[11px] tabular-nums text-slate-400">
+                              <span className="text-[11px] tabular-nums text-[var(--surface-subtle-foreground)]">
                                 {formatDistanceToNowStrict(notification.timestamp, { addSuffix: true })}
                               </span>
                               <button
                                 type="button"
                                 onClick={(e) => {
                                   e.stopPropagation();
-                                  dismissNotification(notification.id);
+                                  dismissNotification(notification);
                                 }}
                                 aria-label="Dismiss notification"
-                                className="flex h-7 w-7 items-center justify-center rounded-md text-slate-400 opacity-0 transition hover:bg-slate-100 hover:text-slate-700 group-hover:opacity-100"
+                                className="flex h-7 w-7 items-center justify-center rounded-md text-[var(--surface-subtle-foreground)] opacity-0 transition hover:bg-[var(--surface-subtle)] hover:text-[var(--foreground)] group-hover:opacity-100"
                               >
                                 <X className="h-3.5 w-3.5" />
                               </button>
-                              <ChevronRight className="h-4 w-4 text-slate-300 transition group-hover:translate-x-0.5 group-hover:text-slate-500" />
+                              <ChevronRight className="h-4 w-4 text-[var(--surface-subtle-foreground)] transition group-hover:translate-x-0.5" />
                             </div>
                           </li>
                         );
@@ -648,36 +615,5 @@ export default function NotificationsPage() {
         </div>
       </div>
     </PageContainer>
-  );
-}
-
-function StatusChip({
-  tone,
-  label,
-  count,
-  icon,
-}: {
-  tone: "rose" | "amber" | "emerald";
-  label: string;
-  count: number;
-  icon: React.ReactNode;
-}) {
-  const palette = {
-    rose: "bg-rose-50 text-rose-700 ring-rose-200",
-    amber: "bg-amber-50 text-amber-700 ring-amber-200",
-    emerald: "bg-emerald-50 text-emerald-700 ring-emerald-200",
-  } as const;
-  const muted = "bg-slate-50 text-slate-500 ring-slate-200";
-  return (
-    <span
-      className={cn(
-        "inline-flex items-center gap-1.5 rounded-full px-2 py-1 text-[11px] font-medium ring-1",
-        count > 0 ? palette[tone] : muted
-      )}
-    >
-      {icon}
-      <span>{label}</span>
-      <span className="tabular-nums">{count}</span>
-    </span>
   );
 }

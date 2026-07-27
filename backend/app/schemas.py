@@ -1,5 +1,5 @@
-from pydantic import BaseModel, ConfigDict, field_validator
-from datetime import date, datetime
+from pydantic import BaseModel, ConfigDict, field_validator, computed_field
+from datetime import date, datetime, timedelta, timezone
 from typing import Any, Optional, List, Dict
 from pydantic import Field # Added for explicit field definition if needed
 import ipaddress
@@ -650,6 +650,20 @@ class EnvironmentRunnerConfig(EnvironmentRunnerConfigBase):
 
     model_config = ConfigDict(from_attributes=True)
 
+    @computed_field  # type: ignore[misc]
+    @property
+    def is_stale(self) -> bool:
+        # Mirrors utils.runner_health.is_runner_stale — duplicated here (rather
+        # than imported) because schemas.py must stay import-light and this is
+        # a pure function of two already-present fields. Keep both in sync.
+        if not self.last_check_in:
+            return False
+        threshold = timedelta(minutes=self.alert_offline_minutes or 5)
+        last_check_in = self.last_check_in
+        if last_check_in.tzinfo is None:
+            last_check_in = last_check_in.replace(tzinfo=timezone.utc)
+        return (datetime.now(timezone.utc) - last_check_in) > threshold
+
 class EnvironmentRunnerRegistrationResponse(EnvironmentRunnerConfig):
     runner_token: Optional[str] = None
 
@@ -757,24 +771,19 @@ class AuditEvent(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
-class SandboxEnvironmentBase(BaseModel):
-    organization_id: Optional[int] = None
-    external_id: Optional[str] = None
-    display_name: str = "PurveX Lab"
-    status: str = "provisioning"
-    size: Optional[str] = "small"
-    provider: Optional[str] = "purvex_cloud"
-    extra_metadata: Optional[str] = None
-
-
-class SandboxEnvironmentCreate(SandboxEnvironmentBase):
-    pass
-
-
-class SandboxEnvironment(SandboxEnvironmentBase):
+class NotificationOut(BaseModel):
     id: int
+    organization_id: int
+    type: str
+    title: str
+    description: Optional[str] = None
+    action_url: Optional[str] = None
+    status: str
+    source_type: Optional[str] = None
+    source_id: Optional[str] = None
     created_at: Optional[datetime] = None
-    updated_at: Optional[datetime] = None
+    read_at: Optional[datetime] = None
+    dismissed_at: Optional[datetime] = None
 
     model_config = ConfigDict(from_attributes=True)
 

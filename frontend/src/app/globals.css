@@ -73,16 +73,16 @@ html:has([data-loading-splash="true"]:not([style*="display: none"])) {
 
   /* Light mode palette */
   --pvrx-primary-light: #ffffff;
-  --pvrx-primary-light-alt: #ffffff;
-  --pvrx-accent: #7561f6;
-  --pvrx-accent-light: #9fb2ff;
+  --pvrx-primary-light-alt: #f5f7fc;
+  --pvrx-accent: #5546e0;
+  --pvrx-accent-light: #6a5cff;
   --pvrx-surface-light: #ffffff;
-  --pvrx-surface-alt-light: #ffffff;
-  --pvrx-background-light: #ffffff;
-  --pvrx-border-light: #d9e2ef;
+  --pvrx-surface-alt-light: #eef0ff;
+  --pvrx-background-light: #fbfcfe;
+  --pvrx-border-light: #e6eaf2;
   --pvrx-text-primary-light: #0f172a;
-  --pvrx-text-secondary-light: #475569;
-  --pvrx-text-muted-light: #64748b;
+  --pvrx-text-secondary-light: #334155;
+  --pvrx-text-muted-light: #475569;
   --pvrx-success: #22c993;
   --pvrx-warning: #f4b55a;
   --pvrx-danger: #f16c70;
@@ -269,49 +269,49 @@ select {
 }
 
 :root {
-  --surface-page: #ffffff;
+  --surface-page: #fbfcfe;
   --surface-card: #ffffff;
-  --surface-muted: #f8fafc;
-  --surface-card-foreground: #0f172a;
-  --stroke-soft: #d9e2ef;
+  --surface-muted: #eef0ff;
+  --surface-card-foreground: #10192e;
+  --stroke-soft: #e6eaf2;
   --shadow-soft: 0 12px 38px -18px rgba(15, 23, 42, 0.24);
   --surface-shell: #ffffff;
-  --surface-shell-foreground: #0f172a;
+  --surface-shell-foreground: #10192e;
   --surface-elevated: #ffffff;
-  --surface-elevated-foreground: #0f172a;
-  --surface-subtle: #f8fafc;
-  --surface-subtle-foreground: #475569;
-  --hover-soft: rgba(79, 124, 255, 0.08);
-  --accent-strong: #4f7cff;
-  --accent-soft: rgba(79, 124, 255, 0.12);
-  --accent-line: rgba(79, 124, 255, 0.26);
+  --surface-elevated-foreground: #10192e;
+  --surface-subtle: #eef0ff;
+  --surface-subtle-foreground: #2f3b56;
+  --hover-soft: rgba(85, 70, 224, 0.08);
+  --accent-strong: #5546e0;
+  --accent-soft: rgba(85, 70, 224, 0.12);
+  --accent-line: rgba(85, 70, 224, 0.26);
   --interactive-surface: #ffffff;
-  --interactive-surface-hover: #f8fafc;
-  --interactive-border: #d9e2ef;
-  --interactive-foreground: #0f172a;
+  --interactive-surface-hover: #eef0ff;
+  --interactive-border: #e6eaf2;
+  --interactive-foreground: #10192e;
 }
 
 .dark {
-  --surface-page: #0b0d10;
-  --surface-card: #15181d;
-  --surface-muted: #12161b;
-  --surface-card-foreground: #f3f4f6;
-  --stroke-soft: #2a2f37;
+  --surface-page: #0a0a0a;
+  --surface-card: #171717;
+  --surface-muted: #1f1f1f;
+  --surface-card-foreground: #ffffff;
+  --stroke-soft: #303030;
   --shadow-soft: 0 18px 45px -24px rgba(0, 0, 0, 0.72);
-  --surface-shell: #0f1318;
-  --surface-shell-foreground: #f3f4f6;
-  --surface-elevated: #1a1e24;
-  --surface-elevated-foreground: #f3f4f6;
-  --surface-subtle: #11161c;
-  --surface-subtle-foreground: #b8c1ce;
+  --surface-shell: #0a0a0a;
+  --surface-shell-foreground: #ffffff;
+  --surface-elevated: #1f1f1f;
+  --surface-elevated-foreground: #ffffff;
+  --surface-subtle: #171717;
+  --surface-subtle-foreground: #b4b4b8;
   --hover-soft: rgba(255, 255, 255, 0.06);
-  --accent-strong: #8ab4ff;
-  --accent-soft: rgba(138, 180, 255, 0.12);
-  --accent-line: rgba(138, 180, 255, 0.24);
-  --interactive-surface: #171b21;
-  --interactive-surface-hover: #1d232b;
-  --interactive-border: #2b3139;
-  --interactive-foreground: #f3f4f6;
+  --accent-strong: #8b7fff;
+  --accent-soft: rgba(139, 127, 255, 0.14);
+  --accent-line: rgba(139, 127, 255, 0.26);
+  --interactive-surface: #171717;
+  --interactive-surface-hover: #1f1f1f;
+  --interactive-border: #303030;
+  --interactive-foreground: #ffffff;
 }
 
 [data-slot="card"] {
@@ -338,17 +338,17 @@ select {
 
 .dark {
   /* Dark mode palette */
-  --pvrx-primary: #0f1318;
-  --pvrx-primary-light: #171b21;
-  --pvrx-accent: #8ab4ff;
-  --pvrx-accent-light: #223b5c;
-  --pvrx-surface: #15181d;
-  --pvrx-surface-alt: #1a1e24;
-  --pvrx-background: #0b0d10;
-  --pvrx-border: #2a2f37;
-  --pvrx-text-primary: #f3f4f6;
-  --pvrx-text-secondary: #d7dce3;
-  --pvrx-text-muted: #98a2b3;
+  --pvrx-primary: #0a0a0a;
+  --pvrx-primary-light: #171717;
+  --pvrx-accent: #8b7fff;
+  --pvrx-accent-light: #c4bfff;
+  --pvrx-surface: #171717;
+  --pvrx-surface-alt: #1f1f1f;
+  --pvrx-background: #0a0a0a;
+  --pvrx-border: #303030;
+  --pvrx-text-primary: #ffffff;
+  --pvrx-text-secondary: #e4e4e7;
+  --pvrx-text-muted: #b4b4b8;
 
   /* Map to design tokens - Dark mode */
   --background: var(--pvrx-background);
@@ -433,8 +433,8 @@ select {
   textarea:focus,
   select:focus {
     outline: none;
-    border-color: rgba(117, 97, 246, 0.5);
-    box-shadow: 0 0 0 3px rgba(117, 97, 246, 0.18), 0 10px 25px -18px rgba(64, 38, 146, 0.25);
+    border-color: rgba(85, 70, 224, 0.45);
+    box-shadow: 0 0 0 3px rgba(85, 70, 224, 0.12), 0 10px 25px -18px rgba(85, 70, 224, 0.28);
     background-color: var(--surface-card);
   }
 
@@ -876,30 +876,6 @@ input[type="password"]::-webkit-textfield-decoration-container {
   }
 }
 
-/* Premium Card Styles - Consistent across platform */
-.premium-card {
-  background: var(--pvrx-surface);
-  border: 1px solid var(--pvrx-border);
-  border-radius: 14px;
-  box-shadow: var(--pvrx-shadow);
-  transition: transform var(--transition-base), box-shadow var(--transition-base);
-}
-
-.premium-card:hover {
-  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.12);
-  transform: translateY(-2px);
-}
-
-.glass-card,
-.login-card,
-.login-card-compact,
-.login-card-premium {
-  background: var(--pvrx-surface);
-  border: 1px solid var(--pvrx-border);
-  box-shadow: var(--pvrx-shadow);
-  backdrop-filter: none;
-}
-
 .dark .bg-white {
   background-color: var(--surface-elevated) !important;
 }
@@ -1127,235 +1103,11 @@ input[type="password"]::-webkit-textfield-decoration-container {
   @apply flex items-center gap-4;
 }
 
-.canvas-mesh {
-  position: relative;
-  min-height: 100vh;
-  background:
-    radial-gradient(circle at 12% 18%, rgba(45, 127, 249, 0.05), transparent 42%),
-    radial-gradient(circle at 85% 10%, rgba(91, 163, 255, 0.04), transparent 42%),
-    radial-gradient(circle at 18% 90%, rgba(17, 42, 76, 0.05), transparent 48%),
-    linear-gradient(180deg, #050f1d 0%, #071524 55%, #061020 100%);
-}
-
-.canvas-mesh::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  background:
-    radial-gradient(circle at 40% 40%, rgba(91, 163, 255, 0.05), transparent 55%),
-    radial-gradient(circle at 70% 70%, rgba(45, 127, 249, 0.04), transparent 55%);
-  mix-blend-mode: screen;
-  opacity: 0.5;
-  pointer-events: none;
-}
-
-.login-page {
-  position: relative;
-  min-height: 100vh;
-  background:
-    /* Soft blue band similar to dashboard hero */
-    radial-gradient(circle at 50% 0%, rgba(59, 130, 246, 0.45), transparent 60%),
-    radial-gradient(circle at 0% 0%, rgba(56, 189, 248, 0.28), transparent 60%),
-    radial-gradient(circle at 100% 0%, rgba(37, 99, 235, 0.24), transparent 60%),
-    /* Deep navy base */
-    linear-gradient(175deg, #020617, #020617 55%, #020617);
-}
-
-.login-page::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  background:
-    /* Vertical light column hinting at AI beam */
-    linear-gradient(90deg, rgba(191, 219, 254, 0.45), transparent 45%, rgba(191, 219, 254, 0.25));
-  background-size: 100% 100%;
-  opacity: 0.4;
-  mix-blend-mode: screen;
-  pointer-events: none;
-}
-
-.login-page::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  background:
-    /* Radar-style arcs to suggest detection sweeps */
-    radial-gradient(circle at 20% 110%, transparent 0, transparent 46%, rgba(56, 189, 248, 0.25) 47%, rgba(56, 189, 248, 0.25) 49%, transparent 55%),
-    radial-gradient(circle at 80% 115%, transparent 0, transparent 40%, rgba(59, 130, 246, 0.25) 41%, rgba(59, 130, 246, 0.25) 43%, transparent 52%);
-  mix-blend-mode: screen;
-  opacity: 0.4;
-  pointer-events: none;
-}
-
-/* Chalkboard-style login page with technique IDs */
-.login-page-chalkboard {
-  position: relative;
-  min-height: 100vh;
-  background: #2d5016;
-  overflow: hidden;
-}
-
-.login-chalkboard-content {
-  position: absolute;
-  inset: 0;
-  font-family: 'Courier New', 'Courier', monospace;
-  color: rgba(255, 255, 255, 0.7);
-  font-size: 16px;
-  line-height: 2.5;
-  padding: 2rem;
-  white-space: pre-wrap;
-  text-shadow: 0 0 3px rgba(255, 255, 255, 0.3);
-  overflow: hidden;
-  z-index: 0;
-}
-
-.login-chalkboard-content::before {
-  content: "T1001\nT1002\nT1003\nT1003.001\nT1003.002\nT1003.003\nT1003.004\nT1003.005\nT1003.006\nT1004\nT1005\nT1006\nT1007\nT1008\nT1009\nT1010\nT1011\nT1012\nT1013\nT1014\nT1015\nT1016\nT1017\nT1018\nT1019\nT1020\nT1021\nT1021.001\nT1021.002\nT1021.003\nT1021.004\nT1021.005\nT1021.006\nT1022\nT1023\nT1024\nT1025\nT1026\nT1027\nT1028\nT1029\nT1030\nT1031\nT1032\nT1033\nT1034\nT1035\nT1036\nT1037\nT1038\nT1039\nT1040\nT1041\nT1042\nT1043\nT1044\nT1045\nT1046\nT1047\nT1048\nT1049\nT1050\nT1051\nT1052\nT1053\nT1054\nT1055\nT1055.001\nT1055.002\nT1055.003\nT1055.004\nT1055.005\nT1055.008\nT1055.009\nT1055.011\nT1055.012\nT1055.013\nT1055.014\nT1055.015\nT1056\nT1057\nT1058\nT1059\nT1059.001\nT1059.002\nT1059.003\nT1059.004\nT1059.005\nT1059.006\nT1059.007\nT1059.008\nT1060\nT1061\nT1062\nT1063\nT1064\nT1065\nT1066\nT1067\nT1068\nT1069\nT1070\nT1071\nT1072\nT1073\nT1074\nT1075\nT1076\nT1077\nT1078\nT1078.001\nT1078.002\nT1078.003\nT1078.004\nT1078.005\nT1079\nT1080\nT1081\nT1082\nT1083\nT1084\nT1085\nT1086\nT1087\nT1088\nT1089\nT1090\nT1091\nT1092\nT1093\nT1094\nT1095\nT1096\nT1097\nT1098\nT1099\nT1100\nT1101\nT1102\nT1103\nT1104\nT1105\nT1106\nT1107\nT1108\nT1109\nT1110\nT1111\nT1112\nT1113\nT1114\nT1115\nT1116\nT1117\nT1118\nT1119\nT1120\nT1121\nT1122\nT1123\nT1124\nT1125\nT1126\nT1127\nT1128\nT1129\nT1130\nT1131\nT1132\nT1133\nT1134\nT1135\nT1136\nT1137\nT1138\nT1139\nT1140\nT1141\nT1142\nT1143\nT1144\nT1145\nT1146\nT1147\nT1148\nT1149\nT1150\nT1151\nT1152\nT1153\nT1154\nT1155\nT1156\nT1157\nT1158\nT1159\nT1160\nT1161\nT1162\nT1163\nT1164\nT1165\nT1166\nT1167\nT1168\nT1169\nT1170\nT1171\nT1172\nT1173\nT1174\nT1175\nT1176\nT1177\nT1178\nT1179\nT1180\nT1181\nT1182\nT1183\nT1184\nT1185\nT1186\nT1187\nT1188\nT1189\nT1190\nT1191\nT1192\nT1193\nT1194\nT1195\nT1196\nT1197\nT1198\nT1199\nT1200\nT1201\nT1202\nT1203\nT1204\nT1205\nT1206\nT1207\nT1208\nT1209\nT1210\nT1211\nT1212\nT1213\nT1214\nT1215\nT1216\nT1217\nT1218\nT1219\nT1220\nT1221\nT1222\nT1223\nT1224\nT1225\nT1226\nT1227\nT1228\nT1229\nT1230\nT1231\nT1232\nT1233\nT1234\nT1235\nT1236\nT1237\nT1238\nT1239\nT1240\nT1241\nT1242\nT1243\nT1244\nT1245\nT1246\nT1247\nT1248\nT1249\nT1250\nT1251\nT1252\nT1253\nT1254\nT1255\nT1256\nT1257\nT1258\nT1259\nT1260\nT1261\nT1262\nT1263\nT1264\nT1265\nT1266\nT1267\nT1268\nT1269\nT1270\nT1271\nT1272\nT1273\nT1274\nT1275\nT1276\nT1277\nT1278\nT1279\nT1280\nT1281\nT1282\nT1283\nT1284\nT1285\nT1286\nT1287\nT1288\nT1289\nT1290\nT1291\nT1292\nT1293\nT1294\nT1295\nT1296\nT1297\nT1298\nT1299\nT1300\nT1301\nT1302\nT1303\nT1304\nT1305\nT1306\nT1307\nT1308\nT1309\nT1310\nT1311\nT1312\nT1313\nT1314\nT1315\nT1316\nT1317\nT1318\nT1319\nT1320\nT1321\nT1322\nT1323\nT1324\nT1325\nT1326\nT1327\nT1328\nT1329\nT1330\nT1331\nT1332\nT1333\nT1334\nT1335\nT1336\nT1337\nT1338\nT1339\nT1340\nT1341\nT1342\nT1343\nT1344\nT1345\nT1346\nT1347\nT1348\nT1349\nT1350\nT1351\nT1352\nT1353\nT1354\nT1355\nT1356\nT1357\nT1358\nT1359\nT1360\nT1361\nT1362\nT1363\nT1364\nT1365\nT1366\nT1367\nT1368\nT1369\nT1370\nT1371\nT1372\nT1373\nT1374\nT1375\nT1376\nT1377\nT1378\nT1379\nT1380\nT1381\nT1382\nT1383\nT1384\nT1385\nT1386\nT1387\nT1388\nT1389\nT1390\nT1391\nT1392\nT1393\nT1394\nT1395\nT1396\nT1397\nT1398\nT1399\nT1400\nT1401\nT1402\nT1403\nT1404\nT1405\nT1406\nT1407\nT1408\nT1409\nT1410\nT1411\nT1412\nT1413\nT1414\nT1415\nT1416\nT1417\nT1418\nT1419\nT1420\nT1421\nT1422\nT1423\nT1424\nT1425\nT1426\nT1427\nT1428\nT1429\nT1430\nT1431\nT1432\nT1433\nT1434\nT1435\nT1436\nT1437\nT1438\nT1439\nT1440\nT1441\nT1442\nT1443\nT1444\nT1445\nT1446\nT1447\nT1448\nT1449\nT1450\nT1451\nT1452\nT1453\nT1454\nT1455\nT1456\nT1457\nT1458\nT1459\nT1460\nT1461\nT1462\nT1463\nT1464\nT1465\nT1466\nT1467\nT1468\nT1469\nT1470\nT1471\nT1472\nT1473\nT1474\nT1475\nT1476\nT1477\nT1478\nT1479\nT1480\nT1481\nT1482\nT1483\nT1484\nT1485\nT1486\nT1487\nT1488\nT1489\nT1490\nT1491\nT1492\nT1493\nT1494\nT1495\nT1496\nT1497\nT1498\nT1499\nT1500\nT1501\nT1502\nT1503\nT1504\nT1505\nT1506\nT1507\nT1508\nT1509\nT1510\nT1511\nT1512\nT1513\nT1514\nT1515\nT1516\nT1517\nT1518\nT1519\nT1520\nT1521\nT1522\nT1523\nT1524\nT1525\nT1526\nT1527\nT1528\nT1529\nT1530\nT1531\nT1532\nT1533\nT1534\nT1535\nT1536\nT1537\nT1538\nT1539\nT1540\nT1541\nT1542\nT1543\nT1544\nT1545\nT1546\nT1547\nT1548\nT1549\nT1550\nT1551\nT1552\nT1553\nT1554\nT1555\nT1556\nT1557\nT1558\nT1559\nT1560\nT1561\nT1562\nT1563\nT1564\nT1565\nT1566\nT1567\nT1568\nT1569\nT1570\nT1571\nT1572\nT1573\nT1574\nT1575\nT1576\nT1577\nT1578\nT1579\nT1580\nT1581\nT1582\nT1583\nT1584\nT1585\nT1586\nT1587\nT1588\nT1589\nT1590\nT1591\nT1592\nT1593\nT1594\nT1595\nT1596\nT1597\nT1598\nT1599\nT1600\nT1601\nT1602\nT1603\nT1604\nT1605\nT1606\nT1607\nT1608\nT1609\nT1610\nT1611\nT1612\nT1613\nT1614\nT1615\nT1616\nT1617\nT1618\nT1619\nT1620\nT1621\nT1622\nT1623\nT1624\nT1625\nT1626\nT1627\nT1628\nT1629\nT1630\nT1631\nT1632\nT1633\nT1634\nT1635\nT1636\nT1637\nT1638\nT1639\nT1640\nT1641\nT1642\nT1643\nT1644\nT1645\nT1646\nT1647\nT1648\nT1649\nT1650\nT1651\nT1652\nT1653\nT1654\nT1655\nT1656\nT1657\nT1658\nT1659\nT1660\nT1661\nT1662\nT1663\nT1664\nT1665\nT1666\nT1667\nT1668\nT1669\nT1670\nT1671\nT1672\nT1673\nT1674\nT1675\nT1676\nT1677\nT1678\nT1679\nT1680\nT1681\nT1682\nT1683\nT1684\nT1685\nT1686\nT1687\nT1688\nT1689\nT1690\nT1691\nT1692\nT1693\nT1694\nT1695\nT1696\nT1697\nT1698\nT1699\nT1700\nT1701\nT1702\nT1703\nT1704\nT1705\nT1706\nT1707\nT1708\nT1709\nT1710\nT1711\nT1712\nT1713\nT1714\nT1715\nT1716\nT1717\nT1718\nT1719\nT1720\nT1721\nT1722\nT1723\nT1724\nT1725\nT1726\nT1727\nT1728\nT1729\nT1730\nT1731\nT1732\nT1733\nT1734\nT1735\nT1736\nT1737\nT1738\nT1739\nT1740\nT1741\nT1742\nT1743\nT1744\nT1745\nT1746\nT1747\nT1748\nT1749\nT1750\nT1751\nT1752\nT1753\nT1754\nT1755\nT1756\nT1757\nT1758\nT1759\nT1760\nT1761\nT1762\nT1763\nT1764\nT1765\nT1766\nT1767\nT1768\nT1769\nT1770\nT1771\nT1772\nT1773\nT1774\nT1775\nT1776\nT1777\nT1778\nT1779\nT1780\nT1781\nT1782\nT1783\nT1784\nT1785\nT1786\nT1787\nT1788\nT1789\nT1790\nT1791\nT1792\nT1793\nT1794\nT1795\nT1796\nT1797\nT1798\nT1799\nT1800\nT1801\nT1802\nT1803\nT1804\nT1805\nT1806\nT1807\nT1808\nT1809\nT1810\nT1811\nT1812\nT1813\nT1814\nT1815\nT1816\nT1817\nT1818\nT1819\nT1820\nT1821\nT1822\nT1823\nT1824\nT1825\nT1826\nT1827\nT1828\nT1829\nT1830\nT1831\nT1832\nT1833\nT1834\nT1835\nT1836\nT1837\nT1838\nT1839\nT1840\nT1841\nT1842\nT1843\nT1844\nT1845\nT1846\nT1847\nT1848\nT1849\nT1850\nT1851\nT1852\nT1853\nT1854\nT1855\nT1856\nT1857\nT1858\nT1859\nT1860\nT1861\nT1862\nT1863\nT1864\nT1865\nT1866\nT1867\nT1868\nT1869\nT1870\nT1871\nT1872\nT1873\nT1874\nT1875\nT1876\nT1877\nT1878\nT1879\nT1880\nT1881\nT1882\nT1883\nT1884\nT1885\nT1886\nT1887\nT1888\nT1889\nT1890\nT1891\nT1892\nT1893\nT1894\nT1895\nT1896\nT1897\nT1898\nT1899\nT1900";
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  padding: 2rem;
-  font-family: 'Courier New', 'Courier', monospace;
-  color: rgba(255, 255, 255, 0.6);
-  font-size: 16px;
-  line-height: 2.5;
-  white-space: pre-wrap;
-  text-shadow: 
-    0 1px 0 rgba(255, 255, 255, 0.2),
-    0 0 4px rgba(255, 255, 255, 0.25);
-  animation: scroll-up-fast 15s linear infinite;
-  transform: translateY(0);
-  pointer-events: none;
-  z-index: 0;
-}
-
-.login-chalkboard-content::after {
-  content: "T1001\nT1002\nT1003\nT1003.001\nT1003.002\nT1003.003\nT1003.004\nT1003.005\nT1003.006\nT1004\nT1005\nT1006\nT1007\nT1008\nT1009\nT1010\nT1011\nT1012\nT1013\nT1014\nT1015\nT1016\nT1017\nT1018\nT1019\nT1020\nT1021\nT1021.001\nT1021.002\nT1021.003\nT1021.004\nT1021.005\nT1021.006\nT1022\nT1023\nT1024\nT1025\nT1026\nT1027\nT1028\nT1029\nT1030\nT1031\nT1032\nT1033\nT1034\nT1035\nT1036\nT1037\nT1038\nT1039\nT1040\nT1041\nT1042\nT1043\nT1044\nT1045\nT1046\nT1047\nT1048\nT1049\nT1050\nT1051\nT1052\nT1053\nT1054\nT1055\nT1055.001\nT1055.002\nT1055.003\nT1055.004\nT1055.005\nT1055.008\nT1055.009\nT1055.011\nT1055.012\nT1055.013\nT1055.014\nT1055.015\nT1056\nT1057\nT1058\nT1059\nT1059.001\nT1059.002\nT1059.003\nT1059.004\nT1059.005\nT1059.006\nT1059.007\nT1059.008\nT1060\nT1061\nT1062\nT1063\nT1064\nT1065\nT1066\nT1067\nT1068\nT1069\nT1070\nT1071\nT1072\nT1073\nT1074\nT1075\nT1076\nT1077\nT1078\nT1078.001\nT1078.002\nT1078.003\nT1078.004\nT1078.005\nT1079\nT1080\nT1081\nT1082\nT1083\nT1084\nT1085\nT1086\nT1087\nT1088\nT1089\nT1090\nT1091\nT1092\nT1093\nT1094\nT1095\nT1096\nT1097\nT1098\nT1099\nT1100\nT1101\nT1102\nT1103\nT1104\nT1105\nT1106\nT1107\nT1108\nT1109\nT1110\nT1111\nT1112\nT1113\nT1114\nT1115\nT1116\nT1117\nT1118\nT1119\nT1120\nT1121\nT1122\nT1123\nT1124\nT1125\nT1126\nT1127\nT1128\nT1129\nT1130\nT1131\nT1132\nT1133\nT1134\nT1135\nT1136\nT1137\nT1138\nT1139\nT1140\nT1141\nT1142\nT1143\nT1144\nT1145\nT1146\nT1147\nT1148\nT1149\nT1150\nT1151\nT1152\nT1153\nT1154\nT1155\nT1156\nT1157\nT1158\nT1159\nT1160\nT1161\nT1162\nT1163\nT1164\nT1165\nT1166\nT1167\nT1168\nT1169\nT1170\nT1171\nT1172\nT1173\nT1174\nT1175\nT1176\nT1177\nT1178\nT1179\nT1180\nT1181\nT1182\nT1183\nT1184\nT1185\nT1186\nT1187\nT1188\nT1189\nT1190\nT1191\nT1192\nT1193\nT1194\nT1195\nT1196\nT1197\nT1198\nT1199\nT1200\nT1201\nT1202\nT1203\nT1204\nT1205\nT1206\nT1207\nT1208\nT1209\nT1210\nT1211\nT1212\nT1213\nT1214\nT1215\nT1216\nT1217\nT1218\nT1219\nT1220\nT1221\nT1222\nT1223\nT1224\nT1225\nT1226\nT1227\nT1228\nT1229\nT1230\nT1231\nT1232\nT1233\nT1234\nT1235\nT1236\nT1237\nT1238\nT1239\nT1240\nT1241\nT1242\nT1243\nT1244\nT1245\nT1246\nT1247\nT1248\nT1249\nT1250\nT1251\nT1252\nT1253\nT1254\nT1255\nT1256\nT1257\nT1258\nT1259\nT1260\nT1261\nT1262\nT1263\nT1264\nT1265\nT1266\nT1267\nT1268\nT1269\nT1270\nT1271\nT1272\nT1273\nT1274\nT1275\nT1276\nT1277\nT1278\nT1279\nT1280\nT1281\nT1282\nT1283\nT1284\nT1285\nT1286\nT1287\nT1288\nT1289\nT1290\nT1291\nT1292\nT1293\nT1294\nT1295\nT1296\nT1297\nT1298\nT1299\nT1300\nT1301\nT1302\nT1303\nT1304\nT1305\nT1306\nT1307\nT1308\nT1309\nT1310\nT1311\nT1312\nT1313\nT1314\nT1315\nT1316\nT1317\nT1318\nT1319\nT1320\nT1321\nT1322\nT1323\nT1324\nT1325\nT1326\nT1327\nT1328\nT1329\nT1330\nT1331\nT1332\nT1333\nT1334\nT1335\nT1336\nT1337\nT1338\nT1339\nT1340\nT1341\nT1342\nT1343\nT1344\nT1345\nT1346\nT1347\nT1348\nT1349\nT1350\nT1351\nT1352\nT1353\nT1354\nT1355\nT1356\nT1357\nT1358\nT1359\nT1360\nT1361\nT1362\nT1363\nT1364\nT1365\nT1366\nT1367\nT1368\nT1369\nT1370\nT1371\nT1372\nT1373\nT1374\nT1375\nT1376\nT1377\nT1378\nT1379\nT1380\nT1381\nT1382\nT1383\nT1384\nT1385\nT1386\nT1387\nT1388\nT1389\nT1390\nT1391\nT1392\nT1393\nT1394\nT1395\nT1396\nT1397\nT1398\nT1399\nT1400\nT1401\nT1402\nT1403\nT1404\nT1405\nT1406\nT1407\nT1408\nT1409\nT1410\nT1411\nT1412\nT1413\nT1414\nT1415\nT1416\nT1417\nT1418\nT1419\nT1420\nT1421\nT1422\nT1423\nT1424\nT1425\nT1426\nT1427\nT1428\nT1429\nT1430\nT1431\nT1432\nT1433\nT1434\nT1435\nT1436\nT1437\nT1438\nT1439\nT1440\nT1441\nT1442\nT1443\nT1444\nT1445\nT1446\nT1447\nT1448\nT1449\nT1450\nT1451\nT1452\nT1453\nT1454\nT1455\nT1456\nT1457\nT1458\nT1459\nT1460\nT1461\nT1462\nT1463\nT1464\nT1465\nT1466\nT1467\nT1468\nT1469\nT1470\nT1471\nT1472\nT1473\nT1474\nT1475\nT1476\nT1477\nT1478\nT1479\nT1480\nT1481\nT1482\nT1483\nT1484\nT1485\nT1486\nT1487\nT1488\nT1489\nT1490\nT1491\nT1492\nT1493\nT1494\nT1495\nT1496\nT1497\nT1498\nT1499\nT1500\nT1501\nT1502\nT1503\nT1504\nT1505\nT1506\nT1507\nT1508\nT1509\nT1510\nT1511\nT1512\nT1513\nT1514\nT1515\nT1516\nT1517\nT1518\nT1519\nT1520\nT1521\nT1522\nT1523\nT1524\nT1525\nT1526\nT1527\nT1528\nT1529\nT1530\nT1531\nT1532\nT1533\nT1534\nT1535\nT1536\nT1537\nT1538\nT1539\nT1540\nT1541\nT1542\nT1543\nT1544\nT1545\nT1546\nT1547\nT1548\nT1549\nT1550\nT1551\nT1552\nT1553\nT1554\nT1555\nT1556\nT1557\nT1558\nT1559\nT1560\nT1561\nT1562\nT1563\nT1564\nT1565\nT1566\nT1567\nT1568\nT1569\nT1570\nT1571\nT1572\nT1573\nT1574\nT1575\nT1576\nT1577\nT1578\nT1579\nT1580\nT1581\nT1582\nT1583\nT1584\nT1585\nT1586\nT1587\nT1588\nT1589\nT1590\nT1591\nT1592\nT1593\nT1594\nT1595\nT1596\nT1597\nT1598\nT1599\nT1600\nT1601\nT1602\nT1603\nT1604\nT1605\nT1606\nT1607\nT1608\nT1609\nT1610\nT1611\nT1612\nT1613\nT1614\nT1615\nT1616\nT1617\nT1618\nT1619\nT1620\nT1621\nT1622\nT1623\nT1624\nT1625\nT1626\nT1627\nT1628\nT1629\nT1630\nT1631\nT1632\nT1633\nT1634\nT1635\nT1636\nT1637\nT1638\nT1639\nT1640\nT1641\nT1642\nT1643\nT1644\nT1645\nT1646\nT1647\nT1648\nT1649\nT1650\nT1651\nT1652\nT1653\nT1654\nT1655\nT1656\nT1657\nT1658\nT1659\nT1660\nT1661\nT1662\nT1663\nT1664\nT1665\nT1666\nT1667\nT1668\nT1669\nT1670\nT1671\nT1672\nT1673\nT1674\nT1675\nT1676\nT1677\nT1678\nT1679\nT1680\nT1681\nT1682\nT1683\nT1684\nT1685\nT1686\nT1687\nT1688\nT1689\nT1690\nT1691\nT1692\nT1693\nT1694\nT1695\nT1696\nT1697\nT1698\nT1699\nT1700\nT1701\nT1702\nT1703\nT1704\nT1705\nT1706\nT1707\nT1708\nT1709\nT1710\nT1711\nT1712\nT1713\nT1714\nT1715\nT1716\nT1717\nT1718\nT1719\nT1720\nT1721\nT1722\nT1723\nT1724\nT1725\nT1726\nT1727\nT1728\nT1729\nT1730\nT1731\nT1732\nT1733\nT1734\nT1735\nT1736\nT1737\nT1738\nT1739\nT1740\nT1741\nT1742\nT1743\nT1744\nT1745\nT1746\nT1747\nT1748\nT1749\nT1750\nT1751\nT1752\nT1753\nT1754\nT1755\nT1756\nT1757\nT1758\nT1759\nT1760\nT1761\nT1762\nT1763\nT1764\nT1765\nT1766\nT1767\nT1768\nT1769\nT1770\nT1771\nT1772\nT1773\nT1774\nT1775\nT1776\nT1777\nT1778\nT1779\nT1780\nT1781\nT1782\nT1783\nT1784\nT1785\nT1786\nT1787\nT1788\nT1789\nT1790\nT1791\nT1792\nT1793\nT1794\nT1795\nT1796\nT1797\nT1798\nT1799\nT1800\nT1801\nT1802\nT1803\nT1804\nT1805\nT1806\nT1807\nT1808\nT1809\nT1810\nT1811\nT1812\nT1813\nT1814\nT1815\nT1816\nT1817\nT1818\nT1819\nT1820\nT1821\nT1822\nT1823\nT1824\nT1825\nT1826\nT1827\nT1828\nT1829\nT1830\nT1831\nT1832\nT1833\nT1834\nT1835\nT1836\nT1837\nT1838\nT1839\nT1840\nT1841\nT1842\nT1843\nT1844\nT1845\nT1846\nT1847\nT1848\nT1849\nT1850\nT1851\nT1852\nT1853\nT1854\nT1855\nT1856\nT1857\nT1858\nT1859\nT1860\nT1861\nT1862\nT1863\nT1864\nT1865\nT1866\nT1867\nT1868\nT1869\nT1870\nT1871\nT1872\nT1873\nT1874\nT1875\nT1876\nT1877\nT1878\nT1879\nT1880\nT1881\nT1882\nT1883\nT1884\nT1885\nT1886\nT1887\nT1888\nT1889\nT1890\nT1891\nT1892\nT1893\nT1894\nT1895\nT1896\nT1897\nT1898\nT1899\nT1900";
-  position: absolute;
-  top: 100%;
-  left: 0;
-  right: 0;
-  padding: 2rem;
-  font-family: 'Courier New', 'Courier', monospace;
-  color: rgba(255, 255, 255, 0.6);
-  font-size: 16px;
-  line-height: 2.5;
-  white-space: pre-wrap;
-  text-shadow: 
-    0 1px 0 rgba(255, 255, 255, 0.2),
-    0 0 4px rgba(255, 255, 255, 0.25);
-  animation: scroll-up-fast 15s linear infinite;
-  animation-delay: 7.5s;
-  transform: translateY(0);
-  pointer-events: none;
-  z-index: 0;
-}
-
-@keyframes scroll-up-fast {
-  0% {
-    transform: translateY(0);
-  }
-  100% {
-    transform: translateY(-100%);
-  }
-}
-
-/* Splunk-style login page - split layout */
-.login-page-splunk {
-  min-height: 100vh;
-  display: flex;
-  background: #ffffff;
-}
-
-@media (max-width: 1023px) {
-  .login-page-splunk {
-    background: #ffffff;
-  }
-}
-
-/* Splunk-style login page with tech background */
-.login-page-splunk-splash {
-  min-height: 100vh;
-  display: flex;
-  background: #0f172a;
-  position: relative;
-  overflow: hidden;
-}
-
-.login-page-splunk-splash::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  background: 
-    repeating-linear-gradient(
-      0deg,
-      transparent,
-      transparent 2px,
-      rgba(16, 185, 129, 0.03) 2px,
-      rgba(16, 185, 129, 0.03) 4px
-    );
-  pointer-events: none;
-  z-index: 0;
-}
-
-/* Scrolling tech text animation */
-@keyframes scroll-up {
-  0% {
-    transform: translateY(0);
-  }
-  100% {
-    transform: translateY(-50%);
-  }
-}
-
-:root {
-  --elite-gradient: radial-gradient(circle at 20% 20%, rgba(59, 130, 246, 0.4), transparent 40%);
-}
-
-.elite-dashboard-bg {
-  background:
-    radial-gradient(circle at 0% 0%, rgba(59, 130, 246, 0.38), transparent 55%),
-    radial-gradient(circle at 75% 0%, rgba(56, 189, 248, 0.32), transparent 55%),
-    radial-gradient(circle at 100% 100%, rgba(15, 118, 110, 0.18), transparent 65%),
-    linear-gradient(145deg, #020617, #020617 45%, #020617);
-}
-
-.ai-hero-mesh {
-  position: relative;
-  background:
-    radial-gradient(circle at 0% 0%, rgba(30, 64, 175, 0.32), transparent 55%),
-    radial-gradient(circle at 55% -15%, rgba(37, 99, 235, 0.38), transparent 65%),
-    radial-gradient(circle at 100% 10%, rgba(15, 23, 42, 0.8), transparent 65%),
-    linear-gradient(145deg, #020617, #020617 45%, #020617);
-  border-radius: 1.5rem;
-  box-shadow: 0 20px 60px rgba(15, 23, 42, 0.9);
-  overflow: hidden;
-}
-
-.ai-hero-mesh::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  background:
-    linear-gradient(rgba(51, 65, 85, 0.22) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(30, 64, 175, 0.18) 1px, transparent 1px);
-  background-size: 160px 160px, 160px 160px;
-  mix-blend-mode: soft-light;
-  opacity: 0.22;
-  pointer-events: none;
-}
-
 .elite-card {
   background: var(--surface-card);
   border: 1px solid var(--stroke-soft);
   box-shadow: var(--shadow-soft);
   color: var(--surface-card-foreground);
-}
-
-.login-hero {
-  position: relative;
-  overflow: hidden;
 }
 
 /* Flashcard flip animation */
@@ -1626,9 +1378,9 @@ body {
   min-width: 0;
 }
 
-/* Ensure max-width containers don't break on zoom */
+/* Ensure fixed max-width containers still shrink on narrow/zoomed viewports,
+   without wiping out the intended max-width on normal viewports. */
 [class*="max-w-"] {
-  max-width: 100%;
   width: 100%;
 }
 
@@ -1658,90 +1410,6 @@ body {
     #ef4444 100%
   );
   animation: shimmer 1.6s linear infinite;
-}
-
-.login-card {
-  background:
-    radial-gradient(circle at 50% 0%, rgba(255, 255, 255, 0.9), transparent 65%),
-    linear-gradient(180deg, #ffffff, #f3f4f6);
-  border-radius: 1.1rem;
-  border: 1px solid rgba(148, 163, 184, 0.35);
-  box-shadow: 0 32px 80px rgba(15, 23, 42, 0.35);
-  backdrop-filter: blur(26px);
-  position: relative;
-  overflow: hidden;
-}
-
-.login-card::before {
-  content: "";
-  position: absolute;
-  inset: -1px;
-  border-radius: inherit;
-  background: linear-gradient(145deg, rgba(59, 130, 246, 0.55), rgba(236, 72, 153, 0.25));
-  opacity: 0.18;
-  pointer-events: none;
-}
-
-.login-card-compact {
-  background:
-    radial-gradient(circle at 50% 0%, rgba(255, 255, 255, 0.95), transparent 70%),
-    linear-gradient(180deg, #ffffff, #f8fafc);
-  border-radius: 0.5rem;
-  border: 1px solid rgba(148, 163, 184, 0.3);
-  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.2), 0 2px 8px rgba(15, 23, 42, 0.1);
-  backdrop-filter: blur(12px);
-  position: relative;
-  overflow: hidden;
-  isolation: isolate;
-}
-
-.login-card-compact::before {
-  content: "";
-  position: absolute;
-  inset: -1px;
-  border-radius: inherit;
-  background: linear-gradient(145deg, rgba(59, 130, 246, 0.4), rgba(236, 72, 153, 0.15));
-  opacity: 0.12;
-  pointer-events: none;
-  z-index: 0;
-}
-
-.login-card-premium {
-  background: 
-    radial-gradient(circle at 30% 20%, rgba(255, 255, 255, 0.98), transparent 50%),
-    radial-gradient(circle at 70% 80%, rgba(248, 250, 252, 0.95), transparent 50%),
-    linear-gradient(135deg, #ffffff 0%, #fafbfc 100%);
-  border-radius: 1.5rem;
-  border: 1px solid rgba(226, 232, 240, 0.8);
-  box-shadow: 
-    0 20px 60px rgba(15, 23, 42, 0.12),
-    0 8px 24px rgba(15, 23, 42, 0.08),
-    0 0 0 1px rgba(255, 255, 255, 0.5) inset;
-  backdrop-filter: blur(20px);
-  position: relative;
-  overflow: hidden;
-}
-
-.login-card-premium::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  border-radius: inherit;
-  background: linear-gradient(135deg, rgba(59, 130, 246, 0.03) 0%, rgba(139, 92, 246, 0.02) 100%);
-  pointer-events: none;
-  z-index: 0;
-}
-
-.login-card-premium::after {
-  content: "";
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 1px;
-  background: linear-gradient(90deg, transparent, rgba(148, 163, 184, 0.2), transparent);
-  pointer-events: none;
-  z-index: 1;
 }
 
 .blend-layer {
@@ -1927,14 +1595,6 @@ body, p, span, div,
 }
 
 /* Modern Glass Morphism */
-.glass-card {
-  background: rgba(15, 23, 42, 0.7);
-  backdrop-filter: blur(20px) saturate(180%);
-  -webkit-backdrop-filter: blur(20px) saturate(180%);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
-}
-
 /* Dynamic Grid Layouts */
 .dynamic-grid {
   display: grid;
