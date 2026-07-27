@@ -536,7 +536,7 @@ class SIEMConnectionCreate(SIEMConnectionBase):
             raise ValueError("SIEM URL must not include query parameters or fragments")
 
         host = parsed.hostname.lower()
-        if host in {"localhost", "0.0.0.0"}:
+        if host in {"localhost", "0.0.0.0"}:  # nosec B104 -- rejecting, not binding
             raise ValueError("SIEM URL must not point to a loopback host")
 
         metadata_hosts = {

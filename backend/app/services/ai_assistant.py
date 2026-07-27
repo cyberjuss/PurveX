@@ -41,7 +41,7 @@ def validate_llm_base_url(api_base_url: Optional[str]) -> None:
     host = (parsed.hostname or "").lower()
     if not host:
         raise ValueError("LLM base URL is missing a hostname")
-    if host in {"localhost", "127.0.0.1", "::1", "0.0.0.0"}:
+    if host in {"localhost", "127.0.0.1", "::1", "0.0.0.0"}:  # nosec B104 -- rejecting, not binding
         raise ValueError("LLM base URL must not point at a loopback address")
     allowed = _llm_allowed_hosts()
     if host not in allowed:

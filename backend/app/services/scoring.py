@@ -520,7 +520,7 @@ def _when_score(d: DetectionSignal, detection_time: datetime) -> int:
 
 def _where_score(d: DetectionSignal) -> int:
     src_ok = False
-    if _is_meaningful(d.src_ip) and d.src_ip not in ["0.0.0.0", "::"]:
+    if _is_meaningful(d.src_ip) and d.src_ip not in ["0.0.0.0", "::"]:  # nosec B104 -- excluding a telemetry value, not binding a socket
         extras = [d.src_port, d.src_geo, d.src_hostname, d.src_asn]
         src_ok = any(_is_meaningful(x) for x in extras)
 

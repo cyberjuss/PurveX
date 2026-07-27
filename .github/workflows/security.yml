@@ -34,15 +34,25 @@ jobs:
     - name: Run Safety (Python dependency scan)
       run: |
         cd backend
-        safety check --json > safety-report.json || safety check
-      continue-on-error: true
-    
-    - name: Run Bandit (Python security linting)
+        safety check --json > safety-report.json
+        safety check
+      # BLOCKING: no known vulnerabilities in runtime dependencies as of the
+      # 2026-07-27 audit (paramiko/setuptools patched). A new finding here
+      # means a dependency needs a version bump or an explicit, reviewed
+      # ignore — not a silent pass-through.
+
+    - name: Run Bandit (Python security linting) — fails on Medium/High
       run: |
         cd backend
-        bandit -r app/ -f json -o bandit-report.json -ll || bandit -r app/ -ll
-      continue-on-error: true
-      
+        # JSON artifact first, non-blocking (upload step below reads it
+        # regardless of pass/fail); the second call is what actually gates.
+        bandit -r app/ -f json -o bandit-report.json -ll || true
+        bandit -r app/ -ll
+      # BLOCKING at Medium+/High severity (the `-ll` threshold). Low-severity
+      # findings still run (see summary step) but don't block merges yet —
+      # triage backlog, not zero. All Medium/High findings as of 2026-07-27
+      # are fixed or narrowly `# nosec`'d with a justification comment inline.
+
     - name: Bandit Summary
       if: always()
       run: |
@@ -62,12 +72,23 @@ jobs:
         cd frontend
         npm ci
     
-    - name: Run npm audit
+    - name: Run npm audit (production dependencies) — blocking
+      run: |
+        cd frontend
+        npm audit --omit=dev --audit-level=moderate
+      # BLOCKING for production dependencies (0 known vulnerabilities as of
+      # 2026-07-27 — next/sharp patched, sharp pinned via package.json
+      # "overrides" since next only allows non-major sharp bumps itself).
+      # --omit=dev excludes devDependencies (eslint/typescript-eslint's
+      # minimatch chain) — those aren't shipped to users; track separately,
+      # don't let lint-tooling churn block ships.
+
+    - name: Run npm audit (all dependencies, informational)
       run: |
         cd frontend
         npm audit --audit-level=moderate
       continue-on-error: true
-    
+
     - name: Run Unit Tests
       run: |
         cd backend

@@ -5,6 +5,7 @@ from pathlib import Path
 import shutil
 import tarfile
 import tempfile
+from urllib.parse import urlparse
 from urllib.request import urlretrieve
 
 import yaml
@@ -203,12 +204,24 @@ async def preload_atomic_catalog() -> int:
 def _download_atomic_catalog() -> int:
     global ATOMIC_TESTS
     url = getattr(settings, "ATOMIC_TARBALL_URL", "") or "https://github.com/redcanaryco/atomic-red-team/archive/refs/heads/master.tar.gz"
+    # SECURITY: urlretrieve follows whatever scheme it's given, including
+    # file:// (local file disclosure) and other non-http(s) handlers.
+    # ATOMIC_TARBALL_URL is operator-configured, not attacker-controllable
+    # per-request, but there's no reason this ever needs to be non-http(s).
+    if urlparse(url).scheme not in {"http", "https"}:
+        raise RuntimeError(f"ATOMIC_TARBALL_URL must be http:// or https://, got {url!r}")
     target_dir = _atomic_data_dir()
     tmp_dir = Path(tempfile.mkdtemp(prefix="purvex-atomic-"))
     tar_path = tmp_dir / "atomic-red-team.tar.gz"
-    urlretrieve(url, tar_path)
+    urlretrieve(url, tar_path)  # nosec B310 -- scheme validated above
     with tarfile.open(tar_path, "r:gz") as tar:
-        tar.extractall(tmp_dir)
+        # SECURITY: "data" filter (PEP 706) rejects members that would
+        # traverse outside tmp_dir (../-style paths), absolute paths, device
+        # files, and other unsafe entries. ATOMIC_TARBALL_URL is operator-
+        # configured (env var), not attacker-controllable per-request, but
+        # this is cheap, zero-downside hardening against a compromised or
+        # tampered upstream archive.
+        tar.extractall(tmp_dir, filter="data")
     extracted_root = next(tmp_dir.glob("atomic-red-team-*"), None)
     if not extracted_root or not extracted_root.is_dir():
         raise RuntimeError("Atomic Red Team archive did not contain expected folder.")

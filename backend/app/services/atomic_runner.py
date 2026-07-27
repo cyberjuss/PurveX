@@ -212,7 +212,11 @@ def run_atomic_test(
 
         client.connect(**connect_kwargs)
         _verify_transport_host_key(client, runner["hostname"], ssh_host_key_sha256)
-        _, stdout, stderr = client.exec_command(command, timeout=300)
+        # nosec B601 -- bandit flags any exec_command call generically. `command`
+        # is built by _build_atomic_command from technique_id (regex-validated
+        # against _TECHNIQUE_ID_RE) and atomic_test_name (allowlist-validated
+        # against _ATOMIC_TEST_NAME_RE) — see 2026-07-27 security audit fix.
+        _, stdout, stderr = client.exec_command(command, timeout=300)  # nosec B601
         exit_status = stdout.channel.recv_exit_status()
         stderr_text = stderr.read().decode("utf-8", errors="ignore").strip()
         if exit_status != 0:
