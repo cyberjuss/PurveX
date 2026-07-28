@@ -148,6 +148,29 @@ async def get_current_user(
             detail="User not found",
         )
 
+    # SECURITY: reject tokens issued before the user's last password change.
+    # JWTs are otherwise stateless, so without this a password reset (e.g.
+    # in response to a suspected compromise) wouldn't invalidate whatever
+    # session the attacker already had. See set_user_password and
+    # confirm_password_reset, which set token_valid_after.
+    token_valid_after = getattr(user, "token_valid_after", None)
+    if token_valid_after is not None:
+        issued_at = payload.get("iat")
+        if issued_at is not None:
+            if token_valid_after.tzinfo is None:
+                token_valid_after = token_valid_after.replace(tzinfo=timezone.utc)
+            # `iat` is second-resolution (JWT/PyJWT truncate to whole
+            # seconds); token_valid_after has sub-second precision. Floor it
+            # before comparing so a token minted in the *same* second as the
+            # password change isn't wrongly rejected — the reset always
+            # completes before a subsequent login can be attempted, so same-
+            # second here means "at or after", not "before".
+            if int(issued_at) < int(token_valid_after.timestamp()):
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Session has been revoked. Please log in again.",
+                )
+
     # Re-checked on every request (not just at login) so a deactivation
     # takes effect immediately instead of waiting for the session to expire.
     if not getattr(user, "is_active", True):

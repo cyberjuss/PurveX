@@ -49,6 +49,15 @@ class User(Base):
     # set a password yet. Login is blocked while pending — see auth.py login.
     is_pending_activation = Column(Boolean, default=False, nullable=False)
 
+    # SECURITY: session revocation on password change. JWTs are stateless, so
+    # an admin-forced or self-service password reset doesn't by itself
+    # invalidate any already-issued token for this user. get_current_user
+    # rejects any token whose `iat` predates this timestamp — see
+    # routers/rbac.py::set_user_password and
+    # routers/password_reset.py::confirm_password_reset, which set it.
+    # Nullable: existing users are unaffected until their next password change.
+    token_valid_after = Column(DateTime(timezone=True), nullable=True)
+
     # RBAC: User roles relationship
     user_roles = relationship("UserRole", back_populates="user", foreign_keys="UserRole.user_id")
     password_history = relationship("PasswordHistory", back_populates="user", cascade="all, delete-orphan")

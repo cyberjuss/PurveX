@@ -192,6 +192,11 @@ async def confirm_password_reset(payload: PasswordResetConfirm, db: DBSession):
     # All checks passed – update the password and history.
     new_hash = hash_password(new_password)
     user.hashed_password = new_hash
+    # SECURITY: revoke any session issued before this reset — see
+    # token_valid_after on the User model / auth.get_current_user. A
+    # self-service reset is often done specifically because the user
+    # suspects their account is compromised.
+    user.token_valid_after = now
     reset_token_record.used_at = now
     db.add(
         models.PasswordHistory(

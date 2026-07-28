@@ -227,6 +227,11 @@ async def create_db_and_tables():
                 user_columns = {col["name"] for col in inspector.get_columns("users")}
                 if "username" not in user_columns:
                     sync_conn.execute(text("ALTER TABLE users ADD COLUMN username VARCHAR(100)"))
+                # Mirror Alembic 0015 for legacy SQLite databases that pre-date
+                # password-change session revocation. Without this column,
+                # every User query errors with "no such column".
+                if "token_valid_after" not in user_columns:
+                    sync_conn.execute(text("ALTER TABLE users ADD COLUMN token_valid_after DATETIME"))
                 runner_columns = {col["name"] for col in inspector.get_columns("environment_runner_configs")}
                 if "os" not in runner_columns:
                     sync_conn.execute(text("ALTER TABLE environment_runner_configs ADD COLUMN os VARCHAR(255)"))

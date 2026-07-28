@@ -397,6 +397,9 @@ async def set_user_password(
     # Set new password and store in history
     new_hash = hash_password(password)
     user.hashed_password = new_hash
+    # SECURITY: revoke any session issued before this reset — see
+    # token_valid_after on the User model / auth.get_current_user.
+    user.token_valid_after = datetime.now(timezone.utc)
     db.add(
         models.PasswordHistory(
             user_id=user.id,
