@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 from datetime import datetime, timedelta, timezone
 from typing import Literal, Optional
@@ -17,6 +18,8 @@ from ..utils.authz import require_permission, Permission
 from ..utils.rate_limit import check_rate_limit
 from sqlalchemy import select, desc, func
 from .. import models
+
+logger = logging.getLogger("purvex.api.assistant")
 
 
 def _enforce_chat_rate_limit(user) -> None:

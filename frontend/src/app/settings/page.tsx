@@ -259,16 +259,18 @@ export default function SettingsPage() {
                     <Icon className="h-5 w-5" />
                   </div>
                   <div className="min-w-0 flex-1">
-                    <div className="flex items-center justify-between gap-3">
-                      <h3 className="truncate text-lg font-display font-semibold text-[var(--surface-card-foreground)]">
-                        {item.label}
-                      </h3>
-                      {item.statusText && (
-                        <Chip tone={settingsStatusTone(item.status)} size="md">
-                          {item.statusText}
-                        </Chip>
-                      )}
-                    </div>
+                    <h3 className="truncate text-lg font-display font-semibold text-[var(--surface-card-foreground)]">
+                      {item.label}
+                    </h3>
+                    {item.statusText && (
+                      <Chip
+                        tone={settingsStatusTone(item.status)}
+                        size="md"
+                        className="mt-1.5 max-w-full truncate"
+                      >
+                        {item.statusText}
+                      </Chip>
+                    )}
                     <p className="mt-2 text-sm leading-6 text-[var(--surface-subtle-foreground)]">
                       {item.description}
                     </p>
