@@ -9,6 +9,7 @@ leakage, no 500s) and only the actual email delivery is skipped.
 
 from __future__ import annotations
 
+import html
 import logging
 from email.message import EmailMessage
 
@@ -105,7 +106,12 @@ async def send_password_reset_email(to: str, reset_link: str) -> bool:
 
 
 async def send_invite_email(to: str, invite_link: str, inviter_name: str | None = None) -> bool:
+    # inviter_name comes from an admin's username/email, which has no
+    # character restriction — escape it before it lands in the HTML body.
+    # The plaintext body doesn't need escaping (and shouldn't get it, or
+    # a name containing "&" would render as "&amp;" to a text client).
     inviter = f"{inviter_name} has" if inviter_name else "You've been"
+    inviter_html = f"{html.escape(inviter_name)} has" if inviter_name else "You've been"
     subject = "You've been invited to PurveX"
     text_body = (
         f"{inviter} invited you to join PurveX.\n\n"
@@ -116,7 +122,7 @@ async def send_invite_email(to: str, invite_link: str, inviter_name: str | None 
         "You've been invited",
         f"""
         <p style="margin:0 0 20px;font-size:14px;line-height:1.6;color:#3f4a63;">
-          {inviter} invited you to join PurveX. This link expires in 7 days.
+          {inviter_html} invited you to join PurveX. This link expires in 7 days.
         </p>
         <a href="{invite_link}" style="display:inline-block;padding:10px 20px;background:#5546e0;color:#ffffff;text-decoration:none;border-radius:8px;font-size:14px;font-weight:600;">
           Accept invite
