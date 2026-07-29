@@ -233,6 +233,19 @@ async def assign_role(
     assigned_at = user_role.assigned_at
     await db.commit()
 
+    async with async_sessionmaker() as session:
+        session.add(
+            models.AuditEvent(
+                user_id=current_user.id,
+                user_email=current_user.email,
+                action="ROLE_ASSIGNED",
+                resource_type="user",
+                resource_id=str(user.id),
+                details=f"Assigned role {role_name_value} to {user.email}",
+            )
+        )
+        await session.commit()
+
     return {
         "id": user_role_id,
         "user_id": user_role.user_id,
@@ -295,7 +308,20 @@ async def remove_role(
         )
     )
     await db.commit()
-    
+
+    async with async_sessionmaker() as session:
+        session.add(
+            models.AuditEvent(
+                user_id=current_user.id,
+                user_email=current_user.email,
+                action="ROLE_REMOVED",
+                resource_type="user",
+                resource_id=str(user.id),
+                details=f"Removed role {role.name} from {user.email}",
+            )
+        )
+        await session.commit()
+
     return None
 
 
