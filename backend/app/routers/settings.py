@@ -687,9 +687,11 @@ async def generate_agent_registration_token(
     This token is specifically for registering agents and has limited scope.
     """
     from ..security import create_access_token, decode_access_token
+    from ..utils.encryption import encrypt_value
+    from ..utils.ssh_keys import generate_ed25519_keypair
 
     await require_permission(current_user, Permission.SETTINGS_RUNNERS_MANAGE, db)
-    
+
     # Create a token that expires in 1 year (long-lived for agent registration)
     # Include user info and a flag indicating this is an agent registration token
     token_data = {
@@ -698,12 +700,19 @@ async def generate_agent_registration_token(
         "is_admin": current_user.is_admin,
         "agent_registration": True,  # Flag to identify this as an agent registration token
     }
-    
+
     # Generate a short-lived token for one-time agent registration
     registration_token = create_access_token(
         data=token_data,
         expires_minutes=settings.AGENT_REGISTRATION_TOKEN_TTL_MINUTES,
     )
+
+    # Mint a keypair alongside the token: the public half is embedded in the
+    # generated installer script so it can provision its own
+    # authorized_keys entry, and the private half is stored encrypted here
+    # so create_environment_runner can hand it to the new runner without
+    # ever exposing it back over the API.
+    private_key_pem, public_key_line = generate_ed25519_keypair()
 
     token_payload = decode_access_token(registration_token) or {}
     token_jti = token_payload.get("jti")
@@ -716,6 +725,8 @@ async def generate_agent_registration_token(
                 issued_by_user_id=current_user.id,
                 jti=token_jti,
                 expires_at=datetime.fromtimestamp(token_exp, tz=timezone.utc),
+                ssh_public_key=public_key_line,
+                ssh_private_key_encrypted=encrypt_value(private_key_pem),
             )
         )
         await db.commit()
@@ -723,6 +734,7 @@ async def generate_agent_registration_token(
     return {
         "token": registration_token,
         "expires_in_minutes": settings.AGENT_REGISTRATION_TOKEN_TTL_MINUTES,
+        "public_key": public_key_line,
         "message": "Agent registration token generated successfully"
     }
 
@@ -761,7 +773,19 @@ async def create_environment_runner(
         sanitized_data["owner_email"] = current_user.email
     if not sanitized_data.get("owner_name"):
         sanitized_data["owner_name"] = current_user.username or current_user.email
-    
+
+    # SECURITY: a runner that reports "online" but has no pinned host key
+    # can't actually run anything — atomic_runner.run_atomic_test refuses to
+    # connect without one (SSH MITM protection). Enforce it at registration
+    # time instead of letting a runner sit "online" but silently unusable.
+    if (sanitized_data.get("runner_type") or "").upper() == "SSH" and not (
+        sanitized_data.get("ssh_host_key_sha256") or ""
+    ).strip():
+        raise HTTPException(
+            status_code=400,
+            detail="SSH host key SHA256 fingerprint is required to register an SSH runner.",
+        )
+
     org_id = require_org_id(current_user)
     token_record = None
     now = datetime.now(timezone.utc)
@@ -805,6 +829,13 @@ async def create_environment_runner(
         runner_token_expires_at=expires_at,
         **sanitized_data,
     )
+    if token_record and token_record.ssh_private_key_encrypted:
+        # Hand the runner the keypair minted alongside the registration
+        # token — the installer script already provisioned the public half
+        # into authorized_keys on the target machine (see
+        # register_agent.sh/.ps1/.py), so PurveX can connect immediately.
+        db_runner.ssh_public_key = token_record.ssh_public_key
+        db_runner.ssh_private_key_encrypted = token_record.ssh_private_key_encrypted
     db.add(db_runner)
     await db.flush()
     if token_record:

@@ -652,6 +652,13 @@ class EnvironmentRunnerConfig(Base):
     auth_method = Column(String, default="key")
     key_path = Column(String, nullable=True)
     ssh_host_key_sha256 = Column(String, nullable=True)
+    # Server-generated identity for the automated installer-script flow (see
+    # AgentRegistrationToken below). Populated from the token record when a
+    # runner is created via a registration token; left null for runners
+    # entered manually through the "Manual SSH" form, which use key_path
+    # pointing at a key already on the PurveX server's filesystem instead.
+    ssh_public_key = Column(Text, nullable=True)
+    ssh_private_key_encrypted = Column(Text, nullable=True)
     allowed_test_types = Column(Text, default='["Atomic only"]')  # JSON string
     max_concurrent_tests = Column(Integer, default=1)
     heartbeat_interval_seconds = Column(Integer, default=5)
@@ -698,6 +705,13 @@ class AgentRegistrationToken(Base):
     expires_at = Column(DateTime(timezone=True), nullable=False)
     used_at = Column(DateTime(timezone=True), nullable=True)
     used_by_runner_id = Column(Integer, ForeignKey("environment_runner_configs.id"), nullable=True)
+    # Keypair minted alongside the token so the installer script can
+    # provision its own authorized_keys entry and PurveX already has the
+    # matching private key on hand the moment registration completes — see
+    # EnvironmentRunnerConfig.ssh_private_key_encrypted, which this is
+    # copied into when the token is consumed.
+    ssh_public_key = Column(Text, nullable=True)
+    ssh_private_key_encrypted = Column(Text, nullable=True)
 
 
 class TestingPolicy(Base):

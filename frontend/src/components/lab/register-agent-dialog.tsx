@@ -24,6 +24,7 @@ import { cn } from "@/lib/utils";
 interface AgentRegistrationResponse {
   token?: string;
   expires_in_minutes?: number;
+  public_key?: string;
 }
 
 interface EnvironmentRunnerConfig {
@@ -67,9 +68,15 @@ function getDefaultRunnerApiUrl(): string {
   return directBase || "http://127.0.0.1:8001";
 }
 
-// Installer script templates. Token is never embedded — supplied at runtime
-// via prompt, --token/-Token flag, or PURVEX_API_TOKEN env var.
-function getAgentScript(type: "bash" | "powershell" | "python", apiUrl: string): string {
+// Installer script templates. The registration token is never embedded —
+// supplied at runtime via prompt, --token/-Token flag, or PURVEX_API_TOKEN
+// env var. The public key IS embedded: it's not secret, and it's specific
+// to the token that was active when the script was downloaded (PurveX
+// mints a fresh ed25519 keypair per token so it can SSH back into the
+// runner the moment registration completes — see
+// routers/settings.py::generate_agent_registration_token). Re-download
+// after regenerating the token if this script is more than one use old.
+function getAgentScript(type: "bash" | "powershell" | "python", apiUrl: string, publicKey: string): string {
   if (type === "bash") {
     return `#!/bin/bash
 # PurveX Agent Registration Script (Bash version)
@@ -78,6 +85,7 @@ function getAgentScript(type: "bash" | "powershell" | "python", apiUrl: string):
 set -e
 
 API_URL="${apiUrl}"
+PUBLIC_KEY="${publicKey}"
 TOKEN_PLACEHOLDER="__PURVEX_TOKEN_PLACEHOLDER__"
 API_TOKEN="${"${PURVEX_API_TOKEN:-__PURVEX_TOKEN_VALUE__}"}"
 ENV="lab"
@@ -170,6 +178,38 @@ get_local_ip() {
 
 LOCAL_IP=$(get_local_ip)
 
+# Authorize PurveX's public key so the backend can SSH back in to run
+# tests, and report this host's own SSH host key fingerprint so PurveX can
+# pin it (SSH MITM protection — registration is rejected without it).
+provision_ssh_key() {
+    mkdir -p "$HOME/.ssh"
+    chmod 700 "$HOME/.ssh"
+    touch "$HOME/.ssh/authorized_keys"
+    chmod 600 "$HOME/.ssh/authorized_keys"
+    grep -qxF "$PUBLIC_KEY" "$HOME/.ssh/authorized_keys" 2>/dev/null || echo "$PUBLIC_KEY" >> "$HOME/.ssh/authorized_keys"
+}
+
+compute_host_key_sha256() {
+    for f in /etc/ssh/ssh_host_ed25519_key.pub /etc/ssh/ssh_host_ecdsa_key.pub /etc/ssh/ssh_host_rsa_key.pub; do
+        if [ -r "$f" ] && command -v ssh-keygen >/dev/null 2>&1; then
+            ssh-keygen -lf "$f" -E sha256 2>/dev/null | awk '{print $2}'
+            return 0
+        fi
+    done
+    return 1
+}
+
+if [ -n "$PUBLIC_KEY" ]; then
+    provision_ssh_key
+fi
+SSH_HOST_KEY_SHA256=$(compute_host_key_sha256 || true)
+if [ -z "$SSH_HOST_KEY_SHA256" ]; then
+    echo "❌ ERROR: Could not determine this host's SSH host key fingerprint."
+    echo "   Checked /etc/ssh/ssh_host_{ed25519,ecdsa,rsa}_key.pub and required ssh-keygen on PATH."
+    echo "   PurveX will not accept an SSH runner without a pinned host key."
+    exit 1
+fi
+
 REGISTRATION_DATA=$(cat <<EOF
 {
   "environment_name": "$ENV",
@@ -182,6 +222,7 @@ REGISTRATION_DATA=$(cat <<EOF
   "agent_version": "v1.0.0",
   "status": "online",
   "auth_method": "key",
+  "ssh_host_key_sha256": "$SSH_HOST_KEY_SHA256",
   "allowed_test_types": "[\\"Atomic only\\"]",
   "max_concurrent_tests": 1,
   "heartbeat_interval_seconds": 5,
@@ -391,6 +432,7 @@ fi`;
 
 param(
     [string]$ApiUrl = "${apiUrl}",
+    [string]$PublicKey = "${publicKey}",
     [string]$Token = "__PURVEX_TOKEN_VALUE__",
     [string]$Env = "lab",
     [string]$Hostname = $env:COMPUTERNAME,
@@ -445,6 +487,62 @@ function Get-LocalIP {
 
 $LocalIP = Get-LocalIP
 
+# Authorize PurveX's public key so the backend can SSH back in to run
+# tests, and report this host's own SSH host key fingerprint so PurveX can
+# pin it (SSH MITM protection — registration is rejected without it).
+function Get-HostKeySha256 {
+    $candidates = @(
+        (Join-Path $env:ProgramData "ssh\\ssh_host_ed25519_key.pub"),
+        (Join-Path $env:ProgramData "ssh\\ssh_host_ecdsa_key.pub"),
+        (Join-Path $env:ProgramData "ssh\\ssh_host_rsa_key.pub")
+    )
+    foreach ($path in $candidates) {
+        if (Test-Path $path) {
+            $parts = (Get-Content $path -Raw).Trim() -split '\\s+'
+            if ($parts.Length -ge 2) {
+                $blob = [Convert]::FromBase64String($parts[1])
+                $hash = [Security.Cryptography.SHA256]::Create().ComputeHash($blob)
+                $b64 = [Convert]::ToBase64String($hash).TrimEnd('=')
+                return "SHA256:$b64"
+            }
+        }
+    }
+    return $null
+}
+
+function Add-PurveXAuthorizedKey {
+    param([string]$Key)
+    $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+    # Windows OpenSSH ignores the per-user authorized_keys file for accounts
+    # in the Administrators group and requires this ProgramData file
+    # instead, with a locked-down ACL.
+    if ($isAdmin) {
+        $target = Join-Path $env:ProgramData "ssh\\administrators_authorized_keys"
+    } else {
+        $target = Join-Path $env:USERPROFILE ".ssh\\authorized_keys"
+    }
+    New-Item -ItemType Directory -Path (Split-Path $target) -Force | Out-Null
+    $existing = if (Test-Path $target) { Get-Content $target } else { @() }
+    if ($existing -notcontains $Key) {
+        Add-Content -Path $target -Value $Key
+    }
+    if ($isAdmin) {
+        icacls $target /inheritance:r | Out-Null
+        icacls $target /grant "SYSTEM:F" /grant "Administrators:F" | Out-Null
+    }
+}
+
+if (-not [string]::IsNullOrEmpty($PublicKey)) {
+    Add-PurveXAuthorizedKey -Key $PublicKey
+}
+$SshHostKeySha256 = Get-HostKeySha256
+if ([string]::IsNullOrEmpty($SshHostKeySha256)) {
+    Write-Host "❌ ERROR: Could not determine this host's SSH host key fingerprint." -ForegroundColor Red
+    Write-Host "   Checked ProgramData\\ssh\\ssh_host_{ed25519,ecdsa,rsa}_key.pub - is the OpenSSH Server feature installed?" -ForegroundColor Yellow
+    Write-Host "   PurveX will not accept an SSH runner without a pinned host key." -ForegroundColor Yellow
+    exit 1
+}
+
 $RegistrationData = @{
     environment_name = $Env
     runner_type = "SSH"
@@ -456,6 +554,7 @@ $RegistrationData = @{
     agent_version = "v1.0.0"
     status = "online"
     auth_method = "key"
+    ssh_host_key_sha256 = $SshHostKeySha256
     allowed_test_types = '["Atomic only"]'
     max_concurrent_tests = 1
     heartbeat_interval_seconds = 5
@@ -608,10 +707,14 @@ PurveX Agent Registration Script
 Copy and paste this onto any sandbox or lab computer.
 """
 
+import base64
+import hashlib
 import os
+import stat
 import sys
 import socket
 import argparse
+from pathlib import Path
 from typing import Optional
 from getpass import getpass
 
@@ -621,8 +724,50 @@ except ImportError:
     print("ERROR: 'requests' library not found. Install it with: pip install requests")
     sys.exit(1)
 
+# Not secret — embedded so this script can provision its own authorized_keys
+# entry. Specific to the registration token active when this was downloaded;
+# re-download after regenerating the token if reusing this script.
+PUBLIC_KEY = "${publicKey}"
+
 def get_hostname() -> str:
     return socket.gethostname()
+
+def provision_ssh_key(public_key: str) -> None:
+    """Authorize PurveX's public key so the backend can SSH back in to run tests."""
+    if os.name == "nt":
+        target = Path(os.environ.get("USERPROFILE", str(Path.home()))) / ".ssh" / "authorized_keys"
+    else:
+        target = Path.home() / ".ssh" / "authorized_keys"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    existing = target.read_text(encoding="utf-8").splitlines() if target.exists() else []
+    if public_key not in existing:
+        with target.open("a", encoding="utf-8") as f:
+            f.write(public_key + "\\n")
+    if os.name != "nt":
+        os.chmod(target.parent, stat.S_IRWXU)
+        os.chmod(target, stat.S_IRUSR | stat.S_IWUSR)
+
+def compute_host_key_sha256() -> Optional[str]:
+    """Fingerprint this host's own SSH host key the same way PurveX does
+    server-side: SHA256 over the raw key blob, base64-encoded, no padding."""
+    if os.name == "nt":
+        base = Path(os.environ.get("PROGRAMDATA", "C:\\\\ProgramData")) / "ssh"
+    else:
+        base = Path("/etc/ssh")
+    for name in ("ssh_host_ed25519_key.pub", "ssh_host_ecdsa_key.pub", "ssh_host_rsa_key.pub"):
+        path = base / name
+        if not path.exists():
+            continue
+        try:
+            parts = path.read_text(encoding="utf-8").strip().split()
+            if len(parts) < 2:
+                continue
+            blob = base64.b64decode(parts[1])
+            digest = base64.b64encode(hashlib.sha256(blob).digest()).decode("ascii").rstrip("=")
+            return f"SHA256:{digest}"
+        except (OSError, ValueError):
+            continue
+    return None
 
 def get_local_ip() -> str:
     try:
@@ -656,6 +801,15 @@ def register_agent(api_url: str, api_token: str, environment: str, hostname: Opt
     except Exception:
         pass
 
+    if PUBLIC_KEY:
+        provision_ssh_key(PUBLIC_KEY)
+    ssh_host_key_sha256 = compute_host_key_sha256()
+    if not ssh_host_key_sha256:
+        print("❌ ERROR: Could not determine this host's SSH host key fingerprint.")
+        print("   Checked the local ssh_host_{ed25519,ecdsa,rsa}_key.pub files.")
+        print("   PurveX will not accept an SSH runner without a pinned host key.")
+        sys.exit(1)
+
     registration_data = {
         "environment_name": environment,
         "runner_type": "SSH",
@@ -667,6 +821,7 @@ def register_agent(api_url: str, api_token: str, environment: str, hostname: Opt
         "agent_version": "v1.0.0",
         "status": "online",
         "auth_method": "key",
+        "ssh_host_key_sha256": ssh_host_key_sha256,
         "allowed_test_types": '["Atomic only"]',
         "max_concurrent_tests": 1,
         "heartbeat_interval_seconds": 5,
@@ -730,25 +885,25 @@ while true; do
   curl -s -X POST -H "Authorization: Bearer $API_TOKEN" -H "Content-Type: application/json" \\
     -d "{{\\"os\\":\\"$OS_NAME\\",\\"ip_address\\":\\"$LOCAL_IP\\",\\"agent_version\\":\\"v1.0.0\\",\\"status\\":\\"online\\"}}" \\
     "{api_url.rstrip('/')}/agent/heartbeat" >/dev/null 2>&1 || true
-  CMD_JSON=$(curl -s -H "Authorization: Bearer \${API_TOKEN}" "\${API_URL%/}/agent/commands/next" || true)
+  CMD_JSON=$(curl -s -H "Authorization: Bearer \${{API_TOKEN}}" "\${{API_URL%/}}/agent/commands/next" || true)
   CMD_ID=$(echo "$CMD_JSON" | grep -o '"id":[0-9]*' | grep -o '[0-9]*' | head -1)
   CMD_TYPE=$(echo "$CMD_JSON" | grep -o '"command_type":"[^"]*"' | cut -d'"' -f4)
   if [ "$CMD_TYPE" = "STOP_AGENT" ] && [ -n "$CMD_ID" ]; then
-    curl -s -X POST -H "Authorization: Bearer \${API_TOKEN}" -H "Content-Type: application/json" \
-      -d "{\"status\":\"completed\",\"message\":\"Agent stopped\"}" \
-      "\${API_URL%/}/agent/commands/\${CMD_ID}/ack" >/dev/null 2>&1 || true
+    curl -s -X POST -H "Authorization: Bearer \${{API_TOKEN}}" -H "Content-Type: application/json" \\
+      -d "{{\\"status\\":\\"completed\\",\\"message\\":\\"Agent stopped\\"}}" \\
+      "\${{API_URL%/}}/agent/commands/\${{CMD_ID}}/ack" >/dev/null 2>&1 || true
     systemctl disable --now purvex-agent-heartbeat.service >/dev/null 2>&1 || true
     exit 0
   fi
   if [ "$CMD_TYPE" = "PAUSE_AGENT" ] && [ -n "$CMD_ID" ]; then
-    curl -s -X POST -H "Authorization: Bearer \${API_TOKEN}" -H "Content-Type: application/json" \
-      -d "{\"status\":\"completed\",\"message\":\"Agent paused\"}" \
-      "\${API_URL%/}/agent/commands/\${CMD_ID}/ack" >/dev/null 2>&1 || true
+    curl -s -X POST -H "Authorization: Bearer \${{API_TOKEN}}" -H "Content-Type: application/json" \\
+      -d "{{\\"status\\":\\"completed\\",\\"message\\":\\"Agent paused\\"}}" \\
+      "\${{API_URL%/}}/agent/commands/\${{CMD_ID}}/ack" >/dev/null 2>&1 || true
   fi
   if [ "$CMD_TYPE" = "RESUME_AGENT" ] && [ -n "$CMD_ID" ]; then
-    curl -s -X POST -H "Authorization: Bearer \${API_TOKEN}" -H "Content-Type: application/json" \
-      -d "{\"status\":\"completed\",\"message\":\"Agent resumed\"}" \
-      "\${API_URL%/}/agent/commands/\${CMD_ID}/ack" >/dev/null 2>&1 || true
+    curl -s -X POST -H "Authorization: Bearer \${{API_TOKEN}}" -H "Content-Type: application/json" \\
+      -d "{{\\"status\\":\\"completed\\",\\"message\\":\\"Agent resumed\\"}}" \\
+      "\${{API_URL%/}}/agent/commands/\${{CMD_ID}}/ack" >/dev/null 2>&1 || true
   fi
   sleep 5
 done
@@ -853,6 +1008,7 @@ export function RegisterAgentDialog({ open, onOpenChange, onRegistered }: Regist
   const [publicApiUrl, setPublicApiUrl] = useState<string>(getDefaultRunnerApiUrl());
   const [selectedScript, setSelectedScript] = useState<"bash" | "powershell" | "python">("bash");
   const [userToken, setUserToken] = useState<string | null>(null);
+  const [publicKey, setPublicKey] = useState<string | null>(null);
   const [tokenExpiresInMinutes, setTokenExpiresInMinutes] = useState<number | null>(null);
   const [tokenLoading, setTokenLoading] = useState(false);
   const [showToken, setShowToken] = useState(false);
@@ -883,6 +1039,7 @@ export function RegisterAgentDialog({ open, onOpenChange, onRegistered }: Regist
       })) as AgentRegistrationResponse;
       if (response?.token) {
         setUserToken(response.token);
+        setPublicKey(response.public_key ?? null);
         setShowToken(false);
         setTokenCopied(false);
         setTokenExpiresInMinutes(response?.expires_in_minutes ?? null);
@@ -898,9 +1055,13 @@ export function RegisterAgentDialog({ open, onOpenChange, onRegistered }: Regist
   }
 
   function handleDownloadScript() {
+    if (!publicKey) {
+      toast({ type: "error", title: "Generate a token first", description: "The script provisions PurveX's public key, minted alongside a registration token — generate one before downloading." });
+      return;
+    }
     try {
       const apiUrl = publicApiUrl.trim() || getDefaultRunnerApiUrl();
-      const script = getAgentScript(selectedScript, apiUrl);
+      const script = getAgentScript(selectedScript, apiUrl, publicKey);
       const blob = new Blob([script], { type: "text/plain" });
       const filename = selectedScript === "bash" ? "register_agent.sh" : selectedScript === "powershell" ? "register_agent.ps1" : "register_agent.py";
       if (typeof window !== "undefined" && (window.navigator as NavigatorWithMsSave).msSaveOrOpenBlob) {
@@ -1097,7 +1258,7 @@ export function RegisterAgentDialog({ open, onOpenChange, onRegistered }: Regist
             </div>
 
             <div className="flex flex-wrap gap-2">
-              <Button type="button" variant="outline" onClick={handleDownloadScript} disabled={!canManageAgents}>
+              <Button type="button" variant="outline" onClick={handleDownloadScript} disabled={!canManageAgents || !publicKey} title={!publicKey ? "Generate a registration token first" : ""}>
                 <Download className="h-4 w-4" />
                 Download {selectedScript === "bash" ? "register_agent.sh" : selectedScript === "powershell" ? "register_agent.ps1" : "register_agent.py"}
               </Button>
@@ -1107,7 +1268,8 @@ export function RegisterAgentDialog({ open, onOpenChange, onRegistered }: Regist
               </Button>
             </div>
             <p className="text-xs text-muted-foreground">
-              Token isn't embedded in the script. Run it on the target machine and paste the token when prompted (or pass it via env var / flag).
+              Token isn't embedded in the script — run it on the target machine and paste the token when prompted (or pass it via env var / flag).
+              The script <em>does</em> embed PurveX&apos;s public key from the token above, so it can add itself to <code>authorized_keys</code> and report the host&apos;s SSH fingerprint automatically. Re-download after regenerating the token.
               {selectedScript === "bash" && " After download: chmod +x register_agent.sh."}
             </p>
           </TabsContent>

@@ -663,6 +663,11 @@ class EnvironmentRunnerConfigCreate(EnvironmentRunnerConfigBase):
 
 class EnvironmentRunnerConfig(EnvironmentRunnerConfigBase):
     id: int
+    # Read-only: only populated for runners provisioned via a registration
+    # token (see routers/settings.py::create_environment_runner). Never
+    # accepted as client input — ssh_private_key_encrypted is never
+    # serialized to the API at all.
+    ssh_public_key: Optional[str] = None
 
     model_config = ConfigDict(from_attributes=True)
 

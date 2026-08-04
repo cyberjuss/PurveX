@@ -2,6 +2,7 @@ import asyncio
 import base64
 import hashlib
 import hmac
+import io
 import json
 import logging
 import re
@@ -18,6 +19,7 @@ from .. import models
 from ..db import async_sessionmaker
 from ..services.ai_assistant import analyze_detection
 from ..services.scoring import validate_detection_for_test, validate_telemetry_for_test
+from ..utils.encryption import decrypt_value
 
 logger = logging.getLogger(__name__)
 _TECHNIQUE_ID_RE = r"^T\d{4}(?:\.\d{3})?$"
@@ -58,6 +60,7 @@ def _runner_snapshot(runner: models.EnvironmentRunnerConfig) -> Dict[str, Any]:
         "username": runner.username,
         "auth_method": runner.auth_method,
         "key_path": runner.key_path,
+        "ssh_private_key_encrypted": getattr(runner, "ssh_private_key_encrypted", None),
         "ssh_host_key_sha256": runner.ssh_host_key_sha256,
         "os": (runner.os or "").lower(),
     }
@@ -166,6 +169,26 @@ def _build_atomic_command(
     )
 
 
+def _load_runner_pkey(runner: Dict[str, Any]) -> Optional[paramiko.PKey]:
+    """Decrypt and parse the runner's server-generated private key, if any.
+
+    Runners provisioned via the installer-script + registration-token flow
+    carry their key encrypted at rest (see routers/settings.py::
+    create_environment_runner). Manually-entered runners have no encrypted
+    key and fall back to `key_path` in run_atomic_test instead.
+    """
+    encrypted = runner.get("ssh_private_key_encrypted")
+    if not encrypted:
+        return None
+    private_pem = decrypt_value(encrypted)
+    if not private_pem:
+        return None
+    try:
+        return paramiko.Ed25519Key.from_private_key(io.StringIO(private_pem))
+    except paramiko.SSHException as exc:
+        raise RuntimeError(f"Runner's stored SSH private key could not be parsed: {exc}")
+
+
 def run_atomic_test(
     technique_id: str,
     marker: str,
@@ -206,9 +229,11 @@ def run_atomic_test(
             "banner_timeout": 20,
             "auth_timeout": 20,
         }
-        key_path = runner.get("key_path")
-        if key_path:
-            connect_kwargs["key_filename"] = key_path
+        pkey = _load_runner_pkey(runner)
+        if pkey is not None:
+            connect_kwargs["pkey"] = pkey
+        elif runner.get("key_path"):
+            connect_kwargs["key_filename"] = runner["key_path"]
 
         client.connect(**connect_kwargs)
         _verify_transport_host_key(client, runner["hostname"], ssh_host_key_sha256)
