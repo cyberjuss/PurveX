@@ -5,7 +5,7 @@ from typing import List, Optional
 from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import delete, or_, select
+from sqlalchemy import delete, func, or_, select
 from sqlalchemy.orm import selectinload
 from typing_extensions import Annotated
 
@@ -492,6 +492,23 @@ async def invite_user(
     existing = await db.execute(select(models.User).where(models.User.email == email))
     if existing.scalars().first():
         raise HTTPException(status_code=400, detail="A user with this email already exists")
+
+    from ..utils.license import get_license_status
+
+    seat_limit = get_license_status().seat_limit
+    if seat_limit is not None:
+        seat_count_result = await db.execute(
+            select(func.count(models.User.id)).where(models.User.organization_id == org_id)
+        )
+        current_seats = seat_count_result.scalar_one()
+        if current_seats >= seat_limit:
+            raise HTTPException(
+                status_code=403,
+                detail=(
+                    f"Free plan is limited to {seat_limit} users. "
+                    "Upgrade at purvex-llc.com/pricing to invite more."
+                ),
+            )
 
     username = (payload.username or email.split("@")[0]).strip() or None
 

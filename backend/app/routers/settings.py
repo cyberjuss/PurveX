@@ -787,6 +787,26 @@ async def create_environment_runner(
         )
 
     org_id = require_org_id(current_user)
+
+    from ..utils.license import get_license_status
+
+    runner_limit = get_license_status().runner_limit
+    if runner_limit is not None:
+        runner_count_result = await db.execute(
+            select(func.count(models.EnvironmentRunnerConfig.id)).where(
+                models.EnvironmentRunnerConfig.organization_id == org_id
+            )
+        )
+        current_runners = runner_count_result.scalar_one()
+        if current_runners >= runner_limit:
+            raise HTTPException(
+                status_code=403,
+                detail=(
+                    f"Free plan is limited to {runner_limit} test runner(s). "
+                    "Upgrade at purvex-llc.com/pricing to register more."
+                ),
+            )
+
     token_record = None
     now = datetime.now(timezone.utc)
     auth_header = request.headers.get("Authorization")

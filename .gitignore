@@ -36,3 +36,6 @@ backend/_fix_*.py
 
 # Stray local logs/output captured by run scripts
 tmp-start-*.log
+
+# License signing private key (scripts/issue_license.py) — never commit this
+backend/.license_signing_key.pem

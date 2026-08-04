@@ -120,6 +120,17 @@ class Settings(BaseSettings):
     RUNNER_TOKEN_TTL_DAYS: int = 90
     AGENT_REGISTRATION_TOKEN_TTL_MINUTES: int = 60
 
+    # Paid-plan license (see app/utils/license.py). PURVEX_LICENSE_KEY is the
+    # signed token an admin pastes in after purchasing; the public key below
+    # verifies it offline and never changes per-install — it's the public
+    # half of a keypair only the license issuer holds, not a secret itself.
+    PURVEX_LICENSE_KEY: str = os.getenv("PURVEX_LICENSE_KEY", "")
+    LICENSE_PUBLIC_KEY_PEM: str = os.getenv("LICENSE_PUBLIC_KEY_PEM", "") or (
+        "-----BEGIN PUBLIC KEY-----\n"
+        "REPLACE_WITH_REAL_ED25519_PUBLIC_KEY_FROM_ISSUE_LICENSE_PY\n"
+        "-----END PUBLIC KEY-----"
+    )
+
     # Testing Policy & Safety Settings (MVP)
     ALLOWED_TEST_ENVIRONMENTS: str = "lab,dev" # Comma-separated string
     DEFAULT_MARKER_PREFIX: str = "purvex_"
