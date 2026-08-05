@@ -493,9 +493,9 @@ async def invite_user(
     if existing.scalars().first():
         raise HTTPException(status_code=400, detail="A user with this email already exists")
 
-    from ..utils.license import get_license_status
+    from ..utils.license import get_org_license_status
 
-    seat_limit = get_license_status().seat_limit
+    seat_limit = (await get_org_license_status(db, org_id)).seat_limit
     if seat_limit is not None:
         seat_count_result = await db.execute(
             select(func.count(models.User.id)).where(models.User.organization_id == org_id)

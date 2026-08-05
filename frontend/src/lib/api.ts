@@ -1582,6 +1582,29 @@ export async function updateOrganizationSettings(payload: Omit<OrganizationSetti
   });
 }
 
+export interface LicenseStatus {
+  plan: "free" | "paid";
+  seat_limit: number | null;
+  runner_limit: number | null;
+  has_saved_key: boolean;
+  source: "database" | "env" | "none";
+}
+
+export async function getLicenseStatus(): Promise<LicenseStatus> {
+  return apiFetch("/settings/license", { cache: "no-store" });
+}
+
+export async function updateLicenseKey(licenseKey: string): Promise<LicenseStatus> {
+  return apiFetch("/settings/license", {
+    method: "PUT",
+    body: JSON.stringify({ license_key: licenseKey }),
+  });
+}
+
+export async function clearLicenseKey(): Promise<LicenseStatus> {
+  return apiFetch("/settings/license", { method: "DELETE" });
+}
+
 export async function getSiemConnections(): Promise<SIEMConnection[]> {
   return apiFetch("/settings/siem-connections");
 }

@@ -18,6 +18,10 @@ class Organization(Base):
     locale = Column(String, default="en_US")
     default_environment_names = Column(Text, default='["lab", "dev", "prod"]')  # JSON string
     compliance_mode_flags = Column(Text, default='[]')  # JSON string
+    # Set via Settings -> License; encrypted at rest like SIEM credentials.
+    # Takes priority over the PURVEX_LICENSE_KEY env var when present -- see
+    # utils/license.get_org_license_status.
+    license_key_encrypted = Column(Text, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 

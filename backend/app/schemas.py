@@ -508,6 +508,16 @@ class Organization(OrganizationBase):
 
     model_config = ConfigDict(from_attributes=True)
 
+class LicenseKeyUpdate(BaseModel):
+    license_key: str
+
+class LicenseStatusResponse(BaseModel):
+    plan: str
+    seat_limit: Optional[int] = None
+    runner_limit: Optional[int] = None
+    has_saved_key: bool
+    source: str  # "database" | "env" | "none"
+
 class SIEMConnectionBase(BaseModel):
     siem_type: str
     name: str

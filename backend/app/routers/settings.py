@@ -261,6 +261,124 @@ async def update_organization_settings(
             detail="Failed to update organization settings.",
         )
 
+# --- License ---
+
+@router.get("/license", response_model=schemas.LicenseStatusResponse)
+async def get_license_settings(
+    db: DBSession,
+    current_user: CurrentUser,
+):
+    await require_permission(current_user, Permission.SETTINGS_READ, db)
+    org_id = require_org_id(current_user)
+
+    from ..utils.license import get_org_license_status
+
+    result = await db.execute(
+        select(models.Organization.license_key_encrypted).where(models.Organization.id == org_id)
+    )
+    has_saved_key = bool(result.scalar_one_or_none())
+    license_status = await get_org_license_status(db, org_id)
+
+    source = "database" if has_saved_key else ("env" if settings.PURVEX_LICENSE_KEY else "none")
+    return schemas.LicenseStatusResponse(
+        plan=license_status.plan,
+        seat_limit=license_status.seat_limit,
+        runner_limit=license_status.runner_limit,
+        has_saved_key=has_saved_key,
+        source=source,
+    )
+
+@router.put("/license", response_model=schemas.LicenseStatusResponse)
+async def update_license_settings(
+    payload: schemas.LicenseKeyUpdate,
+    db: DBSession,
+    current_user: CurrentUser,
+    request: Request,
+):
+    await require_permission(current_user, Permission.SETTINGS_ORG_MANAGE, db, request)
+    org_id = require_org_id(current_user)
+    user_id, user_email = safe_user_identity(current_user)
+
+    token = payload.license_key.strip()
+    if not token:
+        raise HTTPException(status_code=400, detail="License key is required.")
+
+    from ..utils.license import LicenseKeyInvalid, verify_license_key
+
+    try:
+        license_status = verify_license_key(token)
+    except LicenseKeyInvalid as exc:
+        raise HTTPException(status_code=400, detail=f"That license key couldn't be verified: {exc}")
+
+    result = await db.execute(select(models.Organization).where(models.Organization.id == org_id))
+    organization = result.scalar_one_or_none()
+    if not organization:
+        raise HTTPException(status_code=404, detail="Organization not found.")
+
+    organization.license_key_encrypted = encrypt_value(token)
+    await db.commit()
+
+    async with async_sessionmaker() as session:
+        session.add(
+            models.AuditEvent(
+                user_id=user_id,
+                user_email=user_email,
+                action="UPDATE_SETTINGS_LICENSE",
+                resource_type="settings",
+                resource_id=str(organization.id),
+                details=f"license key saved, plan={license_status.plan}",
+            )
+        )
+        await session.commit()
+
+    return schemas.LicenseStatusResponse(
+        plan=license_status.plan,
+        seat_limit=license_status.seat_limit,
+        runner_limit=license_status.runner_limit,
+        has_saved_key=True,
+        source="database",
+    )
+
+@router.delete("/license", response_model=schemas.LicenseStatusResponse)
+async def clear_license_settings(
+    db: DBSession,
+    current_user: CurrentUser,
+    request: Request,
+):
+    await require_permission(current_user, Permission.SETTINGS_ORG_MANAGE, db, request)
+    org_id = require_org_id(current_user)
+    user_id, user_email = safe_user_identity(current_user)
+
+    result = await db.execute(select(models.Organization).where(models.Organization.id == org_id))
+    organization = result.scalar_one_or_none()
+    if organization and organization.license_key_encrypted:
+        organization.license_key_encrypted = None
+        await db.commit()
+
+        async with async_sessionmaker() as session:
+            session.add(
+                models.AuditEvent(
+                    user_id=user_id,
+                    user_email=user_email,
+                    action="CLEAR_SETTINGS_LICENSE",
+                    resource_type="settings",
+                    resource_id=str(organization.id),
+                    details="saved license key removed, reverted to env var / free tier",
+                )
+            )
+            await session.commit()
+
+    from ..utils.license import get_license_status
+
+    license_status = get_license_status()
+    return schemas.LicenseStatusResponse(
+        plan=license_status.plan,
+        seat_limit=license_status.seat_limit,
+        runner_limit=license_status.runner_limit,
+        has_saved_key=False,
+        source="env" if settings.PURVEX_LICENSE_KEY else "none",
+    )
+
     return organization
 
 # --- User Management (existing User model, but settings view)
@@ -788,9 +906,9 @@ async def create_environment_runner(
 
     org_id = require_org_id(current_user)
 
-    from ..utils.license import get_license_status
+    from ..utils.license import get_org_license_status
 
-    runner_limit = get_license_status().runner_limit
+    runner_limit = (await get_org_license_status(db, org_id)).runner_limit
     if runner_limit is not None:
         runner_count_result = await db.execute(
             select(func.count(models.EnvironmentRunnerConfig.id)).where(

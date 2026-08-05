@@ -128,6 +128,91 @@ def test_malformed_public_key_configuration_falls_back_to_free(monkeypatch):
     assert status.plan == "free"
 
 
+# --- verify_license_key: strict validation for the Settings -> License save path ---
+
+def test_verify_license_key_accepts_a_valid_token(monkeypatch):
+    from app.config import settings
+    from app.utils.license import verify_license_key
+
+    now = datetime.now(timezone.utc)
+    public_pem, token = _keypair_and_token({
+        "plan": "paid", "seat_limit": 10, "runner_limit": 4,
+        "iat": now, "exp": now + timedelta(days=30),
+    })
+    monkeypatch.setattr(settings, "LICENSE_PUBLIC_KEY_PEM", public_pem)
+
+    status = verify_license_key(token)
+    assert status.plan == "paid"
+    assert status.seat_limit == 10
+
+
+def test_verify_license_key_raises_on_tampered_token(monkeypatch):
+    from app.config import settings
+    from app.utils.license import LicenseKeyInvalid, verify_license_key
+
+    now = datetime.now(timezone.utc)
+    _, token = _keypair_and_token({"plan": "paid", "iat": now, "exp": now + timedelta(days=30)})
+    other_public_pem, _ = _keypair_and_token({"plan": "paid"})
+    monkeypatch.setattr(settings, "LICENSE_PUBLIC_KEY_PEM", other_public_pem)
+
+    with pytest.raises(LicenseKeyInvalid):
+        verify_license_key(token)
+
+
+def test_verify_license_key_raises_on_garbage_input(monkeypatch):
+    from app.config import settings
+    from app.utils.license import LicenseKeyInvalid, verify_license_key
+
+    now = datetime.now(timezone.utc)
+    public_pem, _ = _keypair_and_token({"plan": "paid", "iat": now, "exp": now + timedelta(days=30)})
+    monkeypatch.setattr(settings, "LICENSE_PUBLIC_KEY_PEM", public_pem)
+
+    with pytest.raises(LicenseKeyInvalid):
+        verify_license_key("not-a-jwt-at-all")
+
+
+# --- get_org_license_status: DB-saved key takes priority over the env var ---
+
+@pytest.mark.asyncio
+async def test_org_saved_key_overrides_free_env(org_context, monkeypatch):
+    from app.config import settings
+    from app import models
+    from app.utils.encryption import encrypt_value
+    from app.utils.license import get_org_license_status
+    from sqlalchemy.future import select
+
+    session, admin = org_context
+
+    now = datetime.now(timezone.utc)
+    public_pem, token = _keypair_and_token({
+        "plan": "paid", "seat_limit": 25, "runner_limit": 10,
+        "iat": now, "exp": now + timedelta(days=30),
+    })
+    monkeypatch.setattr(settings, "LICENSE_PUBLIC_KEY_PEM", public_pem)
+    monkeypatch.setattr(settings, "PURVEX_LICENSE_KEY", "")  # no env-level key set
+
+    org = (await session.execute(select(models.Organization).where(models.Organization.id == 1))).scalar_one()
+    org.license_key_encrypted = encrypt_value(token)
+    await session.commit()
+
+    status = await get_org_license_status(session, org_id=1)
+    assert status.plan == "paid"
+    assert status.seat_limit == 25
+    assert status.runner_limit == 10
+
+
+@pytest.mark.asyncio
+async def test_org_without_saved_key_falls_back_to_env(org_context, monkeypatch):
+    from app.config import settings
+    from app.utils.license import get_org_license_status
+
+    session, admin = org_context
+    monkeypatch.setattr(settings, "PURVEX_LICENSE_KEY", "")
+
+    status = await get_org_license_status(session, org_id=1)
+    assert status.plan == "free"
+
+
 # --- Enforcement: seat limit on invite, runner limit on registration ---
 
 def _fake_request(method: str = "POST") -> SimpleNamespace:
@@ -169,7 +254,10 @@ async def test_free_plan_blocks_invite_past_seat_limit(org_context, monkeypatch)
 
     monkeypatch.setattr(
         license_module, "get_license_status",
-        lambda: license_module.LicenseStatus(plan="free", seat_limit=3, runner_limit=1),
+        # Accepts the optional license_key arg get_org_license_status passes
+        # through (the enforcement call sites go through it, not this
+        # function, directly -- see get_org_license_status's docstring).
+        lambda *_args, **_kwargs: license_module.LicenseStatus(plan="free", seat_limit=3, runner_limit=1),
     )
 
     session, admin = org_context
@@ -201,7 +289,7 @@ async def test_paid_unlimited_license_allows_invite_past_free_default(org_contex
 
     monkeypatch.setattr(
         license_module, "get_license_status",
-        lambda: license_module.LicenseStatus(plan="paid", seat_limit=None, runner_limit=None),
+        lambda *_args, **_kwargs: license_module.LicenseStatus(plan="paid", seat_limit=None, runner_limit=None),
     )
 
     session, admin = org_context
@@ -224,7 +312,10 @@ async def test_free_plan_blocks_runner_past_limit(org_context, monkeypatch):
 
     monkeypatch.setattr(
         license_module, "get_license_status",
-        lambda: license_module.LicenseStatus(plan="free", seat_limit=3, runner_limit=1),
+        # Accepts the optional license_key arg get_org_license_status passes
+        # through (the enforcement call sites go through it, not this
+        # function, directly -- see get_org_license_status's docstring).
+        lambda *_args, **_kwargs: license_module.LicenseStatus(plan="free", seat_limit=3, runner_limit=1),
     )
 
     session, admin = org_context
@@ -258,7 +349,7 @@ async def test_paid_unlimited_license_allows_runner_past_free_default(org_contex
 
     monkeypatch.setattr(
         license_module, "get_license_status",
-        lambda: license_module.LicenseStatus(plan="paid", seat_limit=None, runner_limit=None),
+        lambda *_args, **_kwargs: license_module.LicenseStatus(plan="paid", seat_limit=None, runner_limit=None),
     )
 
     session, admin = org_context

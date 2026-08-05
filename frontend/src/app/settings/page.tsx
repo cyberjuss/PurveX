@@ -14,6 +14,7 @@ import {
   ArrowRight,
   AlertCircle,
   GitBranch,
+  KeyRound,
 } from "lucide-react";
 import { PageContainer } from "@/components/layout/page-container";
 import { PageHeader } from "@/components/layout/page-header";
@@ -25,6 +26,7 @@ import {
   getTestingPolicySettings,
   getAIAssistantSettings,
   listDetectionSources,
+  getLicenseStatus,
 } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
@@ -53,6 +55,7 @@ export default function SettingsPage() {
   const [hasAiAssistant, setHasAiAssistant] = useState(false);
   const [orgName, setOrgName] = useState<string | null>(null);
   const [detectionSourceCount, setDetectionSourceCount] = useState<number | null>(null);
+  const [plan, setPlan] = useState<"free" | "paid" | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -65,12 +68,14 @@ export default function SettingsPage() {
           policy,
           aiSettings,
           detectionSources,
+          license,
         ] = await Promise.allSettled([
           getOrganizationSettings(),
           getSiemConnections(),
           getTestingPolicySettings(),
           getAIAssistantSettings(),
           listDetectionSources(),
+          getLicenseStatus(),
         ]);
 
         if (cancelled) return;
@@ -89,6 +94,9 @@ export default function SettingsPage() {
         }
         if (detectionSources.status === "fulfilled") {
           setDetectionSourceCount(detectionSources.value.length);
+        }
+        if (license.status === "fulfilled") {
+          setPlan(license.value.plan);
         }
       } finally {
         // Intentionally no local loading gate here; the overview can render
@@ -113,6 +121,16 @@ export default function SettingsPage() {
       icon: Building2,
       status: orgName ? "configured" : "not_configured",
       statusText: orgName || "Not configured",
+      category: "core",
+    },
+    {
+      id: "license",
+      href: "/settings/license",
+      label: "License",
+      description: "View your current plan limits, or paste a license key to unlock the paid tier.",
+      icon: KeyRound,
+      status: plan === "paid" ? "configured" : "default",
+      statusText: plan === "paid" ? "Paid plan" : plan === "free" ? "Free plan" : undefined,
       category: "core",
     },
     {
