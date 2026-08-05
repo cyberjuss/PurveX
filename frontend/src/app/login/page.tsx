@@ -5,7 +5,6 @@ import Image from "next/image";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { z } from "zod";
-import TwoFactorVerify from "@/components/auth/TwoFactorVerify";
 import { getApiBaseCandidates, getBootstrapStatus } from "@/lib/api";
 import { AlertCircle, Eye, EyeOff, Loader2, Lock, RefreshCw, User } from "lucide-react";
 import { FieldError } from "@/components/ui/form-error";
@@ -55,12 +54,10 @@ function LoginPageContent() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [errorKind, setErrorKind] = useState<ErrorKind>("generic");
-  const [phase, setPhase] = useState<"idle" | "auth" | "2fa">("idle");
+  const [phase, setPhase] = useState<"idle" | "auth">("idle");
   const [showPassword, setShowPassword] = useState(false);
-  const [twoFactorToken, setTwoFactorToken] = useState<string | null>(null);
   const [capsLockOn, setCapsLockOn] = useState(false);
   const [isReturning, setIsReturning] = useState(false);
-  const [pendingFirstLogin, setPendingFirstLogin] = useState<boolean | null>(null);
   const [lockoutUntil, setLockoutUntil] = useState<number | null>(null);
   const [backendStatus, setBackendStatus] = useState<"checking" | "online" | "offline">("checking");
   const [fieldErrors, setFieldErrors] = useState<LoginFieldErrors>({});
@@ -225,13 +222,6 @@ function LoginPageContent() {
       }
 
       const data = await res.json().catch(() => ({}));
-      if (data.requires_2fa) {
-        if (!data.two_factor_token) throw new Error("2FA required but no session token provided.");
-        if (typeof data.is_first_login === "boolean") setPendingFirstLogin(data.is_first_login);
-        setTwoFactorToken(data.two_factor_token);
-        setPhase("2fa");
-        return;
-      }
 
       try {
         if (typeof window !== "undefined") {
@@ -287,28 +277,6 @@ function LoginPageContent() {
     return "/dashboard";
   }
 
-  function handle2FASuccess(result: { verified: boolean; method: string }) {
-    if (!result.verified) {
-      setErrorState("2FA verification failed.", "auth");
-      setPhase("idle");
-      return;
-    }
-    const destination = getPostLoginDestination();
-    const finalizeRedirect = async () => {
-      if (typeof window !== "undefined") {
-        window.localStorage.setItem("purvex_username", username);
-        window.localStorage.setItem(
-          "purvex_seen_login",
-          pendingFirstLogin !== null ? (pendingFirstLogin ? "0" : "1") : "1",
-        );
-        window.location.href = destination;
-      } else {
-        router.push(destination);
-      }
-    };
-    void finalizeRedirect();
-  }
-
   const isLocked = !!(lockoutUntil && Date.now() < lockoutUntil);
 
   return (
@@ -331,17 +299,7 @@ function LoginPageContent() {
             </div>
           )}
 
-          {phase === "2fa" && twoFactorToken ? (
-            <TwoFactorVerify
-              twoFactorToken={twoFactorToken}
-              onSuccess={handle2FASuccess}
-              onCancel={() => {
-                setPhase("idle");
-                setError(null);
-              }}
-            />
-          ) : (
-            <form onSubmit={handleSubmit} noValidate className="space-y-5">
+          <form onSubmit={handleSubmit} noValidate className="space-y-5">
               <div>
                 <label htmlFor="username" className={FIELD_LABEL_CLASSNAME}>
                   Username
@@ -482,8 +440,7 @@ function LoginPageContent() {
                   "Sign in"
                 )}
               </button>
-            </form>
-          )}
+          </form>
 
           <div className="mt-6 flex items-center justify-center gap-2 text-[11px] text-muted-foreground">
             <span

@@ -1,6 +1,6 @@
 """
 Symmetric encryption for sensitive fields stored at rest (SIEM credentials,
-API keys, TOTP secrets).
+API keys).
 
 The encryption key is read from the ``PURVEX_ENCRYPTION_KEY`` environment
 variable.  In *development* mode a deterministic fallback is used so the app

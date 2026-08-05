@@ -27,12 +27,6 @@ class Token(BaseModel):
     token_type: str = "bearer"
 
 
-class TwoFactorChallenge(BaseModel):
-    requires_2fa: bool = True
-    two_factor_token: str
-    message: str
-
-
 class LoginResponse(BaseModel):
     is_first_login: Optional[bool] = None
 

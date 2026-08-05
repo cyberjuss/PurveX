@@ -168,21 +168,6 @@ export interface CoverageTrend {
   points: CoverageTrendPoint[];
 }
 
-export type TwoFactorSetupResponse = {
-  qr_code?: string;
-  qr_code_uri?: string;
-  secret?: string;
-  backup_codes?: string[];
-  message?: string;
-};
-
-export type TwoFactorStatusResponse = {
-  enabled: boolean;
-  method?: string | null;
-  backup_codes_remaining?: number | null;
-  has_backup_codes?: boolean | null;
-};
-
 export type BootstrapStatus = {
   needs_admin: boolean;
 };
@@ -1469,30 +1454,6 @@ export async function setUserActive(userId: number, isActive: boolean): Promise<
   });
 }
 
-// --- 2FA API ---
-
-export async function get2FASetup(): Promise<TwoFactorSetupResponse> {
-  return apiFetch("/auth/2fa/setup", { cache: "no-store" });
-}
-
-export async function complete2FASetup(token: string): Promise<{ message: string; backup_codes: string[] }> {
-  return apiFetch("/auth/2fa/setup", {
-    method: "POST",
-    body: JSON.stringify({ token }),
-  });
-}
-
-export async function verify2FAToken(token: string, twoFactorToken: string): Promise<{ verified: boolean; method: string }> {
-  return apiFetch("/auth/2fa/verify", {
-    method: "POST",
-    body: JSON.stringify({ token, two_factor_token: twoFactorToken }),
-  });
-}
-
-export async function get2FAStatus(): Promise<TwoFactorStatusResponse> {
-  return apiFetch("/auth/2fa/status", { cache: "no-store" });
-}
-
 export async function getBootstrapStatus(): Promise<BootstrapStatus> {
   return apiFetch("/auth/bootstrap/status", { cache: "no-store" });
 }
@@ -1501,19 +1462,6 @@ export async function bootstrapAdmin(payload: BootstrapAdminRequest): Promise<un
   return apiFetch("/auth/bootstrap", {
     method: "POST",
     body: JSON.stringify(payload),
-  });
-}
-
-export async function disable2FA(password: string): Promise<{ message: string }> {
-  return apiFetch("/auth/2fa/disable", {
-    method: "POST",
-    body: JSON.stringify({ password }),
-  });
-}
-
-export async function regenerateBackupCodes(): Promise<{ backup_codes: string[]; message: string }> {
-  return apiFetch("/auth/2fa/regenerate-backup-codes", {
-    method: "POST",
   });
 }
 

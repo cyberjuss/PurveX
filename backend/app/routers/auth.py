@@ -1,4 +1,4 @@
-from typing import Annotated, Union
+from typing import Annotated
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, status, Request, Response
@@ -111,15 +111,15 @@ async def get_current_user(
             detail="Could not validate credentials",
         )
 
-    # SECURITY: single-purpose tokens (2FA-pending, password-reset, invite)
-    # are minted with the same signing key/algorithm as a real session so
-    # they must never be usable as a general Bearer credential. Each of
-    # those tokens is validated and consumed directly by its own endpoint
-    # (auth_2fa.verify_2fa_token, password_reset.confirm_password_reset,
-    # auth.accept_invite) via decode_access_token — none of them depend on
-    # get_current_user — so rejecting any such claim here is safe and closes
-    # the bypass without affecting those flows.
-    if payload.get("two_factor_pending") or payload.get("purpose"):
+    # SECURITY: single-purpose tokens (password-reset, invite) are minted
+    # with the same signing key/algorithm as a real session so they must
+    # never be usable as a general Bearer credential. Each of those tokens
+    # is validated and consumed directly by its own endpoint
+    # (password_reset.confirm_password_reset, auth.accept_invite) via
+    # decode_access_token — neither depends on get_current_user — so
+    # rejecting any such claim here is safe and closes the bypass without
+    # affecting those flows.
+    if payload.get("purpose"):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Could not validate credentials",
@@ -336,7 +336,7 @@ async def register_admin(
         pass
     return user
 
-@router.post("/login", response_model=Union[schemas.LoginResponse, schemas.TwoFactorChallenge])
+@router.post("/login", response_model=schemas.LoginResponse)
 async def login(
     form_data: Annotated[OAuth2PasswordRequestForm, Depends()],
     response: Response,
@@ -462,40 +462,6 @@ async def login(
     # Clear rate limit on successful login
     from ..utils.rate_limit import clear_rate_limit
     clear_rate_limit(rate_key)
-    
-    # SECURITY: Check if 2FA is required for this account.
-    # If enabled for the user (admin or non-admin), or if the environment
-    # policy requires 2FA for this user class, we do NOT create a full
-    # session yet. Instead we:
-    # - Issue a short-lived "two_factor_token" JWT marked as pending.
-    # - Return it to the client, which will call /auth/2fa/verify.
-    try:
-        await db.refresh(user)
-    except Exception:
-        pass
-
-    two_factor_enabled = getattr(user, "two_factor_enabled", False)
-    require_2fa_for_admins = getattr(app_settings, "REQUIRE_2FA_FOR_ADMINS", False)
-    require_2fa_for_all = getattr(app_settings, "REQUIRE_2FA_FOR_ALL_USERS", False)
-
-    must_use_2fa = two_factor_enabled or require_2fa_for_all or (require_2fa_for_admins and getattr(user, "is_admin", False))
-
-    if must_use_2fa:
-        two_factor_token = create_access_token(
-            data={
-                "sub": user.email,
-                "uid": user.id,
-                "two_factor_pending": True,
-            },
-            # Short-lived token to reduce risk if intercepted.
-            expires_minutes=10,
-        )
-
-        return schemas.TwoFactorChallenge(
-            requires_2fa=True,
-            two_factor_token=two_factor_token,
-            message="Two-factor authentication required",
-        )
 
     access_token = create_access_token(
         data={

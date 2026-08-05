@@ -1,8 +1,8 @@
 """Regression tests for the four vulnerabilities found in the 2026-07-27
 platform-wide security audit:
 
-1. Single-purpose JWTs (2FA-pending, password-reset, invite) were accepted
-   by ``get_current_user`` as full session credentials.
+1. Single-purpose JWTs (password-reset, invite) were accepted by
+   ``get_current_user`` as full session credentials.
 2. ``atomic_test_name`` could break out of the quoted shell argument it's
    embedded in when a test is dispatched to a Windows SSH runner.
 3. ``POST /tests/`` let a caller attach a fabricated Test row to another
@@ -58,23 +58,6 @@ async def security_context():
 # ---------------------------------------------------------------------------
 # Vuln 1: single-purpose tokens must not authenticate general requests
 # ---------------------------------------------------------------------------
-@pytest.mark.asyncio
-async def test_two_factor_pending_token_rejected(security_context):
-    from app.routers.auth import get_current_user
-    from app.security import create_access_token
-    session, user = security_context
-
-    token = create_access_token(
-        data={"sub": user.email, "uid": user.id, "two_factor_pending": True},
-        expires_minutes=10,
-    )
-    request = _make_request({"Authorization": f"Bearer {token}"})
-
-    with pytest.raises(HTTPException) as exc:
-        await get_current_user(request, session)
-    assert exc.value.status_code == 401
-
-
 @pytest.mark.asyncio
 async def test_password_reset_token_rejected(security_context):
     from app.routers.auth import get_current_user

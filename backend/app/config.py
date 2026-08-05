@@ -53,12 +53,6 @@ class Settings(BaseSettings):
     # Password history / reuse policy
     PASSWORD_HISTORY_LENGTH: int = 5  # How many previous hashes to remember per user
 
-    # MFA policy
-    # When enabled, these flags allow security teams to require 2FA for
-    # specific classes of users in higher environments.
-    REQUIRE_2FA_FOR_ADMINS: bool = False
-    REQUIRE_2FA_FOR_ALL_USERS: bool = False
-
     # Base URL the app is reachable at, used to build absolute links in
     # outbound emails (password reset, invites). Must be set to the real
     # public URL in staging/prod; the dev default matches the port used by

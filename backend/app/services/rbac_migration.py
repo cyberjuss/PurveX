@@ -64,33 +64,6 @@ async def ensure_rbac_tables():
                 # Column might already exist - that's fine
                 pass
             
-            # SECURITY: Add 2FA fields to users table if they don't exist
-            try:
-                await conn.execute(text("""
-                    ALTER TABLE users ADD COLUMN two_factor_enabled BOOLEAN DEFAULT 0
-                """))
-                logger.info("✅ Added two_factor_enabled column to users")
-            except Exception:
-                # Column might already exist - that's fine
-                pass
-            
-            try:
-                await conn.execute(text("""
-                    ALTER TABLE users ADD COLUMN two_factor_secret VARCHAR
-                """))
-                logger.info("✅ Added two_factor_secret column to users")
-            except Exception:
-                # Column might already exist - that's fine
-                pass
-            
-            try:
-                await conn.execute(text("""
-                    ALTER TABLE users ADD COLUMN two_factor_backup_codes TEXT
-                """))
-                logger.info("✅ Added two_factor_backup_codes column to users")
-            except Exception:
-                # Column might already exist - that's fine
-                pass
     except Exception as e:
         logger.warning(f"Could not add columns (may already exist): {e}")
 
