@@ -119,6 +119,58 @@ load_env() {
   export ALLOW_RATE_LIMIT_LOCALHOST="${ALLOW_RATE_LIMIT_LOCALHOST:-1}"
 }
 
+# ── .env bootstrap ───────────────────────────────────────────────────────────
+# Generates the two secrets PurveX needs at boot (JWT_SECRET_KEY,
+# PURVEX_ENCRYPTION_KEY) instead of asking the operator to run Python
+# one-liners and paste the output in by hand. Both are pure stdlib (no
+# `cryptography` package needed yet -- a Fernet key is just urlsafe-base64
+# of 32 random bytes, so this can run before setup_backend installs
+# anything). Only fills in what's missing; never touches a value that's
+# already set, so re-running --setup is safe.
+
+env_var_is_set() {
+  local key="$1"
+  grep -qE "^${key}=.+" "${ROOT_DIR}/.env" 2>/dev/null
+}
+
+set_env_var() {
+  local key="$1"
+  local value="$2"
+  if grep -qE "^${key}=" "${ROOT_DIR}/.env" 2>/dev/null; then
+    # -i.bak suffix form works on both GNU sed (Linux/Git Bash) and BSD sed
+    # (macOS) without needing an OS check.
+    sed -i.bak "s|^${key}=.*|${key}=${value}|" "${ROOT_DIR}/.env" && rm -f "${ROOT_DIR}/.env.bak"
+  else
+    printf '%s=%s\n' "${key}" "${value}" >>"${ROOT_DIR}/.env"
+  fi
+}
+
+ensure_env_file() {
+  if [ ! -f "${ROOT_DIR}/.env" ]; then
+    if [ -f "${ROOT_DIR}/.env.example" ]; then
+      cp "${ROOT_DIR}/.env.example" "${ROOT_DIR}/.env"
+    else
+      touch "${ROOT_DIR}/.env"
+    fi
+    info "Created .env"
+  fi
+
+  if ! env_var_is_set "JWT_SECRET_KEY"; then
+    local jwt_key
+    jwt_key="$($PYTHON -c 'import secrets; print(secrets.token_urlsafe(32))')"
+    set_env_var "JWT_SECRET_KEY" "${jwt_key}"
+    info "Generated JWT_SECRET_KEY"
+  fi
+
+  if ! env_var_is_set "PURVEX_ENCRYPTION_KEY"; then
+    local enc_key
+    enc_key="$($PYTHON -c 'import base64, secrets; print(base64.urlsafe_b64encode(secrets.token_bytes(32)).decode())')"
+    set_env_var "PURVEX_ENCRYPTION_KEY" "${enc_key}"
+    info "Generated PURVEX_ENCRYPTION_KEY"
+    warn "Back up PURVEX_ENCRYPTION_KEY (in .env) somewhere safe -- losing it makes any stored SIEM credentials and 2FA codes unrecoverable."
+  fi
+}
+
 # ── Setup ────────────────────────────────────────────────────────────────────
 
 setup_backend() {
@@ -161,6 +213,7 @@ setup_frontend() {
 run_setup() {
   check_python
   check_node
+  ensure_env_file
   load_env
   setup_backend
   setup_frontend
