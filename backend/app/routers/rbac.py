@@ -503,16 +503,15 @@ async def invite_user(
         )
         current_seats = seat_count_result.scalar_one()
         if current_seats >= seat_limit:
-            # SECURITY/UX: a paid org can still have a finite seat_limit --
-            # it's whatever the license was issued for, not "unlimited by
-            # definition of being paid." Telling a paying customer "Free
-            # plan is limited..." is both wrong and points them at the
-            # pricing page they've already been through; point them at the
-            # self-service add-a-seat purchase instead.
+            # SECURITY/UX: paid licenses are issued unlimited (seat_limit
+            # None) by policy, so this only fires for a paid org whose
+            # license was issued with an explicit cap -- an exception, not
+            # the norm. Telling a paying customer "Free plan is limited..."
+            # is wrong regardless, so still branch on plan.
             if org_license.plan == "paid":
                 detail = (
                     f"Your license is limited to {seat_limit} users. "
-                    "Add a seat at purvex-llc.com/add-seat to invite more."
+                    "Contact your PurveX account owner to add more."
                 )
             else:
                 detail = (

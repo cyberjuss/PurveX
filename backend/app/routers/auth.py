@@ -305,13 +305,14 @@ async def register_admin(
         )
         current_seats = seat_count_result.scalar_one()
         if current_seats >= seat_limit:
-            # See the matching comment in rbac.invite_user -- a paid org can
-            # still have a finite seat_limit, so "Free plan..." is wrong;
-            # point them at the self-service add-a-seat purchase instead.
+            # See the matching comment in rbac.invite_user -- paid licenses
+            # are issued unlimited by policy, so this only fires for a paid
+            # org with an explicit cap. "Free plan..." is still wrong either
+            # way, so branch on plan.
             if org_license.plan == "paid":
                 detail = (
                     f"Your license is limited to {seat_limit} users. "
-                    "Add a seat at purvex-llc.com/add-seat to add more."
+                    "Contact your PurveX account owner to add more."
                 )
             else:
                 detail = (
