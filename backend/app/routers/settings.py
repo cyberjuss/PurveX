@@ -394,8 +394,6 @@ async def clear_license_settings(
         source="env" if settings.PURVEX_LICENSE_KEY else "none",
     )
 
-    return organization
-
 # --- User Management (existing User model, but settings view)
 # Endpoints for Users (list, get, update) could go here or in a separate user router
 # For MVP, assume User management happens via /auth/register initially and direct DB access for now.

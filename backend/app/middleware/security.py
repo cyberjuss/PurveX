@@ -115,7 +115,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         if request.url.path in ["/health", "/ready"]:
             return await call_next(request)
 
-        from ..utils.rate_limit import check_rate_limit, get_rate_limit_info
+        from ..utils.rate_limit import check_rate_limit
 
         client_ip = request.client.host if request.client else "unknown"
         user_agent = request.headers.get("user-agent", "unknown")

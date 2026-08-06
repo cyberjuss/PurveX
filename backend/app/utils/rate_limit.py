@@ -51,7 +51,6 @@ def check_rate_limit(
     key: str,
     max_requests: int = 5,
     window_seconds: int = 60,
-    clear_old: bool = True,
 ) -> tuple[bool, int]:
     """Check whether a request should be allowed for `key`.
 
@@ -72,27 +71,3 @@ def clear_rate_limit(key: str):
     if key in _rate_limit_store:
         del _rate_limit_store[key]
 
-
-def get_rate_limit_info(key: str, window_seconds: int = 60) -> dict:
-    now = time.time()
-    client = get_redis_client()
-    if client is not None:
-        try:
-            redis_key = f"ratelimit:{key}"
-            client.zremrangebyscore(redis_key, 0, now - window_seconds)
-            count = client.zcard(redis_key)
-            oldest = client.zrange(redis_key, 0, 0, withscores=True)
-            return {
-                "count": count,
-                "window_seconds": window_seconds,
-                "oldest_request": oldest[0][1] if oldest else None,
-            }
-        except Exception:
-            pass
-    bucket = _rate_limit_store.get(key, [])
-    recent = [ts for ts in bucket if now - ts < window_seconds]
-    return {
-        "count": len(recent),
-        "window_seconds": window_seconds,
-        "oldest_request": min(recent) if recent else None,
-    }

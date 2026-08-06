@@ -765,15 +765,6 @@ async def score_test_results(
 
     return scoring
 
-@router.post("/debug_post")
-async def debug_post(current_user: CurrentUser):
-    # Keep this endpoint for local diagnostics only; restrict to admin users.
-    # This route has no DB dependency, so keep the legacy admin flag check.
-    if not current_user.is_admin:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Administrator access required")
-    return {"message": "Debug POST successful!"}
-
-
 @router.post("/reset-active", response_model=dict)
 async def reset_active_tests(
     db: DBSession,

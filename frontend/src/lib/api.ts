@@ -950,26 +950,6 @@ export async function deleteTestSchedule(scheduleId: number): Promise<void> {
   });
 }
 
-export interface OnboardingStep {
-  id: string;
-  title: string;
-  description: string;
-  completed: boolean;
-  href: string;
-  status?: "complete" | "action_required" | "blocked";
-  recovery_hint?: string | null;
-}
-
-export interface OnboardingStatus {
-  completed: boolean;
-  progress: number;
-  steps: OnboardingStep[];
-}
-
-export async function getOnboardingStatus(): Promise<OnboardingStatus> {
-  return apiFetch("/onboarding/status", { cache: "no-store" });
-}
-
 export async function getMitreTechniques(): Promise<MitreTechnique[]> {
   return apiFetch("/mitre/techniques", { cache: "no-store" });
 }
@@ -1062,10 +1042,6 @@ export async function getProposalStats(): Promise<DetectionProposalStats> {
   return apiFetch("/proposals/stats", { cache: "no-store" });
 }
 
-export async function getProposal(id: string): Promise<DetectionProposal> {
-  return apiFetch(`/proposals/${id}`, { cache: "no-store" });
-}
-
 export async function createProposal(
   body: DetectionProposalCreate,
 ): Promise<DetectionProposal> {
@@ -1114,16 +1090,8 @@ export async function getNotifications(params: {
   return apiFetch(path, { cache: "no-store" });
 }
 
-export async function markNotificationRead(id: number): Promise<PlatformNotification> {
-  return apiFetch(`/notifications/${id}/read`, { method: "POST" });
-}
-
 export async function dismissNotification(id: number): Promise<PlatformNotification> {
   return apiFetch(`/notifications/${id}/dismiss`, { method: "POST" });
-}
-
-export async function dismissAllNotifications(): Promise<{ dismissed: number }> {
-  return apiFetch("/notifications/dismiss-all", { method: "POST" });
 }
 
 export async function rejectProposal(
@@ -1176,17 +1144,6 @@ export interface DetectionSourceCreate {
   provider?: string;
 }
 
-export interface DetectionSourceUpdate {
-  name?: string;
-  repo_url?: string;
-  branch?: string;
-  path_glob?: string;
-  auth_type?: DetectionSourceAuthType;
-  // Pass "" to clear the stored token; undefined leaves it unchanged.
-  auth_secret?: string | null;
-  enabled?: boolean;
-}
-
 export interface DetectionSourceSyncResult {
   source_id: number;
   commit_sha: string | null;
@@ -1211,16 +1168,6 @@ export async function createDetectionSource(
 ): Promise<DetectionSource> {
   return apiFetch("/detection-sources", {
     method: "POST",
-    body: JSON.stringify(body),
-  });
-}
-
-export async function updateDetectionSource(
-  id: number,
-  body: DetectionSourceUpdate,
-): Promise<DetectionSource> {
-  return apiFetch(`/detection-sources/${id}`, {
-    method: "PATCH",
     body: JSON.stringify(body),
   });
 }
@@ -1286,20 +1233,6 @@ export interface DetectionGitMirrorCreate {
   enabled?: boolean;
 }
 
-export interface DetectionGitMirrorUpdate {
-  name?: string;
-  repo_url?: string;
-  branch?: string;
-  path_template?: string;
-  commit_author_name?: string;
-  commit_author_email?: string;
-  write_mode?: DetectionMirrorWriteMode;
-  auth_type?: DetectionMirrorAuthType;
-  // Pass "" to clear the stored token; undefined leaves it unchanged.
-  auth_secret?: string | null;
-  enabled?: boolean;
-}
-
 export interface DetectionMirrorPublishResult {
   mirror_id: number;
   commit_sha: string | null;
@@ -1318,16 +1251,6 @@ export async function createDetectionMirror(
 ): Promise<DetectionGitMirror> {
   return apiFetch("/detection-mirrors", {
     method: "POST",
-    body: JSON.stringify(body),
-  });
-}
-
-export async function updateDetectionMirror(
-  id: number,
-  body: DetectionGitMirrorUpdate,
-): Promise<DetectionGitMirror> {
-  return apiFetch(`/detection-mirrors/${id}`, {
-    method: "PATCH",
     body: JSON.stringify(body),
   });
 }
@@ -1362,53 +1285,6 @@ export async function bootstrapMirror(
     `/detection-mirrors/${mirrorId}/bootstrap?siem_id=${siemId}`,
     { method: "POST" },
   );
-}
-
-export interface Report {
-  id: number;
-  report_id: string;
-  title: string;
-  generated_at: string;
-  start_date: string;
-  end_date: string;
-  environments: string[];
-  overall_health_score: number | null;
-  total_detections: number;
-  total_tests: number;
-  file_path: string | null;
-  file_size: number | null;
-}
-
-export interface ReportCreate {
-  start_date: string;
-  end_date: string;
-  environments: string[];
-  title?: string;
-}
-
-export async function generateReport(reportData: ReportCreate): Promise<Report> {
-  return apiFetch("/reports/generate", {
-    method: "POST",
-    body: JSON.stringify(reportData),
-  });
-}
-
-export async function getReports(): Promise<Report[]> {
-  return apiFetch("/reports", { cache: "no-store" });
-}
-
-export async function downloadReport(reportId: string): Promise<Blob> {
-  const response = await fetch(`/api/reports/${reportId}/download`, {
-    credentials: "include",
-  });
-  if (!response.ok) throw new Error("Failed to download report");
-  return response.blob();
-}
-
-export async function deleteReport(reportId: string): Promise<void> {
-  return apiFetch(`/reports/${reportId}`, {
-    method: "DELETE",
-  });
 }
 
 // --- RBAC API ---
@@ -1481,12 +1357,6 @@ export async function bootstrapAdmin(payload: BootstrapAdminRequest): Promise<un
 
 // --- Test queue maintenance ---
 
-export async function resetActiveTests(): Promise<{ cleared: number }> {
-  return apiFetch("/tests/reset-active", {
-    method: "POST",
-  });
-}
-
 // --- Atomic catalog API ---
 
 export async function getAtomicTests(params?: {
@@ -1511,10 +1381,6 @@ export async function getAtomicTests(params?: {
   });
 }
 
-export async function getAtomicTest(id: string): Promise<AtomicTestDefinition> {
-  return apiFetch(`/atomic/tests/${id}`, { cache: "no-store" });
-}
-
 export interface AtomicCatalogStatus {
   installed: boolean;
   count: number;
@@ -1535,13 +1401,6 @@ export async function downloadAtomicCatalog(): Promise<AtomicCatalogStatus> {
 
 export async function getOrganizationSettings(): Promise<OrganizationSettings> {
   return apiFetch("/settings/organization");
-}
-
-export async function updateOrganizationSettings(payload: Omit<OrganizationSettings, "id">): Promise<OrganizationSettings> {
-  return apiFetch("/settings/organization", {
-    method: "PUT",
-    body: JSON.stringify(payload),
-  });
 }
 
 export interface LicenseStatus {
@@ -1571,81 +1430,16 @@ export async function getSiemConnections(): Promise<SIEMConnection[]> {
   return apiFetch("/settings/siem-connections");
 }
 
-export async function createSiemConnection(payload: Omit<SIEMConnection, "id" | "last_validated_at">): Promise<SIEMConnection> {
-  return apiFetch("/settings/siem-connections", {
-    method: "POST",
-    body: JSON.stringify(payload),
-  });
-}
-
-export async function updateSiemConnection(id: number, payload: Partial<Omit<SIEMConnection, "id" | "last_validated_at">>): Promise<SIEMConnection> {
-  return apiFetch(`/settings/siem-connections/${id}`, {
-    method: "PUT",
-    body: JSON.stringify(payload),
-  });
-}
-
-export async function deleteSiemConnection(id: number): Promise<void> {
-  return apiFetch(`/settings/siem-connections/${id}`, {
-    method: "DELETE",
-  });
-}
-
 export async function getEnvironmentRunners(): Promise<EnvironmentRunnerConfig[]> {
   return apiFetch("/settings/environment-runners");
-}
-
-export async function createEnvironmentRunner(payload: Omit<EnvironmentRunnerConfig, "id">): Promise<EnvironmentRunnerConfig> {
-  return apiFetch("/settings/environment-runners", {
-    method: "POST",
-    body: JSON.stringify(payload),
-  });
-}
-
-export async function updateEnvironmentRunner(id: number, payload: Partial<Omit<EnvironmentRunnerConfig, "id">>): Promise<EnvironmentRunnerConfig> {
-  return apiFetch(`/settings/environment-runners/${id}`, {
-    method: "PUT",
-    body: JSON.stringify(payload),
-  });
-}
-
-export async function deleteEnvironmentRunner(id: number): Promise<void> {
-  return apiFetch(`/settings/environment-runners/${id}`, {
-    method: "DELETE",
-  });
 }
 
 export async function getTestingPolicySettings(): Promise<TestingPolicySettings> {
   return apiFetch("/settings/testing-policy");
 }
 
-export async function updateTestingPolicySettings(payload: Omit<TestingPolicySettings, "id">): Promise<TestingPolicySettings> {
-  return apiFetch("/settings/testing-policy", {
-    method: "PUT",
-    body: JSON.stringify(payload),
-  });
-}
-
 export async function getDetectionScoringSettings(): Promise<DetectionScoringSettings> {
   return apiFetch("/settings/detection-scoring");
-}
-
-export async function updateDetectionScoringSettings(payload: Omit<DetectionScoringSettings, "id">): Promise<DetectionScoringSettings> {
-  return apiFetch("/settings/detection-scoring", {
-    method: "PUT",
-    body: JSON.stringify(payload),
-  });
-}
-
-export async function getAIAssistantSettings(): Promise<AIAssistantSettings> {
-  return apiFetch("/settings/ai-assistant-settings");
-}
-
-export async function updateAIAssistantSettings(payload: Omit<AIAssistantSettings, "id">): Promise<AIAssistantSettings> {
-  return apiFetch("/settings/ai-assistant-settings", {
-    method: "PUT",
-    body: JSON.stringify(payload),
-  });
 }
 
 // --- Audit Log API ---
