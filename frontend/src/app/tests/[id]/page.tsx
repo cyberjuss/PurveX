@@ -22,7 +22,6 @@ import { cn } from "@/lib/utils";
 import {
   AlertTriangle,
   ArrowLeft,
-  Brain,
   ChevronDown,
   ChevronRight,
   Database,
@@ -229,7 +228,6 @@ export default function TestDetailPage() {
   const result = data.result || data.status || "UNKNOWN";
   const mode = modeMeta(data.mode);
   const ModeIcon = mode.icon;
-  const hasAnalysis = !!(artifact?.ai_explanation || artifact?.ai_suggested_rule);
   const isTelemetryOnly = (data.mode || "").toUpperCase() === "TELEMETRY_CHECK";
   const duration = formatDuration(data.started_at, data.finished_at);
 
@@ -359,57 +357,6 @@ export default function TestDetailPage() {
                         : undefined
                     }
                   />
-                )}
-              </div>
-            </Section>
-          )}
-
-          {/* Watchtower analysis — only meaningful for full validations */}
-          {!isTelemetryOnly && (
-            <Section title="Watchtower analysis" icon={<Brain className="h-4 w-4" />}>
-              <div className="p-5">
-                {!hasAnalysis ? (
-                  <EmptyHint>
-                    Analysis is not available for this run. Configure the AI assistant in
-                    Settings → AI Assistant and rerun the validation to get a triage summary
-                    and a suggested rule fix.
-                  </EmptyHint>
-                ) : (
-                  <div className="space-y-4">
-                    {artifact?.ai_explanation && (
-                      <div className="whitespace-pre-wrap rounded-xl border border-[var(--stroke-soft)] bg-[var(--surface-subtle)] p-4 text-sm leading-relaxed text-[var(--surface-card-foreground)]">
-                        {artifact.ai_explanation}
-                      </div>
-                    )}
-
-                    <div className="flex flex-wrap items-center gap-4">
-                      {artifact?.ai_root_cause_category && (
-                        <div>
-                          <Eyebrow>Root cause</Eyebrow>
-                          <Badge className="mt-1 border border-[var(--stroke-soft)] bg-[var(--surface-subtle)] text-[var(--surface-card-foreground)]">
-                            {artifact.ai_root_cause_category}
-                          </Badge>
-                        </div>
-                      )}
-                      {typeof artifact?.ai_confidence_score === "number" && (
-                        <div>
-                          <Eyebrow>Confidence</Eyebrow>
-                          <p className="mt-1 text-sm font-semibold text-[var(--foreground)]">
-                            {artifact.ai_confidence_score}/100
-                          </p>
-                        </div>
-                      )}
-                    </div>
-
-                    {artifact?.ai_suggested_rule && (
-                      <div>
-                        <Eyebrow className="mb-2">Suggested rule</Eyebrow>
-                        <pre className="max-h-48 overflow-auto rounded-xl border border-[var(--stroke-soft)] bg-[var(--surface-subtle)] p-4 text-xs text-[var(--surface-card-foreground)]">
-{artifact.ai_suggested_rule}
-                        </pre>
-                      </div>
-                    )}
-                  </div>
                 )}
               </div>
             </Section>

@@ -6,7 +6,6 @@ import {
   Shield,
   Activity,
   Settings,
-  Bot,
   LogOut,
   FileText,
   HardDrive,
@@ -30,7 +29,9 @@ const links = [
   { href: "/mitre", label: "MITRE Coverage", icon: Target },
   { href: "/lab", label: "Endpoints", icon: HardDrive },
   { href: "/reports", label: "Reports", icon: FileText },
-  { href: "/agent", label: "AI Assistant", icon: Bot },
+  // Watchtower (AI Assistant) is paused for launch, not deleted -- planned
+  // as a v2 feature. The page and backend endpoints still work if you
+  // navigate to /agent directly; this just removes it from the nav.
   { href: "/settings", label: "Settings", icon: Settings },
 ];
 

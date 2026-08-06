@@ -8,7 +8,6 @@ import {
   Users,
   Shield,
   ShieldCheck,
-  Sparkles,
   Settings as SettingsIcon,
   ChevronRight,
   ArrowRight,
@@ -24,7 +23,6 @@ import {
   getOrganizationSettings,
   getSiemConnections,
   getTestingPolicySettings,
-  getAIAssistantSettings,
   listDetectionSources,
   getLicenseStatus,
 } from "@/lib/api";
@@ -52,7 +50,6 @@ export default function SettingsPage() {
   const pathname = usePathname();
   const [siemCount, setSiemCount] = useState<number | null>(null);
   const [hasPolicy, setHasPolicy] = useState(false);
-  const [hasAiAssistant, setHasAiAssistant] = useState(false);
   const [orgName, setOrgName] = useState<string | null>(null);
   const [detectionSourceCount, setDetectionSourceCount] = useState<number | null>(null);
   const [plan, setPlan] = useState<"free" | "paid" | null>(null);
@@ -66,14 +63,12 @@ export default function SettingsPage() {
           org,
           siems,
           policy,
-          aiSettings,
           detectionSources,
           license,
         ] = await Promise.allSettled([
           getOrganizationSettings(),
           getSiemConnections(),
           getTestingPolicySettings(),
-          getAIAssistantSettings(),
           listDetectionSources(),
           getLicenseStatus(),
         ]);
@@ -88,9 +83,6 @@ export default function SettingsPage() {
         }
         if (policy.status === "fulfilled") {
           setHasPolicy(true);
-        }
-        if (aiSettings.status === "fulfilled") {
-          setHasAiAssistant(true);
         }
         if (detectionSources.status === "fulfilled") {
           setDetectionSourceCount(detectionSources.value.length);
@@ -152,16 +144,6 @@ export default function SettingsPage() {
       icon: ShieldCheck,
       status: hasPolicy ? "configured" : "default",
       statusText: hasPolicy ? "Configured" : "Using defaults",
-      category: "advanced",
-    },
-    {
-      id: "ai-assistant",
-      href: "/settings/ai-assistant",
-      label: "Watchtower",
-      description: "Configure Watchtower's LLM provider, privacy controls, and analysis behavior.",
-      icon: Sparkles,
-      status: hasAiAssistant ? "configured" : "default",
-      statusText: hasAiAssistant ? "Configured" : "Using defaults",
       category: "advanced",
     },
     {
