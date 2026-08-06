@@ -178,6 +178,12 @@ export type BootstrapAdminRequest = {
   email?: string;
 };
 
+// These mirror backend Pydantic models with many optional/evolving fields
+// that callers across the app read ad hoc (JSX property access, spreads).
+// `unknown` would push a `Record<string, unknown>` cast onto every one of
+// those call sites for no real safety gain -- the shape genuinely isn't
+// modeled today.
+/* eslint-disable @typescript-eslint/no-explicit-any */
 export type AtomicTestDefinition = Record<string, any>;
 export type OrganizationSettings = Record<string, any>;
 export type SIEMConnection = Record<string, any>;
@@ -185,6 +191,7 @@ export type EnvironmentRunnerConfig = Record<string, any>;
 export type TestingPolicySettings = Record<string, any>;
 export type DetectionScoringSettings = Record<string, any>;
 export type AIAssistantSettings = Record<string, any>;
+/* eslint-enable @typescript-eslint/no-explicit-any */
 
 /**
  * Build a list of API base URLs to try.
@@ -215,8 +222,22 @@ export function getApiBaseCandidates(): string[] {
  * Currently writes to the console only -- swap to a real telemetry sink later.
  */
 function logClientError(context: string, error: unknown) {
-  // eslint-disable-next-line no-console
   console.error(`[PurveX] ${context}`, error);
+}
+
+// apiFetch tags thrown errors with `is404`/`silent` (see below) so callers
+// treating a 404 as an expected, non-error outcome don't have to re-parse
+// the message string.
+interface ApiError extends Error {
+  is404?: boolean;
+  silent?: boolean;
+}
+
+function isNotFoundError(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+  const apiErr = err as ApiError;
+  const message = apiErr.message?.toLowerCase() ?? "";
+  return apiErr.is404 === true || message.includes("not found") || message.includes("404");
 }
 
 function normalizeHeaders(input?: HeadersInit): Record<string, string> {
@@ -317,7 +338,7 @@ async function getCsrfToken(forceRefresh = false): Promise<string | null> {
             return csrfToken;
           }
         }
-      } catch (err) {
+      } catch {
         // Try next base URL
         continue;
       }
@@ -392,14 +413,14 @@ export async function apiFetch(path: string, options: RequestInit = {}) {
         if (!res.ok) {
           const text = await res.text();
           let errorDetail = "The request failed. Please try again or contact support.";
-          let parsedError: any = null;
+          let parsedError: { detail?: string; message?: string } | null = null;
 
           // Try to parse error detail from response
           try {
             parsedError = JSON.parse(text);
-            if (parsedError.detail) {
+            if (parsedError?.detail) {
               errorDetail = parsedError.detail;
-            } else if (parsedError.message) {
+            } else if (parsedError?.message) {
               errorDetail = parsedError.message;
             }
           } catch {
@@ -502,10 +523,10 @@ export async function apiFetch(path: string, options: RequestInit = {}) {
             : new Error(errorDetail);
           // Mark 404 errors so getTest can identify them
           if (res.status === 404) {
-            (error as any).is404 = true;
+            (error as ApiError).is404 = true;
             // For test endpoints, mark as silent to prevent console logging
             if (path.startsWith('/tests/')) {
-              (error as any).silent = true;
+              (error as ApiError).silent = true;
             }
           }
           throw error;
@@ -554,13 +575,9 @@ export async function getDetections(): Promise<Detection[]> {
 export async function getDetection(id: string): Promise<Detection | null> {
   try {
     return await apiFetch(`/detections/${id}`, { cache: "no-store" });
-  } catch (err: any) {
+  } catch (err) {
     // For optional resources, silently return null for 404s
-    const is404 = (err as any)?.is404 || 
-                  err?.message?.toLowerCase().includes("not found") || 
-                  err?.message?.toLowerCase().includes("404");
-    
-    if (is404) {
+    if (isNotFoundError(err)) {
       // Return null instead of throwing - this is expected behavior
       return null;
     }
@@ -604,12 +621,8 @@ export async function getDetectionVersionKPIs(
     return await apiFetch(`/detections/${detectionId}/version-kpis`, {
       cache: "no-store",
     });
-  } catch (err: any) {
-    const is404 =
-      (err as any)?.is404 ||
-      err?.message?.toLowerCase().includes("not found") ||
-      err?.message?.toLowerCase().includes("404");
-    if (is404) return null;
+  } catch (err) {
+    if (isNotFoundError(err)) return null;
     throw err;
   }
 }
@@ -617,13 +630,9 @@ export async function getDetectionVersionKPIs(
 export async function getDetectionAlerts(detectionId: string): Promise<DetectionAlert[]> {
   try {
     return await apiFetch(`/detections/${detectionId}/alerts`, { cache: "no-store" });
-  } catch (err: any) {
+  } catch (err) {
     // For optional resources, silently return empty array for 404s
-    const is404 = (err as any)?.is404 || 
-                  err?.message?.toLowerCase().includes("not found") || 
-                  err?.message?.toLowerCase().includes("404");
-    
-    if (is404) {
+    if (isNotFoundError(err)) {
       // Return empty array instead of throwing - this is expected behavior
       return [] as DetectionAlert[];
     }
@@ -822,7 +831,7 @@ export async function runTest(
     endpoint?: string | null;
   }
 ): Promise<Test> {
-  const body: any = {
+  const body: Record<string, unknown> = {
     environment: params.environment,
   };
 
@@ -867,15 +876,10 @@ export async function getTest(id: number): Promise<TestDetailResponse | null> {
     })
   )
     .then((result) => result)
-    .catch((err: any) => {
+    .catch((err: unknown) => {
       // For optional resources like tests, silently return null for 404s
       // This prevents console errors for expected scenarios (tests may be deleted)
-      const is404 = (err as any)?.is404 || 
-                    err?.message?.toLowerCase().includes("not found") || 
-                    err?.message?.toLowerCase().includes("404") ||
-                    err?.message?.toLowerCase().includes("test not found");
-      
-      if (is404) {
+      if (isNotFoundError(err)) {
         // Return null instead of throwing - this is expected behavior
         // The promise resolves successfully with null, preventing any error logging
         // This prevents Next.js from logging the error in development mode
@@ -901,7 +905,7 @@ export async function createTestSchedule(params: {
   intervalMinutes?: number | null;
   cronExpression?: string | null;
 }): Promise<TestSchedule> {
-  const body: any = {
+  const body: Record<string, unknown> = {
     environment: params.environment,
     mode: params.mode,
     schedule_type: params.scheduleType,
@@ -1310,7 +1314,7 @@ export async function getUserRoles(userId: number): Promise<Array<{ id: number; 
 }
 
 export async function assignRole(userId: number, roleName: string, expiresAt?: string): Promise<{ id: number; user_id: number; role_name: string; assigned_at: string }> {
-  const body: any = { role_name: roleName };
+  const body: Record<string, unknown> = { role_name: roleName };
   if (expiresAt) {
     body.expires_at = expiresAt;
   }
