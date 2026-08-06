@@ -23,6 +23,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
+import { UpgradeBanner, isUpgradeRequiredError } from "@/components/ui/upgrade-banner";
 import {
   listDetectionSources,
   createDetectionSource,
@@ -314,6 +315,7 @@ function AddSourceDialog({ open, onOpenChange }: AddSourceDialogProps) {
   const [token, setToken] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [errIsUpgrade, setErrIsUpgrade] = useState(false);
 
   function reset() {
     setName("");
@@ -323,10 +325,12 @@ function AddSourceDialog({ open, onOpenChange }: AddSourceDialogProps) {
     setAuthType("none");
     setToken("");
     setErr(null);
+    setErrIsUpgrade(false);
   }
 
   async function submit() {
     setErr(null);
+    setErrIsUpgrade(false);
     if (!name.trim() || !repoUrl.trim()) {
       setErr("Name and repo URL are required.");
       return;
@@ -353,6 +357,7 @@ function AddSourceDialog({ open, onOpenChange }: AddSourceDialogProps) {
       onOpenChange(false);
     } catch (e) {
       setErr(e instanceof Error ? e.message : "Failed to create source");
+      setErrIsUpgrade(isUpgradeRequiredError(e));
     } finally {
       setBusy(false);
     }
@@ -444,11 +449,13 @@ function AddSourceDialog({ open, onOpenChange }: AddSourceDialogProps) {
             )}
           </div>
 
-          {err && (
+          {err && errIsUpgrade ? (
+            <UpgradeBanner message={err} />
+          ) : err ? (
             <div className="rounded-lg border border-rose-500/40 bg-rose-500/10 p-3 text-sm text-rose-200">
               {err}
             </div>
-          )}
+          ) : null}
         </div>
 
         <DialogFooter>

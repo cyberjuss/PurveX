@@ -22,6 +22,7 @@ import { usePermissions } from "@/hooks/usePermissions";
 import { z } from "zod";
 import { cronSchema } from "@/lib/validators";
 import { FieldError, FormError } from "@/components/ui/form-error";
+import { UpgradeBanner, isUpgradeRequiredError } from "@/components/ui/upgrade-banner";
 
 // Schedule creation schema. Branches on `scheduleType` because each type uses a
 // different field for when-to-run and we want per-field error messages rather
@@ -126,6 +127,7 @@ export default function TestSchedulesPage() {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
+  const [formErrorIsUpgrade, setFormErrorIsUpgrade] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState<number | null>(null);
@@ -230,10 +232,12 @@ export default function TestSchedulesPage() {
       setFormIntervalMinutes("60");
       setFormCronExpression("0 * * * *");
       setFormError(null);
+      setFormErrorIsUpgrade(false);
 
       await fetchSchedules();
     } catch (error: unknown) {
       setFormError(getErrorMessage(error, "Failed to create schedule"));
+      setFormErrorIsUpgrade(isUpgradeRequiredError(error));
     } finally {
       setCreating(false);
     }
@@ -326,7 +330,11 @@ export default function TestSchedulesPage() {
                 </DialogDescription>
               </DialogHeader>
 
-              <FormError message={formError} />
+              {formError && formErrorIsUpgrade ? (
+                <UpgradeBanner message={formError} />
+              ) : (
+                <FormError message={formError} />
+              )}
 
               <div className="max-h-[60vh] space-y-5 overflow-y-auto pr-1">
                 <div className="grid gap-4 md:grid-cols-2">

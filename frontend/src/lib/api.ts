@@ -450,6 +450,20 @@ export async function apiFetch(path: string, options: RequestInit = {}) {
             throw new Error(errorDetail);
           }
 
+          // 402 is our own convention: the request was well-formed and the
+          // user is allowed to make it, but the org's plan doesn't cover it
+          // (seat/runner/daily-run limit, or a paid-only feature). Distinct
+          // from 403 (permission/CSRF) so callers can show an upgrade
+          // prompt instead of a generic error. Never retried.
+          if (res.status === 402) {
+            if (!isSilent) {
+              logClientError(`API upgrade-required 402 on ${path}`, text);
+            }
+            const upgradeError = new Error(errorDetail) as Error & { isUpgradeRequired?: boolean };
+            upgradeError.isUpgradeRequired = true;
+            throw upgradeError;
+          }
+
           // Handle rate limiting (429) with user-friendly message
           if (res.status === 429) {
             if (!isSilent) {

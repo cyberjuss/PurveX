@@ -933,7 +933,7 @@ async def create_environment_runner(
         current_runners = runner_count_result.scalar_one()
         if current_runners >= runner_limit:
             raise HTTPException(
-                status_code=403,
+                status_code=402,
                 detail=(
                     f"Free plan is limited to {runner_limit} test runner(s). "
                     "Upgrade at purvex-llc.com/pricing to register more."

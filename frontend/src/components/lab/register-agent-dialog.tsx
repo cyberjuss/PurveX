@@ -19,6 +19,7 @@ import { apiFetch, getApiBaseCandidates } from "@/lib/api";
 import { usePermissions } from "@/hooks/usePermissions";
 import { Permission } from "@/lib/permissions";
 import { useToast } from "@/components/ui/toast";
+import { UpgradeBanner, isUpgradeRequiredError } from "@/components/ui/upgrade-banner";
 import { cn } from "@/lib/utils";
 
 interface AgentRegistrationResponse {
@@ -1030,6 +1031,7 @@ export function RegisterAgentDialog({ open, onOpenChange, onRegistered }: Regist
   });
   const [isSaving, setIsSaving] = useState(false);
   const [sshError, setSshError] = useState<string | null>(null);
+  const [sshErrorIsUpgrade, setSshErrorIsUpgrade] = useState(false);
 
   async function handleGenerateToken() {
     try {
@@ -1129,6 +1131,7 @@ export function RegisterAgentDialog({ open, onOpenChange, onRegistered }: Regist
     }
     setIsSaving(true);
     setSshError(null);
+    setSshErrorIsUpgrade(false);
     try {
       await apiFetch("/settings/environment-runners", {
         method: "POST",
@@ -1152,6 +1155,7 @@ export function RegisterAgentDialog({ open, onOpenChange, onRegistered }: Regist
       onRegistered?.();
     } catch (err: unknown) {
       setSshError(getErrorMessage(err, "Failed to save environment runner configuration."));
+      setSshErrorIsUpgrade(isUpgradeRequiredError(err));
     } finally {
       setIsSaving(false);
     }
@@ -1329,11 +1333,13 @@ export function RegisterAgentDialog({ open, onOpenChange, onRegistered }: Regist
                 </div>
               </div>
 
-              {sshError && (
+              {sshError && sshErrorIsUpgrade ? (
+                <UpgradeBanner message={sshError} />
+              ) : sshError ? (
                 <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-500/20 dark:bg-red-500/10 dark:text-red-300">
                   {sshError}
                 </div>
-              )}
+              ) : null}
 
               <DialogFooter>
                 <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>

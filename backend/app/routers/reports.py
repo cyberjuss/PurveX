@@ -67,7 +67,7 @@ async def generate_report(
     license_status = await get_org_license_status(db, org_id)
     if not license_status.reports_enabled:
         raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
+            status_code=status.HTTP_402_PAYMENT_REQUIRED,
             detail="PDF report generation requires a paid plan. Upgrade at purvex-llc.com/pricing.",
         )
 

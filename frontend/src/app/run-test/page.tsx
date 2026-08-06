@@ -58,6 +58,7 @@ import { TestsHubTabs } from "@/components/tests/tests-hub-tabs";
 import { cn } from "@/lib/utils";
 import { z } from "zod";
 import { FieldError, FormError } from "@/components/ui/form-error";
+import { UpgradeBanner, isUpgradeRequiredError } from "@/components/ui/upgrade-banner";
 
 // Validates the few free-form text inputs on /run-test. Precondition checks for
 // button-driven fields (test type, detection, environment) remain in
@@ -276,6 +277,7 @@ function useRunTest() {
   const [isRunning, setIsRunning] = useState(false);
   const [result, setResult] = useState<RunTestResult | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [errorIsUpgrade, setErrorIsUpgrade] = useState(false);
   const [stillProcessing, setStillProcessing] = useState<string | null>(null);
 
     const run = useCallback(
@@ -296,6 +298,7 @@ function useRunTest() {
     ) => {
       setIsRunning(true);
       setError(null);
+      setErrorIsUpgrade(false);
       setStillProcessing(null);
       setResult(null);
       callbacks?.onStatus?.("running");
@@ -411,6 +414,7 @@ function useRunTest() {
         }
       } catch (err: unknown) {
         setError(err instanceof Error ? err.message : "Failed to start validation.");
+        setErrorIsUpgrade(isUpgradeRequiredError(err));
         callbacks?.onStatus?.("failed", new Date().toISOString());
       } finally {
         setIsRunning(false);
@@ -419,7 +423,7 @@ function useRunTest() {
     []
   );
 
-  return { run, isRunning, result, error, stillProcessing, setResult };
+  return { run, isRunning, result, error, errorIsUpgrade, stillProcessing, setResult };
 }
 
 function LiveExecutionPanel({
@@ -599,6 +603,7 @@ function RunTestPageContent() {
   const [environment, setEnvironment] = useState<"lab" | "dev" | "prod">("lab");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [errorIsUpgrade, setErrorIsUpgrade] = useState(false);
   const [fieldErrors, setFieldErrors] = useState<RunTestFieldErrors>({});
   const [testType, setTestType] = useState<UiTestType | null>(null);
   const [targetHost, setTargetHost] = useState<string>("");
@@ -634,7 +639,7 @@ function RunTestPageContent() {
   const [techniquePickerTactic, setTechniquePickerTactic] = useState<string>("all");
   const [techniquePickerPage, setTechniquePickerPage] = useState<number>(0);
 
-  const { run: runTest, isRunning, result, error: runError, stillProcessing, setResult } = useRunTest();
+  const { run: runTest, isRunning, result, error: runError, errorIsUpgrade: runErrorIsUpgrade, stillProcessing, setResult } = useRunTest();
   const { canRunTest, canScheduleTest, hasPermission, loading: permissionsLoading } = usePermissions();
   const addExecutionLog = useCallback((entry: ExecutionLogEntry) => {
     setExecution((prev) => {
@@ -826,8 +831,9 @@ function RunTestPageContent() {
   useEffect(() => {
     if (runError) {
       setError(runError);
+      setErrorIsUpgrade(runErrorIsUpgrade);
     }
-  }, [runError]);
+  }, [runError, runErrorIsUpgrade]);
 
   const selectedAtomic = useMemo(() => {
     const parsedNumber = atomicNumberFromExplore ? Number.parseInt(atomicNumberFromExplore, 10) : undefined;
@@ -880,6 +886,7 @@ function RunTestPageContent() {
   }
 
   async function handleRunTest(opts?: { prodOverride?: boolean; prodReason?: string }) {
+    setErrorIsUpgrade(false);
     if (!testType) {
       setError("Choose what you want to test first.");
       return;
@@ -984,6 +991,7 @@ function RunTestPageContent() {
         setResult(null);
       } catch (err: unknown) {
         setError(err instanceof Error ? err.message : "Failed to create schedule.");
+        setErrorIsUpgrade(isUpgradeRequiredError(err));
       } finally {
         setIsScheduling(false);
       }
@@ -1005,6 +1013,7 @@ function RunTestPageContent() {
         router.push(`/tests/${created.id}`);
       } catch (err: unknown) {
         setError(err instanceof Error ? err.message : "Failed to start lab run.");
+        setErrorIsUpgrade(isUpgradeRequiredError(err));
       }
       return;
     }
@@ -2035,14 +2044,16 @@ function RunTestPageContent() {
                   </div>
                 )}
 
-        {error && (
+        {error && errorIsUpgrade ? (
+          <UpgradeBanner message={error} />
+        ) : error ? (
                   <div className="p-4 rounded-lg border border-red-500/40 bg-red-500/10">
                     <div className="flex items-center gap-2">
           <AlertTriangle className="h-5 w-5 text-red-400" />
           <p className="text-sm text-red-200">{error}</p>
         </div>
       </div>
-    )}
+    ) : null}
         {!error && stillProcessing && (
                   <div className={cn("p-4 rounded-lg border", toneClasses("info").border, `${toneClasses("info").bg}/10`)}>
                     <div className="flex items-center gap-2">

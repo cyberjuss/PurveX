@@ -164,7 +164,7 @@ async def create_detection_mirror(
     license_status = await get_org_license_status(db, org_id)
     if not license_status.detection_as_code_enabled:
         raise HTTPException(
-            status_code=403,
+            status_code=402,
             detail="Detection-as-Code (git mirrors) requires a paid plan. Upgrade at purvex-llc.com/pricing.",
         )
 

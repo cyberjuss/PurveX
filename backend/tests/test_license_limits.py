@@ -278,7 +278,7 @@ async def test_free_plan_blocks_invite_past_seat_limit(org_context, monkeypatch)
             db=session,
             current_user=admin,
         )
-    assert exc_info.value.status_code == 403
+    assert exc_info.value.status_code == 402
     assert "3 users" in exc_info.value.detail
 
 
@@ -337,7 +337,7 @@ async def test_free_plan_blocks_runner_past_limit(org_context, monkeypatch):
         await settings_router.create_environment_runner(
             request=_fake_request(), runner_create=make_runner("lab-2"), db=session, current_user=admin,
         )
-    assert exc_info.value.status_code == 403
+    assert exc_info.value.status_code == 402
     assert "1 test runner" in exc_info.value.detail
 
 
@@ -448,7 +448,7 @@ async def test_free_plan_blocks_schedule_creation(org_context, monkeypatch):
             db=session,
             current_user=admin,
         )
-    assert exc_info.value.status_code == 403
+    assert exc_info.value.status_code == 402
     assert "paid plan" in exc_info.value.detail
 
 
@@ -507,7 +507,7 @@ async def test_free_plan_blocks_detection_source_creation(org_context, monkeypat
             db=session,
             current_user=admin,
         )
-    assert exc_info.value.status_code == 403
+    assert exc_info.value.status_code == 402
     assert "paid plan" in exc_info.value.detail
 
 
@@ -544,7 +544,7 @@ async def test_free_plan_blocks_test_run_past_daily_limit(org_context, monkeypat
             db=session,
             current_user=admin,
         )
-    assert exc_info.value.status_code == 403
+    assert exc_info.value.status_code == 402
     assert "3 test runs per day" in exc_info.value.detail
 
 

@@ -503,7 +503,7 @@ async def invite_user(
         current_seats = seat_count_result.scalar_one()
         if current_seats >= seat_limit:
             raise HTTPException(
-                status_code=403,
+                status_code=402,
                 detail=(
                     f"Free plan is limited to {seat_limit} users. "
                     "Upgrade at purvex-llc.com/pricing to invite more."

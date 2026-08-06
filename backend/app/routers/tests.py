@@ -125,7 +125,7 @@ async def run_test(
             today_count = today_count_result.scalar_one()
             if today_count >= license_status.daily_test_run_limit:
                 raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
+                    status_code=status.HTTP_402_PAYMENT_REQUIRED,
                     detail=(
                         f"Free plan is limited to {license_status.daily_test_run_limit} test runs per day. "
                         "Upgrade at purvex-llc.com/pricing to run more, or try again tomorrow."
@@ -429,7 +429,7 @@ async def create_test_schedule(
     license_status = await get_org_license_status(db, org_id)
     if not license_status.schedules_enabled:
         raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
+            status_code=status.HTTP_402_PAYMENT_REQUIRED,
             detail="Scheduled test runs require a paid plan. Upgrade at purvex-llc.com/pricing.",
         )
 

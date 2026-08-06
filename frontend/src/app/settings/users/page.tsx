@@ -25,6 +25,7 @@ import {
 } from "@/components/settings/settings-section";
 import { PageSkeleton } from "@/components/ui/skeleton";
 import { FieldError, FormError } from "@/components/ui/form-error";
+import { UpgradeBanner, isUpgradeRequiredError } from "@/components/ui/upgrade-banner";
 import { z } from "zod";
 import { emailSchema } from "@/lib/validators";
 
@@ -98,6 +99,7 @@ export default function UserManagementPage() {
   const [availableRoles, setAvailableRoles] = useState<Array<{ id: number; name: string; description: string }>>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [errorIsUpgrade, setErrorIsUpgrade] = useState(false);
   const [assigningRole, setAssigningRole] = useState<number | null>(null);
   const [passwordDialogOpen, setPasswordDialogOpen] = useState<number | null>(null);
   const [currentPassword, setCurrentPassword] = useState("");
@@ -297,6 +299,7 @@ export default function UserManagementPage() {
     try {
       setCreatingUser(true);
       setError(null);
+      setErrorIsUpgrade(false);
       setInviteFieldErrors({});
       await apiFetch("/rbac/users/invite", {
         method: "POST",
@@ -307,6 +310,7 @@ export default function UserManagementPage() {
       await fetchUsers();
     } catch (err: unknown) {
       setError(getErrorMessage(err, "Failed to send invite."));
+      setErrorIsUpgrade(isUpgradeRequiredError(err));
     } finally {
       setCreatingUser(false);
     }
@@ -416,7 +420,11 @@ export default function UserManagementPage() {
                 />
                 <FieldError id="new-email-error" message={inviteFieldErrors.email} />
               </div>
-              <FormError message={error} />
+              {error && errorIsUpgrade ? (
+                <UpgradeBanner message={error} />
+              ) : (
+                <FormError message={error} />
+              )}
             </div>
             <DialogFooter className="gap-2">
               <Button
