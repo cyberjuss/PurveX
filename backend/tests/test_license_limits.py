@@ -571,3 +571,129 @@ async def test_free_plan_audit_log_clamped_to_retention_window(org_context, monk
         start_date=None, end_date=None, search=None,
     )
     assert isinstance(result, list)
+
+
+# --- Enforcement: the background scheduler must re-check the license on
+# every firing, not just at schedule-creation time (see
+# app/services/test_scheduler.py). Without this, a schedule made while paid
+# would keep running forever after the license lapses, completely exempt
+# from both the schedules_enabled and daily_test_run_limit gates. ---
+
+@pytest.mark.asyncio
+async def test_scheduler_auto_pauses_schedule_when_license_lapses(org_context, monkeypatch):
+    from app import models
+    from app.utils import license as license_module
+    from app.services import test_scheduler
+    from sqlalchemy import func
+    from sqlalchemy.future import select
+
+    monkeypatch.setattr(
+        license_module, "get_license_status",
+        lambda *_a, **_k: license_module.FREE_LICENSE_STATUS,
+    )
+
+    session, admin = org_context
+    schedule = models.TestSchedule(
+        organization_id=1, environment="lab", schedule_type="interval",
+        interval_seconds=3600, enabled=True, created_by_user_id=admin.id,
+    )
+    session.add(schedule)
+    await session.commit()
+    await session.refresh(schedule)
+
+    await test_scheduler.execute_scheduled_test(schedule, session)
+
+    await session.refresh(schedule)
+    assert schedule.enabled is False
+
+    test_count = (await session.execute(select(func.count(models.Test.id)))).scalar_one()
+    assert test_count == 0
+
+    audit = (
+        await session.execute(
+            select(models.AuditEvent).where(models.AuditEvent.action == "SCHEDULE_AUTO_PAUSED")
+        )
+    ).scalars().first()
+    assert audit is not None
+
+
+@pytest.mark.asyncio
+async def test_scheduler_skips_run_past_daily_limit_but_reschedules(org_context, monkeypatch):
+    from app import models
+    from app.config import settings
+    from app.services import test_scheduler
+    from sqlalchemy import func
+    from sqlalchemy.future import select
+
+    session, admin = org_context
+
+    now = datetime.now(timezone.utc)
+    public_pem, token = _keypair_and_token({
+        "plan": "paid", "schedules_enabled": True, "daily_test_run_limit": 1,
+        "iat": now, "exp": now + timedelta(days=30),
+    })
+    monkeypatch.setattr(settings, "LICENSE_PUBLIC_KEY_PEM", public_pem)
+    monkeypatch.setattr(settings, "PURVEX_LICENSE_KEY", token)
+
+    # Already at today's cap of 1.
+    session.add(models.Test(
+        organization_id=1, technique_id="T1000", environment="lab",
+        status="pass", marker="purvex_test", started_at=now,
+    ))
+    schedule = models.TestSchedule(
+        organization_id=1, environment="lab", schedule_type="interval",
+        interval_seconds=3600, enabled=True, created_by_user_id=admin.id,
+        next_run_at=now,
+    )
+    session.add(schedule)
+    await session.commit()
+    await session.refresh(schedule)
+
+    await test_scheduler.execute_scheduled_test(schedule, session)
+
+    await session.refresh(schedule)
+    # Skipped, not disabled -- it should try again on its normal cadence.
+    # update_schedule_next_run computes this with a naive datetime.utcnow(),
+    # unlike `now` above, so compare against a naive baseline.
+    assert schedule.enabled is True
+    assert schedule.next_run_at is not None
+    assert schedule.next_run_at > datetime.utcnow().replace(tzinfo=None)
+
+    test_count = (await session.execute(select(func.count(models.Test.id)))).scalar_one()
+    assert test_count == 1  # only the pre-seeded one; no new run created
+
+
+# --- Enforcement: /auth/register (a direct admin-create-user path distinct
+# from rbac.invite_user, the one the UI actually calls) must also respect
+# seat_limit -- otherwise it's a straight bypass of the free-tier seat cap
+# for anyone who calls it directly instead of the invite flow. ---
+
+@pytest.mark.asyncio
+async def test_free_plan_blocks_direct_register_past_seat_limit(org_context, monkeypatch):
+    from app import schemas
+    from app.utils import license as license_module
+    import app.routers.auth as auth_router
+
+    monkeypatch.setattr(
+        license_module, "get_license_status",
+        lambda *_args, **_kwargs: license_module.LicenseStatus(plan="free", seat_limit=3, runner_limit=1),
+    )
+
+    session, admin = org_context
+
+    # Admin (1) + two directly-registered users = 3 total, exactly at the free limit.
+    for i in range(2):
+        await auth_router.register_admin(
+            user_in=schemas.UserCreate(email=f"direct{i}@example.test", password="Direct-Pass1!"),
+            db=session,
+            current_user=admin,
+        )
+
+    with pytest.raises(HTTPException) as exc_info:
+        await auth_router.register_admin(
+            user_in=schemas.UserCreate(email="onetoomany-direct@example.test", password="Direct-Pass1!"),
+            db=session,
+            current_user=admin,
+        )
+    assert exc_info.value.status_code == 402
+    assert "3 users" in exc_info.value.detail

@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, status, Request, Response
 from fastapi.security import OAuth2PasswordRequestForm
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 
 from ..db import get_db, async_sessionmaker
 from .. import models, schemas
@@ -286,6 +286,31 @@ async def register_admin(
     existing = await get_user_by_email(db, user_in.email)
     if existing:
         raise HTTPException(status_code=400, detail="Unable to create user with the provided details")
+
+    # SECURITY: this endpoint creates a user directly (no invite, no seat
+    # check) and predates rbac.invite_user, which is what the UI actually
+    # calls and does enforce seat_limit. Without this, it's a straight
+    # bypass of the free-tier seat cap for anyone who calls it directly.
+    from ..utils.license import get_org_license_status
+    from ..utils.tenant import require_org_id
+
+    org_id_for_seat_check = require_org_id(current_user)
+    seat_limit = (await get_org_license_status(db, org_id_for_seat_check)).seat_limit
+    if seat_limit is not None:
+        seat_count_result = await db.execute(
+            select(func.count(models.User.id)).where(
+                models.User.organization_id == org_id_for_seat_check
+            )
+        )
+        current_seats = seat_count_result.scalar_one()
+        if current_seats >= seat_limit:
+            raise HTTPException(
+                status_code=402,
+                detail=(
+                    f"Free plan is limited to {seat_limit} users. "
+                    "Upgrade at purvex-llc.com/pricing to add more."
+                ),
+            )
 
     # Ensure an organization exists for this user.
     org_result = await db.execute(select(models.Organization))

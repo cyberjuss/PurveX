@@ -6,15 +6,16 @@ and executes them automatically.
 """
 import asyncio
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
-from sqlalchemy import select, and_
+from sqlalchemy import func, select, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..db import async_sessionmaker
 from .. import models
 from .atomic_runner import execute_test_pipeline
 from .detection_versioning import maybe_compute_version_hash
+from ..utils.license import get_org_license_status
 
 logger = logging.getLogger("purvex.scheduler")
 
@@ -79,7 +80,52 @@ async def execute_scheduled_test(schedule: models.TestSchedule, session: AsyncSe
     # Create a Test record (similar to /tests/run endpoint)
     # We don't need TestRunCreate here, we'll create the Test directly
     org_id = schedule.organization_id
-    
+
+    # SECURITY: schedule creation already requires schedules_enabled (see
+    # tests.create_test_schedule), but that check only ran once, at create
+    # time. Without re-checking here, a schedule made while paid would keep
+    # firing forever after the license lapses back to free, and every run it
+    # produces would be exempt from the free-tier daily_test_run_limit too
+    # (this function is the only other place that inserts a Test row besides
+    # the gated /tests/run endpoint). Re-verify both on every firing instead.
+    license_status = await get_org_license_status(session, org_id)
+    if not license_status.schedules_enabled:
+        logger.warning(
+            f"Schedule {schedule.id} (org={org_id}) is no longer covered by a paid plan; "
+            "pausing it instead of executing."
+        )
+        schedule.enabled = False
+        schedule.next_run_at = None
+        session.add(
+            models.AuditEvent(
+                user_id=schedule.created_by_user_id,
+                user_email=None,
+                action="SCHEDULE_AUTO_PAUSED",
+                resource_type="test_schedule",
+                resource_id=str(schedule.id),
+                details="Paused: organization's license no longer includes scheduled runs.",
+            )
+        )
+        await session.commit()
+        return
+
+    if license_status.daily_test_run_limit is not None:
+        day_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+        today_count_result = await session.execute(
+            select(func.count(models.Test.id)).where(
+                models.Test.organization_id == org_id,
+                models.Test.started_at >= day_start,
+            )
+        )
+        if today_count_result.scalar_one() >= license_status.daily_test_run_limit:
+            logger.info(
+                f"Schedule {schedule.id} (org={org_id}) skipped this firing: "
+                "free plan's daily test run limit already reached today."
+            )
+            await update_schedule_next_run(schedule, session)
+            await session.commit()
+            return
+
     # Generate marker
     from .atomic_runner import generate_marker
     marker = generate_marker(schedule.environment)

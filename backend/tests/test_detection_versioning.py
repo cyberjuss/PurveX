@@ -552,6 +552,20 @@ async def test_scheduler_path_populates_version_hash_on_executed_test(
 
     monkeypatch.setattr(scheduler, "execute_test_pipeline", _noop_pipeline)
 
+    # execute_scheduled_test re-checks the license on every firing (see
+    # test_license_limits.py's scheduler tests) -- this test predates that
+    # gate and isn't exercising it, so give the org an unrestricted paid
+    # status rather than hitting the default free-tier fallback.
+    from app.utils.license import LicenseStatus as _LicenseStatus
+
+    async def _paid_status(*_a, **_k):
+        return _LicenseStatus(
+            plan="paid", seat_limit=None, runner_limit=None,
+            schedules_enabled=True, daily_test_run_limit=None,
+        )
+
+    monkeypatch.setattr(scheduler, "get_org_license_status", _paid_status)
+
     await scheduler.execute_scheduled_test(sched, session)
 
     res = await session.execute(
