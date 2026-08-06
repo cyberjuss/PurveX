@@ -85,6 +85,7 @@ export default function TestTrendChart({ data, height = 300 }: TestTrendChartPro
         <Area
           type="monotone"
           dataKey="Inconclusive"
+          name="Blind Spot"
           stackId="1"
           stroke="#f59e0b"
           fill="url(#colorInconclusive)"

@@ -678,7 +678,7 @@ export default function ReportsPage() {
             />
             <MetricRow
               value={`${reportData.detectionStatusCounts.telemetryGap}`}
-              label="Telemetry Gaps"
+              label="Blind Spots"
               detail="Blocking Validation"
               tone={
                 reportData.detectionStatusCounts.telemetryGap > 0
@@ -734,7 +734,7 @@ export default function ReportsPage() {
           {reportData.telemetryGapDetections.length > 0 ? (
             <div className="space-y-2">
               <p className="text-sm font-medium text-[var(--foreground)]">
-                No logs ({reportData.telemetryGapDetections.length})
+                Blind spots ({reportData.telemetryGapDetections.length})
               </p>
               <ul className="space-y-1.5 text-sm">
                 {reportData.telemetryGapDetections.slice(0, 6).map((d) => (
@@ -796,7 +796,7 @@ export default function ReportsPage() {
               </span>
               <span className="inline-flex items-center gap-1.5">
                 <span className="h-2 w-2 rounded-sm bg-amber-500" />
-                Inconclusive {reportData.inconclusiveCount}
+                Blind Spot {reportData.inconclusiveCount}
               </span>
             </div>
             <span>

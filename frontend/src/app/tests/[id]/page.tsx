@@ -85,6 +85,11 @@ function resultBadge(result?: string) {
   }
 }
 
+function resultLabel(result?: string) {
+  if (result === "INCONCLUSIVE") return "Blind Spot";
+  return result;
+}
+
 function scoreTone(score?: number | null) {
   if (typeof score !== "number") return "text-[var(--surface-subtle-foreground)]";
   if (score >= 80) return "text-emerald-600 dark:text-emerald-300";
@@ -265,7 +270,7 @@ export default function TestDetailPage() {
 
       {/* Identity chips + result */}
       <div className="flex flex-wrap items-center gap-2 text-xs">
-        <Badge className={cn("border", resultBadge(result))}>{result}</Badge>
+        <Badge className={cn("border", resultBadge(result))}>{resultLabel(result)}</Badge>
         <Badge className="border border-[var(--stroke-soft)] bg-[var(--surface-subtle)] text-[var(--surface-subtle-foreground)]">
           {mode.label}
         </Badge>

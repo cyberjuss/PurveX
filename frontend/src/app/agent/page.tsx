@@ -200,7 +200,7 @@ function WatchtowerPageContent() {
 
 I can help you:
 - summarize detection trust and latest evidence
-- explain why a validation failed or went inconclusive
+- explain why a validation failed or hit a blind spot
 - propose safer tuning changes and a retest path${alertId ? "\n- break down the selected evidence record" : ""}`;
 
           setMessages([

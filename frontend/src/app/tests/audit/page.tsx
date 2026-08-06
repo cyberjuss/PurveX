@@ -35,6 +35,11 @@ function formatDuration(start?: string | null, end?: string | null) {
 // Test run result → Chip tone. ERROR maps to danger alongside FAIL because
 // the audit table only has room for a single chip per row and users care
 // about "did it pass / did it fail" more than "did it crash or report FAIL".
+function getResultLabel(result?: string): string | undefined {
+  if ((result || "").toUpperCase() === "INCONCLUSIVE") return "Blind Spot";
+  return result;
+}
+
 function getResultTone(result?: string): NonNullable<ChipProps["tone"]> {
   switch ((result || "").toUpperCase()) {
     case "PASS":
@@ -165,7 +170,7 @@ export default function TestsAuditPage() {
                   <SelectItem value="all">All results</SelectItem>
                   <SelectItem value="PASS">Pass</SelectItem>
                   <SelectItem value="FAIL">Fail</SelectItem>
-                  <SelectItem value="INCONCLUSIVE">Inconclusive</SelectItem>
+                  <SelectItem value="INCONCLUSIVE">Blind Spot</SelectItem>
                   <SelectItem value="PENDING">Pending</SelectItem>
                   <SelectItem value="RUNNING">Running</SelectItem>
                   <SelectItem value="ERROR">Error</SelectItem>
@@ -289,7 +294,7 @@ export default function TestsAuditPage() {
                           {test.environment || "—"}
                         </td>
                         <td className="py-3 pr-4">
-                          <Chip tone={getResultTone(result)}>{result}</Chip>
+                          <Chip tone={getResultTone(result)}>{getResultLabel(result)}</Chip>
                         </td>
                         <td className="py-3 pr-4 text-slate-600">{test.status || "—"}</td>
                         <td className="py-3 pr-4 text-slate-600">

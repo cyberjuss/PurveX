@@ -252,7 +252,7 @@ export default function AIAssistantSettingsPage() {
             />
             <SettingsRow
               label="Explain validation failures"
-              description="Plain-language summary appears next to each FAIL/INCONCLUSIVE."
+              description="Plain-language summary appears next to each FAIL/Blind Spot."
               control={
                 <Switch
                   checked={settings.explain_test_failures}

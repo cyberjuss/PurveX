@@ -88,11 +88,11 @@ const HEALTH_META: Record<
     emptyLabel: "Nothing needs tuning right now",
   },
   TELEMETRY_MISSING: {
-    label: "No logs",
+    label: "Blind Spot",
     ...toneClasses(HEALTH_TONE.TELEMETRY_MISSING),
     headline: "The test ran, but no usable telemetry reached the SIEM.",
     detail: "Treat this as a pipeline problem first. Validation cannot prove trust while data is missing.",
-    emptyLabel: "No telemetry gaps right now",
+    emptyLabel: "No blind spots right now",
   },
   UNKNOWN: {
     label: "Untested",
@@ -385,7 +385,7 @@ export function DetectionsWorkspace({ initialDetections }: DetectionsWorkspacePr
               <LegendDot color="bg-emerald-500" label="Trusted" />
               {counts.stale > 0 && <LegendDot color="bg-emerald-300" label="Stale" />}
               <LegendDot color="bg-rose-400" label="Needs tuning" />
-              <LegendDot color="bg-amber-400" label="No logs" />
+              <LegendDot color="bg-amber-400" label="Blind Spot" />
               <LegendDot color="bg-slate-300 dark:bg-slate-600" label="Untested" />
             </div>
           </div>

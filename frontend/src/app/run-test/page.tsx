@@ -2298,7 +2298,7 @@ function RunTestPageContent() {
                   ? {
                       tone: "danger" as const,
                       icon: <XCircle className={cn("h-4 w-4", toneClasses("danger").icon)} />,
-                      title: "No logs",
+                      title: "Blind Spot",
                       sub: "No matching events arrived in the SIEM. Check log sources, agents, and ingestion pipelines.",
                     }
                   : {

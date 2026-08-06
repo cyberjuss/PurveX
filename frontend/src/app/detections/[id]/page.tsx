@@ -124,7 +124,7 @@ const HEALTH_META: Record<
     bar: "bg-rose-500",
   },
   TELEMETRY_GAP: {
-    label: "No logs",
+    label: "Blind Spot",
     headline: "Validation ran without usable telemetry in the SIEM.",
     nextAction: "Fix the telemetry path before retesting the rule.",
     icon: AlertTriangle,
@@ -549,7 +549,7 @@ export default function DetectionDetailPage() {
                             </span>
                             {v.inconclusive_rate > 0 ? (
                               <span className="text-amber-600 dark:text-amber-400">
-                                inconclusive {Math.round(v.inconclusive_rate * 100)}%
+                                blind spot {Math.round(v.inconclusive_rate * 100)}%
                               </span>
                             ) : null}
                             {/* The delta line — the panel's whole value

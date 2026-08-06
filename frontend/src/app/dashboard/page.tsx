@@ -327,7 +327,7 @@ export default function DashboardPage() {
   const detectionStatusData = [
     { name: "Passed", value: detectionsSummary.pass, color: "var(--pvrx-success)" },
     { name: "Failed", value: detectionsSummary.fail, color: "var(--pvrx-danger)" },
-    { name: "Inconclusive", value: detectionsSummary.inconclusive, color: "var(--pvrx-warning)" },
+    { name: "Blind Spot", value: detectionsSummary.inconclusive, color: "var(--pvrx-warning)" },
     { name: "Untested", value: detectionsSummary.untested, color: "var(--surface-subtle-foreground)" },
   ].filter(item => item.value > 0);
 
@@ -965,7 +965,7 @@ export default function DashboardPage() {
                     [
                       { key: "ready", label: "Ready", stat: readinessSummary.ready, icon: ShieldCheck },
                       { key: "needs_tuning", label: "Needs tuning", stat: readinessSummary.needs_tuning, icon: AlertTriangle },
-                      { key: "telemetry_gap", label: "No logs", stat: readinessSummary.telemetry_gap, icon: Activity },
+                      { key: "telemetry_gap", label: "Blind Spot", stat: readinessSummary.telemetry_gap, icon: Activity },
                       { key: "needs_validation", label: "Needs validation", stat: readinessSummary.needs_validation, icon: Target },
                     ] as Array<{ key: DetectionReadinessKey; label: string; stat: number; icon: typeof ShieldCheck }>
                   ).map(entry => {
