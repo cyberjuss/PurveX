@@ -167,7 +167,7 @@ ensure_env_file() {
     enc_key="$($PYTHON -c 'import base64, secrets; print(base64.urlsafe_b64encode(secrets.token_bytes(32)).decode())')"
     set_env_var "PURVEX_ENCRYPTION_KEY" "${enc_key}"
     info "Generated PURVEX_ENCRYPTION_KEY"
-    warn "Back up PURVEX_ENCRYPTION_KEY (in .env) somewhere safe -- losing it makes any stored SIEM credentials and 2FA codes unrecoverable."
+    warn "Back up PURVEX_ENCRYPTION_KEY (in .env) somewhere safe -- losing it makes any stored SIEM credentials unrecoverable."
   fi
 }
 

@@ -67,15 +67,6 @@ def login(
     if not res.ok:
         return _fail("Auth login", f"{login_url} -> {res.status_code}"), False
 
-    payload = {}
-    try:
-        payload = res.json()
-    except Exception:
-        pass
-
-    if payload.get("requires_2fa"):
-        return _fail("Auth login", "2FA required; continue this run manually with browser flow"), False
-
     return _ok("Auth login", f"{login_url} -> {res.status_code}"), True
 
 

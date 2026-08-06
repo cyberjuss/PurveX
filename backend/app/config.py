@@ -118,10 +118,14 @@ class Settings(BaseSettings):
     # signed token an admin pastes in after purchasing; the public key below
     # verifies it offline and never changes per-install — it's the public
     # half of a keypair only the license issuer holds, not a secret itself.
+    # Generated once via backend/scripts/issue_license.py keygen; the
+    # matching private key never leaves the operator's own machine (see
+    # backend/.license_signing_key.pem, gitignored). LICENSE_PUBLIC_KEY_PEM
+    # can still override this per-deployment if the key is ever rotated.
     PURVEX_LICENSE_KEY: str = os.getenv("PURVEX_LICENSE_KEY", "")
     LICENSE_PUBLIC_KEY_PEM: str = os.getenv("LICENSE_PUBLIC_KEY_PEM", "") or (
         "-----BEGIN PUBLIC KEY-----\n"
-        "REPLACE_WITH_REAL_ED25519_PUBLIC_KEY_FROM_ISSUE_LICENSE_PY\n"
+        "MCowBQYDK2VwAyEA9gRnGC9Alpz2eG+aRO0Rbps0Z0UBtBj8svD4IjjYxbY=\n"
         "-----END PUBLIC KEY-----"
     )
 
