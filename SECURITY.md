@@ -43,15 +43,6 @@ Key controls are configured via `backend/app/config.py` and enforced in `backend
     - `LOGIN_RATE_LIMIT_MAX_REQUESTS` (default `5`)
     - `LOGIN_RATE_LIMIT_WINDOW_SECONDS` (default `300`)
 
-- **Multi‑Factor Authentication (MFA)**
-  - TOTP‑based 2FA with backup codes (`/auth/2fa/*` router).
-  - Login flow requires 2FA when appropriate:
-    - Per‑user flag: `User.two_factor_enabled`.
-    - Policy flags in `config.py`:
-      - `REQUIRE_2FA_FOR_ADMINS`
-      - `REQUIRE_2FA_FOR_ALL_USERS`
-  - When 2FA is required, `/auth/login` issues a short‑lived `two_factor_token` and the session is only established after successful verification via `/auth/2fa/verify`.
-
 - **Recommended Policy by Environment**
 
 | Setting                          | Dev / Local           | Staging                    | Production                  |
@@ -61,10 +52,6 @@ Key controls are configured via `backend/app/config.py` and enforced in `backend
 | `LOGIN_RATE_LIMIT_MAX_REQUESTS` | 10                     | 5–7                        | 5                           |
 | `LOGIN_RATE_LIMIT_WINDOW_SECONDS` | 300                  | 300                        | 300                         |
 | `PASSWORD_HISTORY_LENGTH`       | 1–3                    | 5                          | ≥5                          |
-| `REQUIRE_2FA_FOR_ADMINS`        | optional               | true                       | true                        |
-| `REQUIRE_2FA_FOR_ALL_USERS`     | false                  | optional (per org)         | consider true for high‑risk |
-
-For production, 2FA for all administrators is strongly recommended, and 2FA for all users should be considered in higher‑risk environments.
 
 ## Authorization and Org Scoping
 
@@ -86,7 +73,7 @@ The frontend respects these controls by using the `usePermissions` hook and hidi
 ## Input Validation and Sanitization
 
 - Pydantic models (`backend/app/schemas.py`) define expected shapes and length limits for most request bodies.
-- `utils/security.py` provides `sanitize_string`, `sanitize_email`, and `sanitize_url` used in security‑sensitive flows (2FA, password reset, etc.).
+- `utils/security.py` provides `sanitize_string`, `sanitize_email`, and `sanitize_url` used in security‑sensitive flows (password reset, invites, etc.).
 - `utils/sanitize_inputs.py` is used to sanitize entire models before persisting to the database for settings, SIEM connections, detections, and tests.
 
 ## Transport, Storage, and Keys (Deployment Guidance)
@@ -99,14 +86,14 @@ These items are primarily handled at deployment time rather than directly in the
 
 - **Encryption at Rest**
   - Use encrypted volumes or a managed database with built‑in at‑rest encryption.
-  - For particularly sensitive columns (2FA secrets, backup codes, future API tokens), consider app‑level encryption using a key stored in a secret manager.
+  - For particularly sensitive columns (SIEM credentials, future API tokens), consider app‑level encryption using a key stored in a secret manager.
 
 - **Key Management**
   - Store `JWT_SECRET_KEY` and any future encryption keys in a dedicated secrets manager (e.g., Azure Key Vault, AWS Secrets Manager) rather than in `.env` files in production.
   - Establish a key rotation process and use short‑lived tokens for reset flows and similar operations.
 
 - **Data Masking and Logging**
-  - Avoid logging secrets, passwords, tokens, or 2FA codes.
+  - Avoid logging secrets, passwords, or tokens.
   - When exposing identifiers (e.g., API keys) in future UIs, show only partially masked values.
 
 Keeping these controls configured and monitored—alongside regular dependency updates and vulnerability scanning—will keep PurveX aligned with modern SaaS security expectations.

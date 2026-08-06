@@ -27,7 +27,7 @@ PurveX is a detection validation platform for security teams. It connects to you
 - **Connect any SIEM** — Splunk, Elastic, Sentinel, and more
 - **Generate reports** with evidence, scores, and recommendations
 - **AI-assisted analysis** for test failures and tuning suggestions
-- **Role-based access** with granular permissions and 2FA support
+- **Role-based access** with granular permissions
 
 ---
 
