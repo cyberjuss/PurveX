@@ -21,10 +21,31 @@ Usage:
         retention is unlimited by default -- pass --no-schedules,
         --no-detection-as-code, --no-reports, or --audit-retention-days to
         issue a more restricted key (e.g. for a future lower tier).
+
+    python scripts/issue_license.py issue --seats 5 --days 35 --deliver-to <portal-user-id>
+        Same as above, but also pushes the token straight into the portal's
+        Supabase project so the customer can grab it themselves at
+        /my-license -- no email round trip, no risk of it landing in spam.
+        Issuance itself is unchanged: still entirely local, still signed
+        with the key at backend/.license_signing_key.pem, which never
+        leaves this machine. --deliver-to only changes how the already-
+        issued token gets to the customer. The portal_account_id is in
+        every payment/renewal notification email as "Portal account id".
+        Requires SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY set in your
+        shell -- same service-role key already configured in the landing
+        page's Vercel project for its own webhook (Supabase dashboard ->
+        Project Settings -> API -> service_role key). This key can bypass
+        Row Level Security on that project but cannot forge or verify a
+        PurveX license -- it's a different secret with a different blast
+        radius than the ed25519 signing key.
 """
 
 import argparse
+import json
+import os
 import sys
+import urllib.error
+import urllib.request
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -33,6 +54,67 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 KEY_PATH = Path(__file__).resolve().parent.parent / ".license_signing_key.pem"
+
+
+def deliver_to_portal(portal_user_id: str, token: str) -> None:
+    """Push a just-issued token into the portal's Supabase project so the
+    customer can retrieve it themselves at /my-license. stdlib-only (no new
+    dependency) -- this is an occasional, by-hand CLI action, not something
+    that needs the Supabase Python SDK.
+    """
+    supabase_url = os.environ.get("SUPABASE_URL")
+    service_role_key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY")
+    if not supabase_url or not service_role_key:
+        print(
+            "SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY must be set to use --deliver-to "
+            "(see this script's --help for where to find them).",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    body = json.dumps({
+        "current_license_key": token,
+        "license_issued_at": datetime.now(timezone.utc).isoformat(),
+    }).encode("utf-8")
+
+    request = urllib.request.Request(
+        url=f"{supabase_url.rstrip('/')}/rest/v1/portal_profiles?user_id=eq.{portal_user_id}",
+        data=body,
+        method="PATCH",
+        headers={
+            "apikey": service_role_key,
+            "Authorization": f"Bearer {service_role_key}",
+            "Content-Type": "application/json",
+            # return=representation, not the default minimal -- a PATCH
+            # filtered by a user_id that doesn't exist returns 200 with an
+            # empty result rather than an error. Without checking the body,
+            # a typo'd portal_user_id would silently "succeed" and do
+            # nothing, and the owner would have no idea delivery failed.
+            "Prefer": "return=representation",
+        },
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=15) as response:
+            updated_rows = json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        print(f"Delivery failed: Supabase returned {exc.code} {exc.reason}. "
+              f"Token was still issued above -- fall back to emailing it.", file=sys.stderr)
+        sys.exit(1)
+    except urllib.error.URLError as exc:
+        print(f"Delivery failed: {exc.reason}. Token was still issued above -- "
+              f"fall back to emailing it.", file=sys.stderr)
+        sys.exit(1)
+
+    if not updated_rows:
+        print(
+            f"Delivery failed: no portal_profiles row matches user_id={portal_user_id}. "
+            "Double-check the id from the notification email. Token was still issued above -- "
+            "fall back to emailing it.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    print(f"Delivered to portal account {portal_user_id} -- they can retrieve it at /my-license now.")
 
 
 def keygen() -> None:
@@ -70,6 +152,7 @@ def issue(
     reports: bool,
     audit_retention_days: int,
     daily_test_runs: int,
+    deliver_to: str | None,
 ) -> None:
     if not KEY_PATH.exists():
         print("No signing key found — run 'python scripts/issue_license.py keygen' first.", file=sys.stderr)
@@ -92,6 +175,9 @@ def issue(
     token = jwt.encode(claims, private_pem, algorithm="EdDSA")
     print(token)
 
+    if deliver_to:
+        deliver_to_portal(deliver_to, token)
+
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -109,6 +195,7 @@ def main() -> None:
     issue_parser.add_argument("--no-reports", dest="reports", action="store_false", help="Disable PDF report generation (enabled by default).")
     issue_parser.add_argument("--audit-retention-days", type=int, default=0, help="Audit log visibility window in days; 0 = unlimited (default).")
     issue_parser.add_argument("--daily-test-runs", type=int, default=0, help="Max test runs per day; 0 = unlimited (default).")
+    issue_parser.add_argument("--deliver-to", metavar="PORTAL_USER_ID", default=None, help="Push the token to this portal account's Supabase row instead of (or alongside) copy-pasting it into an email -- see this script's --help for details.")
 
     args = parser.parse_args()
     if args.command == "keygen":
@@ -124,6 +211,7 @@ def main() -> None:
             reports=args.reports,
             audit_retention_days=args.audit_retention_days,
             daily_test_runs=args.daily_test_runs,
+            deliver_to=args.deliver_to,
         )
 
 
