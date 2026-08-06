@@ -299,8 +299,8 @@ async def test_paid_plan_with_finite_seats_blocks_past_its_own_limit_with_paid_m
     """A paid license isn't necessarily unlimited -- it's whatever seat
     count it was issued for. Hitting that cap must not tell the customer
     "Free plan is limited..." (false, and points them at a pricing page
-    they've already been through); it should point them at their own
-    account owner instead."""
+    they've already been through); it should point them at the self-service
+    add-a-seat purchase instead."""
     from app.utils import license as license_module
     import app.routers.rbac as rbac_router
 
@@ -328,7 +328,7 @@ async def test_paid_plan_with_finite_seats_blocks_past_its_own_limit_with_paid_m
         )
     assert exc_info.value.status_code == 402
     assert "2 users" in exc_info.value.detail
-    assert "account owner" in exc_info.value.detail
+    assert "purvex-llc.com/add-seat" in exc_info.value.detail
     assert "Free plan" not in exc_info.value.detail
 
 
@@ -812,5 +812,5 @@ async def test_paid_plan_direct_register_blocks_with_paid_message(org_context, m
         )
     assert exc_info.value.status_code == 402
     assert "2 users" in exc_info.value.detail
-    assert "account owner" in exc_info.value.detail
+    assert "purvex-llc.com/add-seat" in exc_info.value.detail
     assert "Free plan" not in exc_info.value.detail

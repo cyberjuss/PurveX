@@ -1,10 +1,14 @@
-import { Sparkles, Info } from "lucide-react";
+import { Sparkles, UserPlus, Info } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 
-/** Marketing site's pricing page — where every paid-plan upgrade link points. */
+/** Marketing site's pricing page — where every free-plan upgrade link points. */
 export const PRICING_URL = "https://purvex-llc.com/pricing";
+/** Self-service "buy one more seat" purchase — where a paid org that hit
+ * its own license's seat cap gets sent, distinct from the pricing page it
+ * has already been through. */
+export const ADD_SEAT_URL = "https://purvex-llc.com/add-seat";
 
 /**
  * True when an `apiFetch()` call failed because the org's plan doesn't cover
@@ -16,13 +20,27 @@ export function isUpgradeRequiredError(error: unknown): boolean {
   return typeof error === "object" && error !== null && (error as { isUpgradeRequired?: boolean }).isUpgradeRequired === true;
 }
 
-// The backend appends "Upgrade at purvex-llc.com/pricing..." only to
-// free-tier 402s. A paid org that hit its own license's specific seat/
-// runner cap gets a different message ("...contact your account owner...")
-// with no pricing suffix at all — there's no upgrade to sell someone who
-// already paid, so this is also what decides whether the banner shows a
-// button at all, not just what to strip from the text.
-const UPGRADE_SUFFIX = /\s*Upgrade at purvex-llc\.com\/pricing[^.]*\.?\s*$/i;
+// The backend appends one of two trailing sentences to a 402, depending on
+// which limit was hit and what plan the org is on. Free tier: "Upgrade at
+// purvex-llc.com/pricing..." (there's a whole plan to sell). Paid tier that
+// hit its own license's specific cap: "Add a seat at
+// purvex-llc.com/add-seat..." (they already have a plan; they just need one
+// more unit of it). Runner-limit-on-paid has no suffix at all -- runners
+// aren't sold a la carte -- so the banner falls back to plain text with no
+// button for anything that doesn't match either pattern.
+const CTA_PATTERNS: { pattern: RegExp; label: string; url: string; icon: typeof Sparkles }[] = [
+  { pattern: /\s*Upgrade at purvex-llc\.com\/pricing[^.]*\.?\s*$/i, label: "Upgrade plan", url: PRICING_URL, icon: Sparkles },
+  { pattern: /\s*Add a seat at purvex-llc\.com\/add-seat[^.]*\.?\s*$/i, label: "Add a seat", url: ADD_SEAT_URL, icon: UserPlus },
+];
+
+function resolveCta(message: string) {
+  for (const cta of CTA_PATTERNS) {
+    if (cta.pattern.test(message)) {
+      return { cta, displayMessage: message.replace(cta.pattern, "").trim() };
+    }
+  }
+  return { cta: null, displayMessage: message };
+}
 
 /**
  * Inline banner for a caught `isUpgradeRequiredError`. Drop this in wherever
@@ -31,8 +49,8 @@ const UPGRADE_SUFFIX = /\s*Upgrade at purvex-llc\.com\/pricing[^.]*\.?\s*$/i;
  * generic `FormError`.
  */
 export function UpgradeBanner({ message, className }: { message: string; className?: string }) {
-  const hasUpgradeCta = UPGRADE_SUFFIX.test(message);
-  const displayMessage = hasUpgradeCta ? message.replace(UPGRADE_SUFFIX, "").trim() : message;
+  const { cta, displayMessage } = resolveCta(message);
+  const Icon = cta?.icon ?? Info;
 
   return (
     <div
@@ -43,22 +61,18 @@ export function UpgradeBanner({ message, className }: { message: string; classNa
       )}
     >
       <div className="flex items-start gap-2.5">
-        {hasUpgradeCta ? (
-          <Sparkles className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" />
-        ) : (
-          <Info className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" />
-        )}
+        <Icon className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" />
         <span className="min-w-0 leading-relaxed">{displayMessage}</span>
       </div>
-      {hasUpgradeCta ? (
+      {cta ? (
         <Button
           asChild
           size="sm"
           variant="outline"
           className="shrink-0 border-amber-500/40 text-amber-900 hover:bg-amber-500/10 dark:border-amber-400/40 dark:text-amber-100"
         >
-          <a href={PRICING_URL} target="_blank" rel="noreferrer">
-            Upgrade plan
+          <a href={cta.url} target="_blank" rel="noreferrer">
+            {cta.label}
           </a>
         </Button>
       ) : null}

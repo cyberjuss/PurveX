@@ -507,12 +507,12 @@ async def invite_user(
             # it's whatever the license was issued for, not "unlimited by
             # definition of being paid." Telling a paying customer "Free
             # plan is limited..." is both wrong and points them at the
-            # pricing page they've already been through; point them at
-            # their own account owner instead, who can request more seats.
+            # pricing page they've already been through; point them at the
+            # self-service add-a-seat purchase instead.
             if org_license.plan == "paid":
                 detail = (
                     f"Your license is limited to {seat_limit} users. "
-                    "Contact your PurveX account owner to add more seats."
+                    "Add a seat at purvex-llc.com/add-seat to invite more."
                 )
             else:
                 detail = (
