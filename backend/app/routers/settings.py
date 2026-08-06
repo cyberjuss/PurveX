@@ -923,7 +923,8 @@ async def create_environment_runner(
 
     from ..utils.license import get_org_license_status
 
-    runner_limit = (await get_org_license_status(db, org_id)).runner_limit
+    org_license = await get_org_license_status(db, org_id)
+    runner_limit = org_license.runner_limit
     if runner_limit is not None:
         runner_count_result = await db.execute(
             select(func.count(models.EnvironmentRunnerConfig.id)).where(
@@ -932,13 +933,20 @@ async def create_environment_runner(
         )
         current_runners = runner_count_result.scalar_one()
         if current_runners >= runner_limit:
-            raise HTTPException(
-                status_code=402,
-                detail=(
+            # See the matching comment in rbac.invite_user -- a paid org can
+            # still have a finite runner_limit, so "Free plan..." is wrong
+            # and "upgrade" is the wrong CTA for someone who's already paid.
+            if org_license.plan == "paid":
+                detail = (
+                    f"Your license is limited to {runner_limit} test runner(s). "
+                    "Contact your PurveX account owner to add more."
+                )
+            else:
+                detail = (
                     f"Free plan is limited to {runner_limit} test runner(s). "
                     "Upgrade at purvex-llc.com/pricing to register more."
-                ),
-            )
+                )
+            raise HTTPException(status_code=402, detail=detail)
 
     token_record = None
     now = datetime.now(timezone.utc)

@@ -495,20 +495,31 @@ async def invite_user(
 
     from ..utils.license import get_org_license_status
 
-    seat_limit = (await get_org_license_status(db, org_id)).seat_limit
+    org_license = await get_org_license_status(db, org_id)
+    seat_limit = org_license.seat_limit
     if seat_limit is not None:
         seat_count_result = await db.execute(
             select(func.count(models.User.id)).where(models.User.organization_id == org_id)
         )
         current_seats = seat_count_result.scalar_one()
         if current_seats >= seat_limit:
-            raise HTTPException(
-                status_code=402,
-                detail=(
+            # SECURITY/UX: a paid org can still have a finite seat_limit --
+            # it's whatever the license was issued for, not "unlimited by
+            # definition of being paid." Telling a paying customer "Free
+            # plan is limited..." is both wrong and points them at the
+            # pricing page they've already been through; point them at
+            # their own account owner instead, who can request more seats.
+            if org_license.plan == "paid":
+                detail = (
+                    f"Your license is limited to {seat_limit} users. "
+                    "Contact your PurveX account owner to add more seats."
+                )
+            else:
+                detail = (
                     f"Free plan is limited to {seat_limit} users. "
                     "Upgrade at purvex-llc.com/pricing to invite more."
-                ),
-            )
+                )
+            raise HTTPException(status_code=402, detail=detail)
 
     username = (payload.username or email.split("@")[0]).strip() or None
 

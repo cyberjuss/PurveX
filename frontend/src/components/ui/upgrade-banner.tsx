@@ -1,4 +1,4 @@
-import { Sparkles } from "lucide-react";
+import { Sparkles, Info } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -16,12 +16,13 @@ export function isUpgradeRequiredError(error: unknown): boolean {
   return typeof error === "object" && error !== null && (error as { isUpgradeRequired?: boolean }).isUpgradeRequired === true;
 }
 
-// The backend's 402 detail message already ends with its own "Upgrade at
-// purvex-llc.com/pricing" sentence. Strip it here since the banner has its
-// own button doing that job — keeps the message from saying it twice.
-function stripUpgradeSuffix(message: string): string {
-  return message.replace(/\s*Upgrade at purvex-llc\.com\/pricing[^.]*\.?\s*$/i, "").trim();
-}
+// The backend appends "Upgrade at purvex-llc.com/pricing..." only to
+// free-tier 402s. A paid org that hit its own license's specific seat/
+// runner cap gets a different message ("...contact your account owner...")
+// with no pricing suffix at all — there's no upgrade to sell someone who
+// already paid, so this is also what decides whether the banner shows a
+// button at all, not just what to strip from the text.
+const UPGRADE_SUFFIX = /\s*Upgrade at purvex-llc\.com\/pricing[^.]*\.?\s*$/i;
 
 /**
  * Inline banner for a caught `isUpgradeRequiredError`. Drop this in wherever
@@ -30,6 +31,9 @@ function stripUpgradeSuffix(message: string): string {
  * generic `FormError`.
  */
 export function UpgradeBanner({ message, className }: { message: string; className?: string }) {
+  const hasUpgradeCta = UPGRADE_SUFFIX.test(message);
+  const displayMessage = hasUpgradeCta ? message.replace(UPGRADE_SUFFIX, "").trim() : message;
+
   return (
     <div
       role="alert"
@@ -39,19 +43,25 @@ export function UpgradeBanner({ message, className }: { message: string; classNa
       )}
     >
       <div className="flex items-start gap-2.5">
-        <Sparkles className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" />
-        <span className="min-w-0 leading-relaxed">{stripUpgradeSuffix(message)}</span>
+        {hasUpgradeCta ? (
+          <Sparkles className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" />
+        ) : (
+          <Info className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" />
+        )}
+        <span className="min-w-0 leading-relaxed">{displayMessage}</span>
       </div>
-      <Button
-        asChild
-        size="sm"
-        variant="outline"
-        className="shrink-0 border-amber-500/40 text-amber-900 hover:bg-amber-500/10 dark:border-amber-400/40 dark:text-amber-100"
-      >
-        <a href={PRICING_URL} target="_blank" rel="noreferrer">
-          Upgrade plan
-        </a>
-      </Button>
+      {hasUpgradeCta ? (
+        <Button
+          asChild
+          size="sm"
+          variant="outline"
+          className="shrink-0 border-amber-500/40 text-amber-900 hover:bg-amber-500/10 dark:border-amber-400/40 dark:text-amber-100"
+        >
+          <a href={PRICING_URL} target="_blank" rel="noreferrer">
+            Upgrade plan
+          </a>
+        </Button>
+      ) : null}
     </div>
   );
 }

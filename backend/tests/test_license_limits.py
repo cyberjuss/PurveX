@@ -233,6 +233,18 @@ async def org_context(monkeypatch):
     import app.routers.rbac as rbac_router
     monkeypatch.setattr(rbac_router, "async_sessionmaker", test_sessionmaker)
 
+    # settings.create_environment_runner writes its audit event through its
+    # own module-level async_sessionmaker import too (same fire-and-forget
+    # pattern as rbac's), separate from the `db` session passed into the
+    # route function itself. Without this, any test that reaches a
+    # successful runner registration silently falls through to the real
+    # configured database instead of this fixture's in-memory one -- masked
+    # whenever a real backend/purvex.db with migrated tables happens to
+    # exist on the machine running the suite, but a hard failure
+    # ("no such table") on a clean checkout or CI.
+    import app.routers.settings as settings_router
+    monkeypatch.setattr(settings_router, "async_sessionmaker", test_sessionmaker)
+
     async with test_sessionmaker() as session:
         org = models.Organization(id=1, name="Test Org")
         admin = models.User(
@@ -280,6 +292,44 @@ async def test_free_plan_blocks_invite_past_seat_limit(org_context, monkeypatch)
         )
     assert exc_info.value.status_code == 402
     assert "3 users" in exc_info.value.detail
+
+
+@pytest.mark.asyncio
+async def test_paid_plan_with_finite_seats_blocks_past_its_own_limit_with_paid_message(org_context, monkeypatch):
+    """A paid license isn't necessarily unlimited -- it's whatever seat
+    count it was issued for. Hitting that cap must not tell the customer
+    "Free plan is limited..." (false, and points them at a pricing page
+    they've already been through); it should point them at their own
+    account owner instead."""
+    from app.utils import license as license_module
+    import app.routers.rbac as rbac_router
+
+    monkeypatch.setattr(
+        license_module, "get_license_status",
+        lambda *_args, **_kwargs: license_module.LicenseStatus(plan="paid", seat_limit=2, runner_limit=None),
+    )
+
+    session, admin = org_context
+
+    # Admin (1) + one invite = 2 total, exactly at this license's seat cap.
+    await rbac_router.invite_user(
+        payload=rbac_router.InviteUserRequest(email="teammate0@example.test"),
+        request=_fake_request(),
+        db=session,
+        current_user=admin,
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        await rbac_router.invite_user(
+            payload=rbac_router.InviteUserRequest(email="onetoomany@example.test"),
+            request=_fake_request(),
+            db=session,
+            current_user=admin,
+        )
+    assert exc_info.value.status_code == 402
+    assert "2 users" in exc_info.value.detail
+    assert "account owner" in exc_info.value.detail
+    assert "Free plan" not in exc_info.value.detail
 
 
 @pytest.mark.asyncio
@@ -339,6 +389,42 @@ async def test_free_plan_blocks_runner_past_limit(org_context, monkeypatch):
         )
     assert exc_info.value.status_code == 402
     assert "1 test runner" in exc_info.value.detail
+
+
+@pytest.mark.asyncio
+async def test_paid_plan_with_finite_runners_blocks_with_paid_message(org_context, monkeypatch):
+    from app import schemas
+    from app.utils import license as license_module
+    import app.routers.settings as settings_router
+
+    monkeypatch.setattr(
+        license_module, "get_license_status",
+        lambda *_args, **_kwargs: license_module.LicenseStatus(plan="paid", seat_limit=None, runner_limit=1),
+    )
+
+    session, admin = org_context
+
+    def make_runner(name: str) -> "schemas.EnvironmentRunnerConfigCreate":
+        return schemas.EnvironmentRunnerConfigCreate(
+            environment_name=name,
+            runner_type="SSH",
+            hostname="lab-box.internal",
+            username="purvex",
+            ssh_host_key_sha256="SHA256:9mYpK4pQd6VG8t7jPjvaERh6XiW6m87iJi3G5EPI3Hk",
+        )
+
+    await settings_router.create_environment_runner(
+        request=_fake_request(), runner_create=make_runner("lab-1"), db=session, current_user=admin,
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        await settings_router.create_environment_runner(
+            request=_fake_request(), runner_create=make_runner("lab-2"), db=session, current_user=admin,
+        )
+    assert exc_info.value.status_code == 402
+    assert "1 test runner" in exc_info.value.detail
+    assert "account owner" in exc_info.value.detail
+    assert "Free plan" not in exc_info.value.detail
 
 
 @pytest.mark.asyncio
@@ -697,3 +783,34 @@ async def test_free_plan_blocks_direct_register_past_seat_limit(org_context, mon
         )
     assert exc_info.value.status_code == 402
     assert "3 users" in exc_info.value.detail
+
+
+@pytest.mark.asyncio
+async def test_paid_plan_direct_register_blocks_with_paid_message(org_context, monkeypatch):
+    from app import schemas
+    from app.utils import license as license_module
+    import app.routers.auth as auth_router
+
+    monkeypatch.setattr(
+        license_module, "get_license_status",
+        lambda *_args, **_kwargs: license_module.LicenseStatus(plan="paid", seat_limit=2, runner_limit=None),
+    )
+
+    session, admin = org_context
+
+    await auth_router.register_admin(
+        user_in=schemas.UserCreate(email="direct0@example.test", password="Direct-Pass1!"),
+        db=session,
+        current_user=admin,
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        await auth_router.register_admin(
+            user_in=schemas.UserCreate(email="onetoomany-direct-paid@example.test", password="Direct-Pass1!"),
+            db=session,
+            current_user=admin,
+        )
+    assert exc_info.value.status_code == 402
+    assert "2 users" in exc_info.value.detail
+    assert "account owner" in exc_info.value.detail
+    assert "Free plan" not in exc_info.value.detail

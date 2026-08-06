@@ -295,7 +295,8 @@ async def register_admin(
     from ..utils.tenant import require_org_id
 
     org_id_for_seat_check = require_org_id(current_user)
-    seat_limit = (await get_org_license_status(db, org_id_for_seat_check)).seat_limit
+    org_license = await get_org_license_status(db, org_id_for_seat_check)
+    seat_limit = org_license.seat_limit
     if seat_limit is not None:
         seat_count_result = await db.execute(
             select(func.count(models.User.id)).where(
@@ -304,13 +305,20 @@ async def register_admin(
         )
         current_seats = seat_count_result.scalar_one()
         if current_seats >= seat_limit:
-            raise HTTPException(
-                status_code=402,
-                detail=(
+            # See the matching comment in rbac.invite_user -- a paid org can
+            # still have a finite seat_limit, so "Free plan..." is wrong and
+            # "upgrade" is the wrong CTA for someone who's already paid.
+            if org_license.plan == "paid":
+                detail = (
+                    f"Your license is limited to {seat_limit} users. "
+                    "Contact your PurveX account owner to add more seats."
+                )
+            else:
+                detail = (
                     f"Free plan is limited to {seat_limit} users. "
                     "Upgrade at purvex-llc.com/pricing to add more."
-                ),
-            )
+                )
+            raise HTTPException(status_code=402, detail=detail)
 
     # Ensure an organization exists for this user.
     org_result = await db.execute(select(models.Organization))
