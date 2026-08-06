@@ -9,7 +9,7 @@ import time
 
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
-from sqlalchemy import delete, desc
+from sqlalchemy import delete, desc, func
 
 from .. import models, schemas
 from ..db import get_db, async_sessionmaker
@@ -108,6 +108,29 @@ async def run_test(
         org_id = require_org_id(current_user)
         detection = None
         technique_id: str
+
+        # Free plan: cap real test runs per calendar day (UTC). Checked before
+        # anything else so a free org that's hit today's cap gets a clear,
+        # specific reason rather than failing deeper in for an unrelated cause.
+        from ..utils.license import get_org_license_status
+        license_status = await get_org_license_status(db, org_id)
+        if license_status.daily_test_run_limit is not None:
+            day_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+            today_count_result = await db.execute(
+                select(func.count(models.Test.id)).where(
+                    models.Test.organization_id == org_id,
+                    models.Test.started_at >= day_start,
+                )
+            )
+            today_count = today_count_result.scalar_one()
+            if today_count >= license_status.daily_test_run_limit:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail=(
+                        f"Free plan is limited to {license_status.daily_test_run_limit} test runs per day. "
+                        "Upgrade at purvex-llc.com/pricing to run more, or try again tomorrow."
+                    ),
+                )
 
         # Load current testing policy for safety checks (allowed envs, etc.).
         policy_result = await db.execute(
@@ -401,6 +424,14 @@ async def create_test_schedule(
     from ..utils.authz import require_schedule
     await require_schedule(current_user, db, sanitized_data.get("environment") or payload.environment)
     org_id = require_org_id(current_user)
+
+    from ..utils.license import get_org_license_status
+    license_status = await get_org_license_status(db, org_id)
+    if not license_status.schedules_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Scheduled test runs require a paid plan. Upgrade at purvex-llc.com/pricing.",
+        )
 
     schedule_type = sanitized_data.get("schedule_type") or payload.schedule_type
     if schedule_type not in {"once", "interval", "cron"}:

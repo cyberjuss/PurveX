@@ -17,6 +17,10 @@ Usage:
         Print a signed license token for a paid customer. --seats/--runners
         0 means unlimited; omit --days for a 395-day (~13 month) expiry,
         long enough to cover a missed renewal webhook without a hard cutoff.
+        Schedules, Detection-as-Code, and Reports are unlocked and audit
+        retention is unlimited by default -- pass --no-schedules,
+        --no-detection-as-code, --no-reports, or --audit-retention-days to
+        issue a more restricted key (e.g. for a future lower tier).
 """
 
 import argparse
@@ -56,7 +60,17 @@ def keygen() -> None:
     print(public_pem)
 
 
-def issue(seats: int, runners: int, days: int, plan: str) -> None:
+def issue(
+    seats: int,
+    runners: int,
+    days: int,
+    plan: str,
+    schedules: bool,
+    detection_as_code: bool,
+    reports: bool,
+    audit_retention_days: int,
+    daily_test_runs: int,
+) -> None:
     if not KEY_PATH.exists():
         print("No signing key found — run 'python scripts/issue_license.py keygen' first.", file=sys.stderr)
         sys.exit(1)
@@ -67,6 +81,11 @@ def issue(seats: int, runners: int, days: int, plan: str) -> None:
         "plan": plan,
         "seat_limit": None if seats == 0 else seats,
         "runner_limit": None if runners == 0 else runners,
+        "schedules_enabled": schedules,
+        "detection_as_code_enabled": detection_as_code,
+        "reports_enabled": reports,
+        "audit_retention_days": None if audit_retention_days == 0 else audit_retention_days,
+        "daily_test_run_limit": None if daily_test_runs == 0 else daily_test_runs,
         "iat": now,
         "exp": now + timedelta(days=days),
     }
@@ -85,12 +104,27 @@ def main() -> None:
     issue_parser.add_argument("--seats", type=int, default=0, help="Max users; 0 = unlimited (default).")
     issue_parser.add_argument("--runners", type=int, default=0, help="Max test runners; 0 = unlimited (default).")
     issue_parser.add_argument("--days", type=int, default=395, help="Validity window in days (default 395).")
+    issue_parser.add_argument("--no-schedules", dest="schedules", action="store_false", help="Disable scheduled/recurring test runs (enabled by default).")
+    issue_parser.add_argument("--no-detection-as-code", dest="detection_as_code", action="store_false", help="Disable git detection sources/mirrors (enabled by default).")
+    issue_parser.add_argument("--no-reports", dest="reports", action="store_false", help="Disable PDF report generation (enabled by default).")
+    issue_parser.add_argument("--audit-retention-days", type=int, default=0, help="Audit log visibility window in days; 0 = unlimited (default).")
+    issue_parser.add_argument("--daily-test-runs", type=int, default=0, help="Max test runs per day; 0 = unlimited (default).")
 
     args = parser.parse_args()
     if args.command == "keygen":
         keygen()
     elif args.command == "issue":
-        issue(seats=args.seats, runners=args.runners, days=args.days, plan=args.plan)
+        issue(
+            seats=args.seats,
+            runners=args.runners,
+            days=args.days,
+            plan=args.plan,
+            schedules=args.schedules,
+            detection_as_code=args.detection_as_code,
+            reports=args.reports,
+            audit_retention_days=args.audit_retention_days,
+            daily_test_runs=args.daily_test_runs,
+        )
 
 
 if __name__ == "__main__":

@@ -62,7 +62,15 @@ async def generate_report(
     """
     await require_permission(current_user, Permission.REPORTS_EXPORT, db, request)
     org_id = require_org_id(current_user)
-    
+
+    from ..utils.license import get_org_license_status
+    license_status = await get_org_license_status(db, org_id)
+    if not license_status.reports_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="PDF report generation requires a paid plan. Upgrade at purvex-llc.com/pricing.",
+        )
+
     # Validate date range
     if report_create.end_date < report_create.start_date:
         raise HTTPException(

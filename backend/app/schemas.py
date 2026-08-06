@@ -509,6 +509,11 @@ class LicenseStatusResponse(BaseModel):
     plan: str
     seat_limit: Optional[int] = None
     runner_limit: Optional[int] = None
+    schedules_enabled: bool = False
+    detection_as_code_enabled: bool = False
+    reports_enabled: bool = False
+    audit_retention_days: Optional[int] = None
+    daily_test_run_limit: Optional[int] = None
     has_saved_key: bool
     source: str  # "database" | "env" | "none"
 

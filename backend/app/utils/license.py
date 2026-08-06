@@ -8,10 +8,19 @@ means this instance runs under free-tier limits; it never blocks the
 product from working.
 
 Claims:
-  plan          "free" | "paid"
-  seat_limit    max total users in the org, or null for unlimited
-  runner_limit  max registered environment runners, or null for unlimited
-  exp           standard JWT expiry (PyJWT enforces this on decode)
+  plan                        "free" | "paid"
+  seat_limit                  max total users in the org, or null for unlimited
+  runner_limit                max registered environment runners, or null for unlimited
+  schedules_enabled           can create scheduled/recurring test runs
+  detection_as_code_enabled   can connect a git detection source or export mirror
+  reports_enabled             can generate a PDF report
+  audit_retention_days        how far back the audit log is visible, or null for unlimited
+  daily_test_run_limit        max test runs per calendar day (UTC), or null for unlimited
+  exp                         standard JWT expiry (PyJWT enforces this on decode)
+
+A license minted before these last four claims existed simply omits them --
+_decode() defaults every omitted claim to "fully unlocked" for a paid plan,
+so an already-issued key never regresses when this file changes.
 """
 
 from __future__ import annotations
@@ -30,6 +39,8 @@ LICENSE_ALGORITHM = "EdDSA"
 
 FREE_SEAT_LIMIT = 3
 FREE_RUNNER_LIMIT = 1
+FREE_AUDIT_RETENTION_DAYS = 30
+FREE_DAILY_TEST_RUN_LIMIT = 3
 
 
 @dataclass(frozen=True)
@@ -37,13 +48,27 @@ class LicenseStatus:
     plan: str
     seat_limit: Optional[int]
     runner_limit: Optional[int]
+    schedules_enabled: bool = False
+    detection_as_code_enabled: bool = False
+    reports_enabled: bool = False
+    audit_retention_days: Optional[int] = FREE_AUDIT_RETENTION_DAYS
+    daily_test_run_limit: Optional[int] = FREE_DAILY_TEST_RUN_LIMIT
 
     @property
     def is_paid(self) -> bool:
         return self.plan == "paid"
 
 
-FREE_LICENSE_STATUS = LicenseStatus(plan="free", seat_limit=FREE_SEAT_LIMIT, runner_limit=FREE_RUNNER_LIMIT)
+FREE_LICENSE_STATUS = LicenseStatus(
+    plan="free",
+    seat_limit=FREE_SEAT_LIMIT,
+    runner_limit=FREE_RUNNER_LIMIT,
+    schedules_enabled=False,
+    detection_as_code_enabled=False,
+    reports_enabled=False,
+    audit_retention_days=FREE_AUDIT_RETENTION_DAYS,
+    daily_test_run_limit=FREE_DAILY_TEST_RUN_LIMIT,
+)
 
 
 class LicenseKeyInvalid(Exception):
@@ -77,6 +102,11 @@ def _decode(token: str) -> LicenseStatus:
         plan="paid",
         seat_limit=claims.get("seat_limit"),
         runner_limit=claims.get("runner_limit"),
+        schedules_enabled=claims.get("schedules_enabled", True),
+        detection_as_code_enabled=claims.get("detection_as_code_enabled", True),
+        reports_enabled=claims.get("reports_enabled", True),
+        audit_retention_days=claims.get("audit_retention_days", None),
+        daily_test_run_limit=claims.get("daily_test_run_limit", None),
     )
 
 

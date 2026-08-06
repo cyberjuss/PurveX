@@ -160,6 +160,14 @@ async def create_detection_mirror(
     await require_permission(current_user, Permission.SETTINGS_SIEM_MANAGE, db)
     org_id = require_org_id(current_user)
 
+    from ..utils.license import get_org_license_status
+    license_status = await get_org_license_status(db, org_id)
+    if not license_status.detection_as_code_enabled:
+        raise HTTPException(
+            status_code=403,
+            detail="Detection-as-Code (git mirrors) requires a paid plan. Upgrade at purvex-llc.com/pricing.",
+        )
+
     secret = payload.auth_secret or None
     if payload.auth_type == "token" and not secret:
         raise HTTPException(

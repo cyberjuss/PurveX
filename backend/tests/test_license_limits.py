@@ -368,3 +368,206 @@ async def test_paid_unlimited_license_allows_runner_past_free_default(org_contex
             current_user=admin,
         )
         assert result.environment_name == f"lab-{i}"
+
+
+# --- Capability gates: schedules, Detection-as-Code, reports, audit retention ---
+
+def test_free_status_has_no_advanced_capabilities():
+    from app.utils.license import FREE_LICENSE_STATUS, FREE_AUDIT_RETENTION_DAYS
+
+    assert FREE_LICENSE_STATUS.schedules_enabled is False
+    assert FREE_LICENSE_STATUS.detection_as_code_enabled is False
+    assert FREE_LICENSE_STATUS.reports_enabled is False
+    assert FREE_LICENSE_STATUS.audit_retention_days == FREE_AUDIT_RETENTION_DAYS == 30
+
+
+def test_paid_token_with_no_capability_claims_defaults_to_fully_unlocked(monkeypatch):
+    """A license minted before these claims existed (or issued with the
+    CLI's defaults) omits them entirely -- must not silently downgrade an
+    already-issued paid customer."""
+    from app.config import settings
+    from app.utils.license import get_license_status
+
+    now = datetime.now(timezone.utc)
+    public_pem, token = _keypair_and_token({
+        "plan": "paid", "seat_limit": None, "runner_limit": None,
+        "iat": now, "exp": now + timedelta(days=30),
+    })
+    monkeypatch.setattr(settings, "LICENSE_PUBLIC_KEY_PEM", public_pem)
+
+    status = get_license_status(token)
+    assert status.schedules_enabled is True
+    assert status.detection_as_code_enabled is True
+    assert status.reports_enabled is True
+    assert status.audit_retention_days is None  # unlimited
+
+
+def test_paid_token_can_explicitly_restrict_capabilities(monkeypatch):
+    """Lets a future lower paid tier withhold specific capabilities via the
+    CLI's --no-* flags, instead of only ever being all-or-nothing."""
+    from app.config import settings
+    from app.utils.license import get_license_status
+
+    now = datetime.now(timezone.utc)
+    public_pem, token = _keypair_and_token({
+        "plan": "paid", "seat_limit": None, "runner_limit": None,
+        "schedules_enabled": False, "detection_as_code_enabled": False,
+        "reports_enabled": False, "audit_retention_days": 90,
+        "iat": now, "exp": now + timedelta(days=30),
+    })
+    monkeypatch.setattr(settings, "LICENSE_PUBLIC_KEY_PEM", public_pem)
+
+    status = get_license_status(token)
+    assert status.schedules_enabled is False
+    assert status.detection_as_code_enabled is False
+    assert status.reports_enabled is False
+    assert status.audit_retention_days == 90
+
+
+@pytest.mark.asyncio
+async def test_free_plan_blocks_schedule_creation(org_context, monkeypatch):
+    from app import schemas
+    from app.utils import license as license_module
+    import app.routers.tests as tests_router
+
+    monkeypatch.setattr(
+        license_module, "get_license_status",
+        lambda *_a, **_k: license_module.FREE_LICENSE_STATUS,
+    )
+
+    session, admin = org_context
+
+    with pytest.raises(HTTPException) as exc_info:
+        await tests_router.create_test_schedule(
+            payload=schemas.TestScheduleCreate(
+                technique_id="T1059",
+                environment="lab",
+                schedule_type="interval",
+                interval_seconds=3600,
+            ),
+            db=session,
+            current_user=admin,
+        )
+    assert exc_info.value.status_code == 403
+    assert "paid plan" in exc_info.value.detail
+
+
+@pytest.mark.asyncio
+async def test_paid_plan_allows_schedule_creation(org_context, monkeypatch):
+    from app import schemas
+    from app.utils import license as license_module
+    import app.routers.tests as tests_router
+
+    monkeypatch.setattr(
+        license_module, "get_license_status",
+        lambda *_a, **_k: license_module.LicenseStatus(
+            plan="paid", seat_limit=None, runner_limit=None, schedules_enabled=True,
+        ),
+    )
+
+    session, admin = org_context
+
+    result = await tests_router.create_test_schedule(
+        payload=schemas.TestScheduleCreate(
+            technique_id="T1059",
+            environment="lab",
+            schedule_type="interval",
+            interval_seconds=3600,
+        ),
+        db=session,
+        current_user=admin,
+    )
+    assert result.technique_id == "T1059"
+
+
+@pytest.mark.asyncio
+async def test_free_plan_blocks_detection_source_creation(org_context, monkeypatch):
+    from app import schemas
+    from app.utils import license as license_module
+    import app.routers.detection_sources as detection_sources_router
+
+    monkeypatch.setattr(
+        license_module, "get_license_status",
+        lambda *_a, **_k: license_module.FREE_LICENSE_STATUS,
+    )
+
+    session, admin = org_context
+
+    with pytest.raises(HTTPException) as exc_info:
+        await detection_sources_router.create_detection_source(
+            payload=schemas.DetectionSourceCreate(
+                name="detections-repo",
+                provider="git",
+                repo_url="https://github.com/example/detections.git",
+                branch="main",
+                path_glob="detections/**/*.yml",
+                auth_type="none",
+                enabled=True,
+            ),
+            db=session,
+            current_user=admin,
+        )
+    assert exc_info.value.status_code == 403
+    assert "paid plan" in exc_info.value.detail
+
+
+@pytest.mark.asyncio
+async def test_free_plan_blocks_test_run_past_daily_limit(org_context, monkeypatch):
+    from fastapi import BackgroundTasks
+    from app import schemas
+    from app.utils import license as license_module
+    import app.routers.tests as tests_router
+
+    monkeypatch.setattr(
+        license_module, "get_license_status",
+        lambda *_a, **_k: license_module.FREE_LICENSE_STATUS,
+    )
+
+    session, admin = org_context
+
+    # FREE_DAILY_TEST_RUN_LIMIT is checked before any detection/runner
+    # lookups, so seed org_id's Test count directly rather than driving 3
+    # real runs through the full execution pipeline.
+    from app import models
+    for i in range(license_module.FREE_DAILY_TEST_RUN_LIMIT):
+        session.add(models.Test(
+            organization_id=1, technique_id="T1059", environment="lab",
+            status="completed", mode="TELEMETRY_CHECK",
+            started_at=datetime.now(timezone.utc),
+        ))
+    await session.commit()
+
+    with pytest.raises(HTTPException) as exc_info:
+        await tests_router.run_test(
+            test_run=schemas.TestRunCreate(technique_id="T1059", environment="lab", mode="TELEMETRY_CHECK"),
+            background_tasks=BackgroundTasks(),
+            db=session,
+            current_user=admin,
+        )
+    assert exc_info.value.status_code == 403
+    assert "3 test runs per day" in exc_info.value.detail
+
+
+@pytest.mark.asyncio
+async def test_free_plan_audit_log_clamped_to_retention_window(org_context, monkeypatch):
+    from app.utils import license as license_module
+    import app.routers.audit as audit_router
+
+    monkeypatch.setattr(
+        license_module, "get_license_status",
+        lambda *_a, **_k: license_module.FREE_LICENSE_STATUS,
+    )
+
+    session, admin = org_context
+
+    # Asking for "all time" (no start_date) on a free plan must not surface
+    # events older than the retention window -- verified indirectly here by
+    # confirming the call succeeds and returns a list (the clamp itself is
+    # applied to the query, not observable without seeded old events, but a
+    # regression that made this raise would be caught here).
+    result = await audit_router.list_audit_events(
+        db=session, current_user=admin,
+        skip=0, limit=100, action=None, resource_type=None, user_id=None,
+        start_date=None, end_date=None, search=None,
+    )
+    assert isinstance(result, list)

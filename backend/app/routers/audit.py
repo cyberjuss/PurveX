@@ -1,5 +1,5 @@
 from typing import List, Annotated, Optional
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -48,9 +48,21 @@ async def list_audit_events(
     - RBAC: SET_USER_PASSWORD, ASSIGN_ROLE, REMOVE_ROLE
     """
     await require_permission(current_user, Permission.SETTINGS_USERS_MANAGE, db)
-    
+
     # Build query with filters
     org_id = require_org_id(current_user)
+
+    # Free plan can only see a rolling window of audit history. Clamp
+    # start_date to that window instead of rejecting the request outright --
+    # a free-tier admin asking for "all time" should just see what's
+    # actually retained for them, not an error.
+    from ..utils.license import get_org_license_status
+    license_status = await get_org_license_status(db, org_id)
+    if license_status.audit_retention_days is not None:
+        earliest_visible = datetime.now(timezone.utc) - timedelta(days=license_status.audit_retention_days)
+        if start_date is None or start_date < earliest_visible:
+            start_date = earliest_visible
+
     query = select(models.AuditEvent).where(
         or_(
             models.AuditEvent.user_id.is_(None),
@@ -104,12 +116,17 @@ async def get_audit_stats(
 ):
     """Get audit event statistics (admin-only)."""
     await require_permission(current_user, Permission.SETTINGS_USERS_MANAGE, db)
-    
-    from datetime import timedelta
-    cutoff_date = datetime.utcnow() - timedelta(days=days)
-    
-    # Get total events
+
     org_id = require_org_id(current_user)
+
+    from ..utils.license import get_org_license_status
+    license_status = await get_org_license_status(db, org_id)
+    if license_status.audit_retention_days is not None:
+        days = min(days, license_status.audit_retention_days)
+
+    cutoff_date = datetime.utcnow() - timedelta(days=days)
+
+    # Get total events
     org_user_ids = select(models.User.id).where(models.User.organization_id == org_id)
 
     total_result = await db.execute(
