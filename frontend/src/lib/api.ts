@@ -1291,6 +1291,53 @@ export async function bootstrapMirror(
   );
 }
 
+export interface Report {
+  id: number;
+  report_id: string;
+  title: string;
+  generated_at: string;
+  start_date: string;
+  end_date: string;
+  environments: string[];
+  overall_health_score: number | null;
+  total_detections: number;
+  total_tests: number;
+  file_path: string | null;
+  file_size: number | null;
+}
+
+export interface ReportCreate {
+  start_date: string;
+  end_date: string;
+  environments: string[];
+  title?: string;
+}
+
+export async function generateReport(reportData: ReportCreate): Promise<Report> {
+  return apiFetch("/reports/generate", {
+    method: "POST",
+    body: JSON.stringify(reportData),
+  });
+}
+
+export async function getReports(): Promise<Report[]> {
+  return apiFetch("/reports", { cache: "no-store" });
+}
+
+export async function downloadReport(reportId: string): Promise<Blob> {
+  const response = await fetch(`/api/reports/${reportId}/download`, {
+    credentials: "include",
+  });
+  if (!response.ok) throw new Error("Failed to download report");
+  return response.blob();
+}
+
+export async function deleteReport(reportId: string): Promise<void> {
+  return apiFetch(`/reports/${reportId}`, {
+    method: "DELETE",
+  });
+}
+
 // --- RBAC API ---
 
 export async function getMyRoles(): Promise<string[]> {
