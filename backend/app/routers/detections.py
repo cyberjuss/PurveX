@@ -114,8 +114,6 @@ async def list_detections(
     limit: int = Query(100, ge=1, le=200),
     _rate_limit = Depends(endpoint_rate_limit(max_requests=50, window_seconds=60, key_prefix="detections:list", per_user=True, per_ip=True)),
 ):
-    # Set user in request.state for rate limiting
-    request.state.user = current_user
     """
     List all detections with their latest test results.
     Returns empty list if no detections exist (production-ready).
@@ -654,7 +652,7 @@ async def update_detection(
     
     # Special handling for owner: allow null to unassign
     if "owner" in update_dict:
-        owner_value = update_dict["owner"]
+        owner_value = sanitized_data.get("owner")
         if owner_value == "" or owner_value is None:
             update_data["owner"] = None
         else:

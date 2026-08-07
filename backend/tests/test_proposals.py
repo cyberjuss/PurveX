@@ -337,6 +337,7 @@ async def test_reject_preserves_note_and_audit(proposals_context):
     rejected = await proposals.reject_proposal(
         proposal_id=out.id,
         body=schemas.DetectionProposalReview(note="Doesn't address root cause"),
+        request=None,
         db=session,
         current_user=reviewer,
     )
@@ -383,7 +384,7 @@ async def test_stats_counts_by_status(proposals_context):
     )
     await proposals.reject_proposal(
         proposal_id=p2.id, body=schemas.DetectionProposalReview(note="nope"),
-        db=session, current_user=reviewer,
+        request=None, db=session, current_user=reviewer,
     )
 
     stats = await proposals.proposal_stats(db=session, current_user=proposer)
@@ -410,7 +411,7 @@ async def test_list_filters_by_status(proposals_context):
     )
     await proposals.reject_proposal(
         proposal_id=p.id, body=schemas.DetectionProposalReview(note="no"),
-        db=session, current_user=reviewer,
+        request=None, db=session, current_user=reviewer,
     )
     pending = await proposals.list_proposals(
         db=session,

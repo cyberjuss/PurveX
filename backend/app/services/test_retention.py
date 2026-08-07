@@ -16,7 +16,7 @@ from .. import models
 
 logger = logging.getLogger("purvex.test_retention")
 
-_TERMINAL_STATUSES = ("completed", "failed", "qa")
+_TERMINAL_STATUSES = ("completed", "failed")
 
 
 async def cleanup_old_tests(db: AsyncSession, retention_days: int) -> int:

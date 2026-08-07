@@ -632,6 +632,7 @@ async def approve_proposal(
 async def reject_proposal(
     proposal_id: str,
     body: schemas.DetectionProposalReview,
+    request: Request,
     db: DBSession,
     current_user: CurrentUser,
     _rl: None = Depends(
@@ -660,6 +661,16 @@ async def reject_proposal(
     except Exception as exc:
         raise HTTPException(status_code=401, detail="Invalid reviewer") from exc
     enforce_review_policy(proposal=proposal, reviewer_user_id=reviewer_user_id)
+
+    # Action-specific RBAC, matching approve_proposal — rejecting is a review
+    # decision on the same action, so it requires the same authority as
+    # applying it would have.
+    if proposal.action == "create":
+        await require_detection_create(current_user, db, request)
+    elif proposal.action == "update":
+        await require_detection_update(current_user, db, request)
+    elif proposal.action == "delete":
+        await require_detection_delete(current_user, db, request)
 
     proposal.status = "rejected"
     proposal.reviewed_at = datetime.now(timezone.utc)

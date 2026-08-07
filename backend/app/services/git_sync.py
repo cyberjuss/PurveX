@@ -145,6 +145,7 @@ async def sync_detection_source(
             source,
             decisions,
             proposer_label=proposer_label or "Detection-as-Code",
+            commit_sha=outcome.commit_sha,
         )
         for d in decisions:
             if d.action == "create":
@@ -514,6 +515,7 @@ async def _apply_decisions(
     decisions: List[_FileDecision],
     *,
     proposer_label: str,
+    commit_sha: Optional[str] = None,
 ) -> None:
     payload_json_cache: dict[int, str] = {}
     for d in decisions:
@@ -530,7 +532,7 @@ async def _apply_decisions(
                 source="git",
                 detection_source_id=source.id,
                 source_path=d.path,
-                source_commit_sha=source.last_commit_sha,  # updated below
+                source_commit_sha=commit_sha,
                 content_hash=d.content_hash,
                 source_payload=payload_json_cache[id(d)],
                 last_synced_at=datetime.now(timezone.utc),
@@ -549,6 +551,7 @@ async def _apply_decisions(
             d.detection.source = "git"
             d.detection.detection_source_id = source.id
             d.detection.source_path = d.path
+            d.detection.source_commit_sha = commit_sha
         elif d.action == "propose" and d.detection is not None:
             snap = {
                 f: getattr(d.detection, f, None) for f in _YAML_FIELDS

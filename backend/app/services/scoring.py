@@ -57,7 +57,7 @@ def _collect_telemetry_and_detection_events(
     test: models.Test,
     detection: Optional[models.Detection] = None,
     siem_connection: Optional[models.SIEMConnection] = None,
-) -> Tuple[bool, bool, bool, int, int, List[Dict], List[Dict], Optional[float], Optional[float]]:
+) -> Tuple[bool, bool, bool, bool, int, int, List[Dict], List[Dict], Optional[float], Optional[float]]:
     """Shared helper to query the SIEM for telemetry + (optional) detection events."""
     siem_adapter = get_siem_adapter(siem_connection)
 
@@ -112,6 +112,7 @@ def _collect_telemetry_and_detection_events(
         system_error,
         has_telemetry,
         detection_linked,
+        detection_fired,
         found_events_count,
         detection_events_count,
         telemetry_events,
@@ -140,6 +141,7 @@ def validate_detection_for_test(
         system_error,
         has_telemetry,
         detection_linked,
+        detection_fired,
         found_events_count,
         detection_events_count,
         telemetry_events,
@@ -248,6 +250,7 @@ def validate_telemetry_for_test(
         system_error,
         has_telemetry,
         _detection_linked,
+        _detection_fired,
         found_events_count,
         _detection_events_count,
         telemetry_events,

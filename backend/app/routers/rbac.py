@@ -77,8 +77,6 @@ async def list_users(
     request: Request,
     _rate_limit = Depends(endpoint_rate_limit(max_requests=30, window_seconds=60, key_prefix="rbac:users", per_user=True, per_ip=True)),
 ):
-    # Set user in request.state for rate limiting
-    request.state.user = current_user
     """List all users in the organization (admin only)."""
     await require_permission(current_user, Permission.SETTINGS_USERS_MANAGE, db)
     org_id = require_org_id(current_user)
