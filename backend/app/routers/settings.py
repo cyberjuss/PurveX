@@ -313,7 +313,7 @@ async def update_license_settings(
     try:
         license_status = verify_license_key(token)
     except LicenseKeyInvalid as exc:
-        raise HTTPException(status_code=400, detail=f"That license key couldn't be verified: {exc}")
+        raise HTTPException(status_code=400, detail=f"That license key could not be verified: {exc}")
 
     result = await db.execute(select(models.Organization).where(models.Organization.id == org_id))
     organization = result.scalar_one_or_none()

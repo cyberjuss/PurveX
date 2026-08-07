@@ -86,7 +86,7 @@ async def send_password_reset_email(to: str, reset_link: str) -> bool:
     text_body = (
         "We received a request to reset your PurveX password.\n\n"
         f"Reset it here: {reset_link}\n\n"
-        "This link expires in 30 minutes. If you didn't request this, you can ignore this email."
+        "This link expires in 30 minutes. If you did not request this, you can ignore this email."
     )
     html_body = _wrap_html(
         "Reset your password",
@@ -98,7 +98,7 @@ async def send_password_reset_email(to: str, reset_link: str) -> bool:
           Reset password
         </a>
         <p style="margin:20px 0 0;font-size:12px;line-height:1.6;color:#8a95ac;">
-          If you didn't request this, you can safely ignore this email.
+          If you did not request this, you can safely ignore this email.
         </p>
         """,
     )
@@ -110,16 +110,16 @@ async def send_invite_email(to: str, invite_link: str, inviter_name: str | None 
     # character restriction — escape it before it lands in the HTML body.
     # The plaintext body doesn't need escaping (and shouldn't get it, or
     # a name containing "&" would render as "&amp;" to a text client).
-    inviter = f"{inviter_name} has" if inviter_name else "You've been"
-    inviter_html = f"{html.escape(inviter_name)} has" if inviter_name else "You've been"
-    subject = "You've been invited to PurveX"
+    inviter = f"{inviter_name} has" if inviter_name else "You have been"
+    inviter_html = f"{html.escape(inviter_name)} has" if inviter_name else "You have been"
+    subject = "You have been invited to PurveX"
     text_body = (
         f"{inviter} invited you to join PurveX.\n\n"
         f"Accept your invite here: {invite_link}\n\n"
         "This link expires in 7 days."
     )
     html_body = _wrap_html(
-        "You've been invited",
+        "You have been invited",
         f"""
         <p style="margin:0 0 20px;font-size:14px;line-height:1.6;color:#3f4a63;">
           {inviter_html} invited you to join PurveX. This link expires in 7 days.

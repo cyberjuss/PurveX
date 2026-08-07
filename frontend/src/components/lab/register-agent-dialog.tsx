@@ -1272,8 +1272,7 @@ export function RegisterAgentDialog({ open, onOpenChange, onRegistered }: Regist
               </Button>
             </div>
             <p className="text-xs text-muted-foreground">
-              Token isn't embedded in the script — run it on the target machine and paste the token when prompted (or pass it via env var / flag).
-              The script <em>does</em> embed PurveX&apos;s public key from the token above, so it can add itself to <code>authorized_keys</code> and report the host&apos;s SSH fingerprint automatically. Re-download after regenerating the token.
+              Run it on the target machine and paste the token when prompted (or pass it via env var / flag).
               {selectedScript === "bash" && " After download: chmod +x register_agent.sh."}
             </p>
           </TabsContent>

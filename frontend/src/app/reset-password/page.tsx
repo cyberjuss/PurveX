@@ -63,7 +63,7 @@ function ResetPasswordContent() {
     const parsed = passwordSchema.safeParse(password);
     const nextErrors: FieldErrors = {};
     if (!parsed.success) nextErrors.password = parsed.error.issues[0]?.message;
-    if (confirm !== password) nextErrors.confirm = "Passwords don't match.";
+    if (confirm !== password) nextErrors.confirm = "Passwords do not match.";
     if (Object.keys(nextErrors).length > 0) {
       setFieldErrors(nextErrors);
       return;

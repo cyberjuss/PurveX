@@ -62,5 +62,5 @@ async def test_invite_email_without_inviter_name_uses_default_copy(monkeypatch):
         inviter_name=None,
     )
 
-    assert "You've been invited you to join PurveX" in captured["html_body"]
-    assert "You've been invited you to join PurveX" in captured["text_body"]
+    assert "You have been invited you to join PurveX" in captured["html_body"]
+    assert "You have been invited you to join PurveX" in captured["text_body"]

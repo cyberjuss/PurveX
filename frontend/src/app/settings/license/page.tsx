@@ -75,7 +75,7 @@ export default function LicenseSettingsPage() {
       setKeyInput("");
       setSaveSuccess(true);
     } catch (err: unknown) {
-      setSaveError(getErrorMessage(err, "That license key couldn't be saved."));
+      setSaveError(getErrorMessage(err, "That license key could not be saved."));
     } finally {
       setIsSaving(false);
     }
@@ -109,7 +109,7 @@ export default function LicenseSettingsPage() {
   if (loadError && !status) {
     return (
       <SettingsPageShell eyebrow="Workspace" title="License">
-        <SettingsBanner tone="danger" title="Couldn't load license status">
+        <SettingsBanner tone="danger" title="Could not load license status">
           {loadError}
         </SettingsBanner>
       </SettingsPageShell>
@@ -131,12 +131,12 @@ export default function LicenseSettingsPage() {
       banner={
         !canEdit ? (
           <SettingsBanner tone="warning" title="Read-only">
-            You don&apos;t have permission to change the license key. Ask an administrator.
+            You do not have permission to change the license key. Ask an administrator.
           </SettingsBanner>
         ) : status.source === "env" ? (
           <SettingsBanner tone="info" title="Set via environment variable">
             This instance&apos;s license currently comes from the <code>PURVEX_LICENSE_KEY</code>{" "}
-            environment variable. Saving a key here will take priority over it, and won&apos;t require
+            environment variable. Saving a key here will take priority over it, and will not require
             a restart.
           </SettingsBanner>
         ) : undefined
@@ -151,7 +151,7 @@ export default function LicenseSettingsPage() {
 
       <SettingsSection
         title="License key"
-        description="Received by email after purchase. It's a long block of text — paste the whole thing."
+        description="Received by email after purchase. It is a long block of text — paste the whole thing."
       >
         <fieldset disabled={!canEdit} className="space-y-3 disabled:opacity-60">
           <div className="space-y-1.5">
@@ -171,7 +171,7 @@ export default function LicenseSettingsPage() {
           </div>
 
           {saveError ? (
-            <SettingsBanner tone="danger" title="Couldn't save">
+            <SettingsBanner tone="danger" title="Could not save">
               {saveError}
             </SettingsBanner>
           ) : null}

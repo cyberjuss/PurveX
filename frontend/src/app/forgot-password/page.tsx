@@ -99,7 +99,7 @@ export default function ForgotPasswordPage() {
                 <Image src="/logo.png" alt="PurveX" width={40} height={40} className="mb-4 rounded-md" />
                 <h1 className="text-3xl font-semibold tracking-tight">Reset your password</h1>
                 <p className="mt-2 text-base text-muted-foreground">
-                  Enter the email associated with your account and we'll send you a reset link.
+                  Enter the email associated with your account and we will send you a reset link.
                 </p>
               </div>
 

@@ -62,7 +62,7 @@ function AcceptInviteContent() {
     const parsed = passwordSchema.safeParse(password);
     const nextErrors: FieldErrors = {};
     if (!parsed.success) nextErrors.password = parsed.error.issues[0]?.message;
-    if (confirm !== password) nextErrors.confirm = "Passwords don't match.";
+    if (confirm !== password) nextErrors.confirm = "Passwords do not match.";
     if (Object.keys(nextErrors).length > 0) {
       setFieldErrors(nextErrors);
       return;
@@ -101,7 +101,7 @@ function AcceptInviteContent() {
               <div className="mx-auto mb-5 flex h-12 w-12 items-center justify-center rounded-full bg-[var(--accent-soft)]">
                 <CheckCircle2 className="h-6 w-6 text-[var(--accent-strong)]" />
               </div>
-              <h1 className="text-2xl font-semibold tracking-tight">You're all set</h1>
+              <h1 className="text-2xl font-semibold tracking-tight">You are all set</h1>
               <p className="mt-2 text-base text-muted-foreground">
                 Your account is active. Sign in with your new password to get started.
               </p>

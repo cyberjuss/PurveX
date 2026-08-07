@@ -155,7 +155,7 @@ export function DetectionMirrorsPanel({
   return (
     <>
       {error ? (
-        <SettingsBanner tone="danger" title="Couldn't load mirrors">
+        <SettingsBanner tone="danger" title="Could not load mirrors">
           {error}
         </SettingsBanner>
       ) : lastPublish ? (

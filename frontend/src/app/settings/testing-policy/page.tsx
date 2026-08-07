@@ -158,7 +158,7 @@ export default function TestingPolicySettingsPage() {
   if (error && !settings) {
     return (
       <SettingsPageShell eyebrow="Safety" title="Testing Policy">
-        <SettingsBanner tone="danger" title="Couldn't load settings">
+        <SettingsBanner tone="danger" title="Could not load settings">
           {error}
         </SettingsBanner>
       </SettingsPageShell>

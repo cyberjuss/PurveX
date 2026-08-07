@@ -312,7 +312,7 @@ function LoginPageContent() {
                     type="text"
                     autoComplete="username"
                     autoFocus
-                    placeholder="you@company.com"
+                    placeholder="Enter your username"
                     value={username}
                     onChange={(e) => {
                       setUsername(e.target.value);

@@ -124,7 +124,7 @@ export function DetectionSourcesPanel({
   return (
     <>
       {error ? (
-        <SettingsBanner tone="danger" title="Couldn't load sources">
+        <SettingsBanner tone="danger" title="Could not load sources">
           {error}
         </SettingsBanner>
       ) : lastResult ? (

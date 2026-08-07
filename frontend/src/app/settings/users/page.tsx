@@ -350,7 +350,7 @@ export default function UserManagementPage() {
     return (
       <SettingsPageShell eyebrow="Access control" title="Users" width="wide">
         <SettingsBanner tone="warning" title="Read-only">
-          You don't have permission to manage members.
+          You do not have permission to manage members.
         </SettingsBanner>
       </SettingsPageShell>
     );
@@ -399,7 +399,7 @@ export default function UserManagementPage() {
                 Invite member
               </DialogTitle>
               <DialogDescription>
-                We'll email an activation link so they can set their own password.
+                We will email an activation link so they can set their own password.
               </DialogDescription>
             </DialogHeader>
             <div className="space-y-4 py-4">
@@ -952,7 +952,7 @@ export default function UserManagementPage() {
                       </div>
                       <div>
                         <dt className={cn("font-semibold", toneClasses("danger").text)}>
-                          Can't
+                          Cannot
                         </dt>
                         <dd className="mt-0.5 text-[var(--surface-subtle-foreground)]">
                           <ul className="space-y-0.5">

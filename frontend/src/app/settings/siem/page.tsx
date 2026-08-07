@@ -593,7 +593,7 @@ export default function SiemSettingsPage() {
                       disabled={!canManage}
                       title={
                         !canManage
-                          ? "You don't have permission to edit SIEM connections"
+                          ? "You do not have permission to edit SIEM connections"
                           : ""
                       }
                     >
@@ -607,7 +607,7 @@ export default function SiemSettingsPage() {
                       disabled={!canManage}
                       title={
                         !canManage
-                          ? "You don't have permission to delete SIEM connections"
+                          ? "You do not have permission to delete SIEM connections"
                           : ""
                       }
                       className="text-rose-600 hover:bg-rose-50 hover:text-rose-700 dark:text-rose-300 dark:hover:bg-rose-500/10"

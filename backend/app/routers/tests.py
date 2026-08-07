@@ -173,7 +173,7 @@ async def run_test(
                     organization_id=org_id,
                     title="Validation agent stopped checking in",
                     description=(
-                        f"{runner.hostname or 'Runner'} hasn't sent a heartbeat in over "
+                        f"{runner.hostname or 'Runner'} has not sent a heartbeat in over "
                         f"{minutes} minutes. Test runs against it are blocked."
                     ),
                     action_url="/lab",
@@ -185,7 +185,7 @@ async def run_test(
                 raise HTTPException(
                     status_code=status.HTTP_409_CONFLICT,
                     detail=(
-                        f"Runner '{test_run.endpoint}' hasn't checked in for over {minutes} "
+                        f"Runner '{test_run.endpoint}' has not checked in for over {minutes} "
                         "minutes; results would be unreliable. Verify the agent is running."
                     ),
                 )

@@ -196,7 +196,7 @@ function WatchtowerPageContent() {
         }
 
         if (detection) {
-          const contextMessage = `I'm ready to review **${detection.title}** (\`${detection.technique_id}\`).
+          const contextMessage = `I am ready to review **${detection.title}** (\`${detection.technique_id}\`).
 
 I can help you:
 - summarize detection trust and latest evidence

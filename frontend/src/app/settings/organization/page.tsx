@@ -123,7 +123,7 @@ export default function OrganizationSettingsPage() {
   if (error && !settings) {
     return (
       <SettingsPageShell eyebrow="Workspace" title="Organization">
-        <SettingsBanner tone="danger" title="Couldn't load settings">
+        <SettingsBanner tone="danger" title="Could not load settings">
           {error}
         </SettingsBanner>
       </SettingsPageShell>
@@ -148,7 +148,7 @@ export default function OrganizationSettingsPage() {
         banner={
           !canEdit ? (
             <SettingsBanner tone="warning" title="Read-only">
-              You don't have permission to modify organization settings. Ask an
+              You do not have permission to modify organization settings. Ask an
               administrator to make changes.
             </SettingsBanner>
           ) : error ? (

@@ -135,7 +135,7 @@ export default function AIAssistantSettingsPage() {
   if (error && !settings) {
     return (
       <SettingsPageShell eyebrow="AI governance" title="Watchtower">
-        <SettingsBanner tone="danger" title="Couldn't load settings">
+        <SettingsBanner tone="danger" title="Could not load settings">
           {error}
         </SettingsBanner>
       </SettingsPageShell>

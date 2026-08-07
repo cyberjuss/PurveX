@@ -279,7 +279,7 @@ export default function AuditLogPage() {
       }
       banner={
         error ? (
-          <SettingsBanner tone="danger" title="Couldn't load audit events">
+          <SettingsBanner tone="danger" title="Could not load audit events">
             {error}
           </SettingsBanner>
         ) : undefined
