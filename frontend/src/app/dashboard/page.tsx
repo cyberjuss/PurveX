@@ -423,9 +423,9 @@ export default function DashboardPage() {
                       <div className="space-y-1.5 flex-1">
                         <div className="flex items-baseline gap-2">
                           <p className="text-4xl font-display font-bold text-[var(--surface-card-foreground)]">
-                            {mitreStats.coveragePercent < 1 && mitreStats.coveragePercent > 0 
+                            {mitreStats.coveragePercent < 1 && mitreStats.coveragePercent > 0
                               ? `${mitreStats.coveragePercent.toFixed(2)}%`
-                              : mitreStats.coveragePercent}%
+                              : `${mitreStats.coveragePercent}%`}
                           </p>
                           <Chip tone={coveragePercentTone(mitreStats.coveragePercent)}>
                             {coveragePercentLabel(mitreStats.coveragePercent)}

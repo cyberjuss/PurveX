@@ -408,7 +408,7 @@ function useRunTest() {
           // Not a failure — the backend just hasn't reached a terminal status within
           // our poll window. Keep this out of the error state so it doesn't read as broken.
           setStillProcessing(
-            "This validation is taking longer than expected. It's still running on the backend — you can keep this page open or check the Tests page for the live record."
+            "This validation is taking longer than expected. It is still running on the backend — you can keep this page open or check the Tests page for the live record."
           );
           callbacks?.onStatus?.("ingesting");
         }
@@ -708,12 +708,13 @@ function RunTestPageContent() {
         const data = await getDetections();
         setDetections(data);
 
-        if (preselectedDetectionId) {
+        if (preselectedDetectionId && !testType) {
+          // Only apply on first arrival — once the user has picked/changed a
+          // mode, later re-runs of this effect (e.g. from a testType change)
+          // must not silently reattach the URL's detection id.
           setSelectedDetection(preselectedDetectionId);
-          if (!testType) {
-            setTestType("detection_validation");
-            setCurrentStep(2); // Show step 2 when coming from detection page
-          }
+          setTestType("detection_validation");
+          setCurrentStep(2); // Show step 2 when coming from detection page
         }
       } catch (err: unknown) {
         setError(err instanceof Error ? err.message : "Failed to load detections.");
@@ -2120,7 +2121,7 @@ function RunTestPageContent() {
                           )}
                           onClick={() => setRunMode("schedule")}
                           disabled={isRunning || isScheduling || !canScheduleTest(environment)}
-                          title={!canScheduleTest(environment) ? "You don't have permission to schedule tests in this environment" : ""}
+                          title={!canScheduleTest(environment) ? "You do not have permission to schedule tests in this environment" : ""}
                         >
                           Schedule
                         </button>
@@ -2424,7 +2425,7 @@ function RunTestPageContent() {
               Confirm production run
             </DialogTitle>
             <DialogDescription>
-              This executes a real payload against a real production host. Name the reason so there's a record of who
+              This executes a real payload against a real production host. Name the reason so there is a record of who
               approved this run and why.
             </DialogDescription>
           </DialogHeader>
