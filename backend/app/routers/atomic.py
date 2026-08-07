@@ -9,15 +9,20 @@ from urllib.parse import urlparse
 from urllib.request import urlretrieve
 
 import yaml
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
+from typing_extensions import Annotated
 import anyio
 
+from .. import models
 from ..schemas import AtomicTestDefinition, AtomicArgSpec
 from ..config import settings
+from ..routers.auth import get_current_user
 
 
 logger = logging.getLogger("purvex.atomic")
 router = APIRouter(prefix="/atomic", tags=["atomic"])
+
+CurrentUser = Annotated[models.User, Depends(get_current_user)]
 
 
 def _atomic_data_dir() -> Path:
@@ -236,7 +241,7 @@ def _download_atomic_catalog() -> int:
 
 
 @router.get("/catalog/status", response_model=dict)
-async def atomic_catalog_status():
+async def atomic_catalog_status(current_user: CurrentUser):
     installed = bool(ATOMIC_TESTS) or _atomic_root().exists()
     return {
         "installed": installed,
@@ -246,7 +251,7 @@ async def atomic_catalog_status():
 
 
 @router.post("/catalog/download", response_model=dict)
-async def download_atomic_catalog():
+async def download_atomic_catalog(current_user: CurrentUser):
     try:
         count = await anyio.to_thread.run_sync(_download_atomic_catalog)
         return {"installed": True, "count": count, "path": str(_atomic_data_dir())}
@@ -256,6 +261,7 @@ async def download_atomic_catalog():
 
 @router.get("/tests", response_model=dict)
 async def list_atomic_tests(
+    current_user: CurrentUser,
     technique_id: Optional[str] = None,
     q: Optional[str] = None,
     platform: Optional[str] = None,
@@ -300,7 +306,7 @@ async def list_atomic_tests(
 
 
 @router.get("/tests/{atomic_id}", response_model=AtomicTestDefinition)
-async def get_atomic_test(atomic_id: str):
+async def get_atomic_test(atomic_id: str, current_user: CurrentUser):
     _ensure_atomic_catalog_loaded()
     for t in ATOMIC_TESTS:
         if t.id == atomic_id:
