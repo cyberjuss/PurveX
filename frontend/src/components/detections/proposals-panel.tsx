@@ -32,6 +32,8 @@ import { Chip } from "@/components/ui/chip";
 import { FormError } from "@/components/ui/form-error";
 import { Input } from "@/components/ui/input";
 import { PageSkeleton } from "@/components/ui/skeleton";
+import { usePermissions } from "@/hooks/usePermissions";
+import { Permission } from "@/lib/permissions";
 import { toneClasses, type Tone } from "@/lib/status-tone";
 import {
   Sheet,
@@ -72,6 +74,14 @@ const ACTION_META: Record<
   create: { label: "create", icon: FileEdit, dot: "bg-emerald-500" },
   update: { label: "update", icon: FileEdit, dot: "bg-sky-500" },
   delete: { label: "delete", icon: Trash2, dot: "bg-rose-500" },
+};
+
+// Mirrors the backend's action-specific RBAC check on approve/reject
+// (require_detection_create/update/delete) — see routers/proposals.py.
+const ACTION_PERMISSION: Record<DetectionProposal["action"], Permission> = {
+  create: Permission.DETECTIONS_CREATE,
+  update: Permission.DETECTIONS_UPDATE,
+  delete: Permission.DETECTIONS_DELETE,
 };
 
 const STATUS_CHIP_TONE: Record<ProposalStatus, Tone> = {
@@ -205,6 +215,8 @@ export function ProposalsPanel({
   const [submitting, setSubmitting] = useState<"approve" | "reject" | null>(
     null,
   );
+
+  const { hasPermission } = usePermissions();
 
   const refresh = useCallback(async () => {
     setListError(null);
@@ -700,16 +712,25 @@ export function ProposalsPanel({
               <SheetFooter className="border-[var(--stroke-soft)] bg-[var(--surface-elevated)]">
                 {selected.status === "pending" ? (
                   <>
+                    {!hasPermission(ACTION_PERMISSION[selected.action]) ? (
+                      <p className="mr-auto text-xs text-[var(--surface-subtle-foreground)]">
+                        You do not have permission to review {ACTION_META[selected.action].label} proposals.
+                      </p>
+                    ) : null}
                     <Button
                       variant="outline"
-                      disabled={submitting !== null}
+                      disabled={submitting !== null || !hasPermission(ACTION_PERMISSION[selected.action])}
                       onClick={() => void handleReview("reject")}
                     >
                       <X className="h-4 w-4" />
                       {submitting === "reject" ? "Rejecting..." : "Reject"}
                     </Button>
                     <Button
-                      disabled={submitting !== null || selected.stale}
+                      disabled={
+                        submitting !== null ||
+                        selected.stale ||
+                        !hasPermission(ACTION_PERMISSION[selected.action])
+                      }
                       onClick={() => void handleReview("approve")}
                     >
                       <Check className="h-4 w-4" />
