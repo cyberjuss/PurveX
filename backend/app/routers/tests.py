@@ -57,6 +57,13 @@ async def create_test(
     from ..utils.sanitize_inputs import sanitize_model_inputs
     sanitized_data = sanitize_model_inputs(test)
 
+    # SECURITY: environment is client-supplied on this schema. TESTS_CREATE
+    # alone doesn't gate which environment a result can be filed under —
+    # without this, a role holding only TESTS_RUN_LAB (e.g. SECURITY_ANALYST)
+    # could fabricate a passing "prod" Test row without ever holding
+    # TESTS_RUN_PROD. Mirrors the check in run_test.
+    await require_test_run(current_user, db, sanitized_data.get("environment", "lab"))
+
     org_id = require_org_id(current_user)
 
     # SECURITY: detection_id is client-supplied. Without this check a caller
@@ -391,9 +398,11 @@ async def list_test_schedules(
     """
     List all test schedules for the current organisation.
 
-    Restricted to admin users to keep scheduling under explicit control.
+    Anyone who can schedule at all (tests:schedule) can list schedules in the
+    environments they're allowed to schedule in; prod schedules are only
+    included for callers who also hold tests:schedule:prod.
     """
-    await require_permission(current_user, Permission.TESTS_SCHEDULE_PROD, db)
+    await require_permission(current_user, Permission.TESTS_SCHEDULE, db)
     org_id = require_org_id(current_user)
 
     stmt = (
@@ -402,7 +411,13 @@ async def list_test_schedules(
         .order_by(models.TestSchedule.created_at.desc())
     )
     result = await db.execute(stmt)
-    return result.scalars().all()
+    schedules = result.scalars().all()
+
+    from ..services.rbac import RBACService
+    if not await RBACService(db).has_permission(current_user, Permission.TESTS_SCHEDULE_PROD):
+        schedules = [s for s in schedules if (s.environment or "").lower() != "prod"]
+
+    return schedules
 
 
 @router.post("/schedules", response_model=schemas.TestSchedule, status_code=status.HTTP_201_CREATED)
@@ -821,7 +836,6 @@ async def update_test_schedule(
     """Enable, disable, or re-parameterize a schedule."""
     if schedule_id <= 0:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid schedule ID")
-    await require_permission(current_user, Permission.TESTS_SCHEDULE_PROD, db)
     org_id = require_org_id(current_user)
 
     stmt = select(models.TestSchedule).where(
@@ -832,6 +846,12 @@ async def update_test_schedule(
     schedule = result.scalar_one_or_none()
     if schedule is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Schedule not found")
+
+    # Gate by the schedule's own environment (matches create_test_schedule),
+    # not a blanket TESTS_SCHEDULE_PROD — a DETECTION_ENGINEER who created a
+    # lab/dev schedule needs to be able to manage it too.
+    from ..utils.authz import require_schedule
+    await require_schedule(current_user, db, schedule.environment)
 
     updates = payload.model_dump(exclude_unset=True)
     was_disabled = not schedule.enabled
@@ -880,12 +900,14 @@ async def delete_test_schedule(
     
     """
     Delete a test schedule by ID.
-    
-    Restricted to admin users. Ensures the schedule belongs to the caller's organization.
+
+    Gated by the schedule's own environment (matches create/update), so a
+    DETECTION_ENGINEER can delete lab/dev schedules they created; prod
+    deletion still requires tests:schedule:prod. Ensures the schedule
+    belongs to the caller's organization.
     """
-    await require_permission(current_user, Permission.TESTS_SCHEDULE_PROD, db)
     org_id = require_org_id(current_user)
-    
+
     # CRITICAL: Verify schedule exists and belongs to this org before deletion.
     stmt = select(models.TestSchedule).where(
         models.TestSchedule.id == schedule_id,
@@ -893,13 +915,16 @@ async def delete_test_schedule(
     )
     result = await db.execute(stmt)
     schedule = result.scalar_one_or_none()
-    
+
     if schedule is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Schedule not found or access denied.",
         )
-    
+
+    from ..utils.authz import require_schedule
+    await require_schedule(current_user, db, schedule.environment)
+
     # Capture schedule details for audit log before deletion
     schedule_details = f"Schedule ID {schedule_id} (detection_id={schedule.detection_id}, technique_id={schedule.technique_id})"
     
