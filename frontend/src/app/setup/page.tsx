@@ -1,25 +1,27 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { z } from "zod";
+import { Loader2, Lock, User } from "lucide-react";
 import { bootstrapAdmin, getBootstrapStatus } from "@/lib/api";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { PageContainer } from "@/components/layout/page-container";
 import { FieldError, FormError } from "@/components/ui/form-error";
 import { useZodForm } from "@/lib/forms";
-import {
-  optionalEmailSchema,
-  passwordSchema,
-  usernameSchema,
-} from "@/lib/validators";
+import { passwordSchema, usernameSchema } from "@/lib/validators";
+
+const PRIMARY_BUTTON_CLASSNAME =
+  "border border-primary bg-primary text-primary-foreground hover:bg-primary/90";
+
+const FIELD_LABEL_CLASSNAME =
+  "mb-2 block text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/80";
+
+const FIELD_CLASSNAME =
+  "h-12 rounded-[10px] border border-black/[0.08] bg-black/[0.015] pl-11 text-base shadow-[inset_0_1px_2px_rgba(0,0,0,0.03)] transition-all duration-150 placeholder:text-muted-foreground/50 hover:border-black/[0.14] focus-visible:border-primary/60 focus-visible:bg-background focus-visible:ring-[3px] focus-visible:ring-primary/15 focus-visible:shadow-none dark:border-white/[0.08] dark:bg-white/[0.03] dark:hover:border-white/[0.16] dark:focus-visible:border-primary/50";
 
 const setupSchema = z.object({
   username: usernameSchema,
-  email: optionalEmailSchema,
   password: passwordSchema,
 });
 
@@ -31,7 +33,6 @@ export default function SetupPage() {
 
   const form = useZodForm(setupSchema, {
     username: "admin",
-    email: "",
     password: "",
   });
 
@@ -72,7 +73,6 @@ export default function SetupPage() {
       await bootstrapAdmin({
         username: parsed.data.username,
         password: parsed.data.password,
-        email: parsed.data.email || undefined,
       });
       router.replace("/login");
     } catch (err: unknown) {
@@ -85,51 +85,50 @@ export default function SetupPage() {
   }
 
   return (
-    <PageContainer maxWidth="md">
-      <div className="min-h-[70vh] flex items-center justify-center py-10">
-        <Card className="w-full">
-          <CardHeader>
-            <CardTitle>First-run setup</CardTitle>
-            <CardDescription>Create the first admin account to continue.</CardDescription>
-          </CardHeader>
-          <CardContent>
-            {loading ? (
-              <div className="text-sm text-slate-500">Checking setup status…</div>
-            ) : (
-              <form onSubmit={handleSubmit} className="space-y-4" noValidate>
-                <FormError message={serverError} />
+    <div className="flex min-h-screen flex-col bg-background text-foreground">
+      <div className="flex flex-1 items-center justify-center px-6 py-12">
+        <div className="w-full max-w-[440px]">
+          <div className="mb-10 flex flex-col items-center text-center">
+            <Image src="/logo.png" alt="PurveX" width={40} height={40} className="mb-4 rounded-md" />
+            <h1 className="text-3xl font-semibold tracking-tight">Create admin account</h1>
+            <p className="mt-2 text-base text-muted-foreground">
+              Set a username and password to get started.
+            </p>
+          </div>
 
-                <div className="space-y-2">
-                  <Label htmlFor="username">Admin username</Label>
+          {loading ? (
+            <div className="text-center text-sm text-muted-foreground">Checking setup status…</div>
+          ) : (
+            <form onSubmit={handleSubmit} noValidate className="space-y-5">
+              <FormError message={serverError} />
+
+              <div>
+                <label htmlFor="username" className={FIELD_LABEL_CLASSNAME}>
+                  Admin username
+                </label>
+                <div className="relative">
+                  <User className="pointer-events-none absolute left-3.5 top-1/2 h-[18px] w-[18px] -translate-y-1/2 text-muted-foreground/50" />
                   <Input
                     id="username"
                     value={form.values.username}
                     onChange={(e) => form.setField("username", e.target.value)}
                     onBlur={() => form.touch("username")}
                     autoComplete="username"
+                    autoFocus
                     aria-invalid={!!form.errors.username}
                     aria-describedby="username-error"
+                    className={FIELD_CLASSNAME}
                   />
-                  <FieldError id="username-error" message={form.errors.username} />
                 </div>
+                <FieldError id="username-error" message={form.errors.username} />
+              </div>
 
-                <div className="space-y-2">
-                  <Label htmlFor="email">Email (optional)</Label>
-                  <Input
-                    id="email"
-                    type="email"
-                    value={form.values.email ?? ""}
-                    onChange={(e) => form.setField("email", e.target.value)}
-                    onBlur={() => form.touch("email")}
-                    autoComplete="email"
-                    aria-invalid={!!form.errors.email}
-                    aria-describedby="email-error"
-                  />
-                  <FieldError id="email-error" message={form.errors.email} />
-                </div>
-
-                <div className="space-y-2">
-                  <Label htmlFor="password">Password</Label>
+              <div>
+                <label htmlFor="password" className={FIELD_LABEL_CLASSNAME}>
+                  Password
+                </label>
+                <div className="relative">
+                  <Lock className="pointer-events-none absolute left-3.5 top-1/2 h-[18px] w-[18px] -translate-y-1/2 text-muted-foreground/50" />
                   <Input
                     id="password"
                     type="password"
@@ -139,21 +138,37 @@ export default function SetupPage() {
                     autoComplete="new-password"
                     aria-invalid={!!form.errors.password}
                     aria-describedby="password-error"
+                    className={FIELD_CLASSNAME}
                   />
-                  <FieldError id="password-error" message={form.errors.password} />
-                  <p className="text-xs text-slate-500">
-                    At least 12 characters, including upper, lower, and a number.
-                  </p>
                 </div>
+                <FieldError id="password-error" message={form.errors.password} />
+                <p className="mt-1.5 text-xs text-muted-foreground">
+                  At least 12 characters, including upper, lower, and a number.
+                </p>
+              </div>
 
-                <Button type="submit" disabled={submitting}>
-                  {submitting ? "Creating…" : "Create admin"}
-                </Button>
-              </form>
-            )}
-          </CardContent>
-        </Card>
+              <button
+                type="submit"
+                disabled={submitting}
+                className={`flex h-12 w-full items-center justify-center gap-2 rounded-lg text-base font-medium transition disabled:cursor-not-allowed disabled:opacity-50 ${PRIMARY_BUTTON_CLASSNAME}`}
+              >
+                {submitting ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Creating
+                  </>
+                ) : (
+                  "Create admin"
+                )}
+              </button>
+            </form>
+          )}
+        </div>
       </div>
-    </PageContainer>
+
+      <p className="pb-6 text-center text-[11px] text-muted-foreground">
+        &copy; {new Date().getFullYear()} PurveX
+      </p>
+    </div>
   );
 }
