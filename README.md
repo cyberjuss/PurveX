@@ -10,6 +10,11 @@
     <img src="https://img.shields.io/badge/Frontend-Next.js%2016-black" alt="Frontend" />
     <img src="https://img.shields.io/badge/License-Private-lightgrey" alt="License" />
   </p>
+
+  <p>
+    <a href="https://purvex-llc.com/install-guide">Full install guide</a> ·
+    <a href="https://purvex-llc.com">purvex-llc.com</a>
+  </p>
 </div>
 
 ---
@@ -38,73 +43,51 @@ PurveX is a detection validation platform for security teams. It connects to you
 | Python | 3.11+ | `python --version` |
 | Node.js | 20+ | `node --version` |
 | npm | 9+ | `npm --version` |
-| PostgreSQL | 14+ | `psql --version` |
-| Git | any | `git --version` |
+| Git | optional | `git --version` |
+
+No database installation is required. PurveX stores its data in a local SQLite file by default; PostgreSQL is only worth setting up once more than a couple of people share the same instance (set `DATABASE_URL` to switch).
 
 ---
 
 ## Quickstart
 
-### 1. Clone and configure
+The one-line installer clones the repo, installs dependencies, and starts PurveX:
 
 ```bash
-git clone https://github.com/cyberjuss/PurveX.git
-cd PurveX
-cp .env.example .env
+curl -fsSL https://purvex-llc.com/install.sh | bash
 ```
 
-Create a PostgreSQL database, then edit `.env` with your connection details:
+If Python or Node.js is missing, it detects your OS, prints the exact command to install it, and offers to run that for you once you confirm. Once you see `Web:` and `API:` printed, open [http://localhost:1120](http://localhost:1120).
+
+Prefer to run it by hand?
 
 ```bash
-# Create the database
-createdb purvex
-
-# Generate secrets
-python -c "import secrets; print(secrets.token_urlsafe(32))"          # JWT_SECRET_KEY
-python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"  # PURVEX_ENCRYPTION_KEY
+git clone https://github.com/cyberjuss/PurveX.git && \
+  cd PurveX && \
+  chmod +x scripts/purvex.sh && \
+  ./scripts/purvex.sh --setup && \
+  ./scripts/purvex.sh --start
 ```
 
-### 2. Start the platform
+`--setup` generates `.env` and its two secrets (`JWT_SECRET_KEY`, `PURVEX_ENCRYPTION_KEY`) automatically the first time it runs — nothing to create or paste in by hand. **Back up `PURVEX_ENCRYPTION_KEY`** somewhere safe once it exists; losing it makes any stored SIEM credentials unrecoverable.
 
-**Linux / macOS / Git Bash:**
-```bash
-chmod +x scripts/purvex.sh
-./scripts/purvex.sh --setup     # Install dependencies (first time)
-./scripts/purvex.sh --start     # Start backend + frontend
-```
+Windows without Git Bash or WSL: see the [Windows setup guide](https://purvex-llc.com/install-guide/windows) for the manual two-terminal version.
 
-**Windows (manual):**
-```powershell
-# Backend
-cd backend
-python -m venv venv
-venv\Scripts\activate
-pip install -r ..\requirements.txt
-uvicorn app.main:app --host 0.0.0.0 --port 8001
+### First run
 
-# Frontend (new terminal)
-cd frontend
-npm install
-npm run dev
-```
-
-### 3. Open the app
-
-- **Frontend:** [http://localhost:1120](http://localhost:1120)
-- **Backend API:** [http://localhost:8001](http://localhost:8001)
-- **API docs:** [http://localhost:8001/docs](http://localhost:8001/docs)
-
-Default dev credentials: `admin` / `admin`
+A fresh install has no account yet, so opening the app takes you straight to setup instead of a login form. Choose a username and password there — there is no default account. See the [First run guide](https://purvex-llc.com/install-guide/first-run) for the full walkthrough.
 
 ---
 
 ## First-time onboarding
 
-1. **Log in** with the default admin account
-2. **Connect your SIEM** — Settings &rarr; SIEM Connections
-3. **Register a test runner** — Settings &rarr; Test Runner
-4. **Run your first test** — Tests &rarr; Run Test
-5. **Review results** — Dashboard &rarr; Detection scores and coverage
+The dashboard tracks five setup steps; none of them block you from exploring the app first, but all five are required before you can run a real test.
+
+1. **Connect a SIEM** — Settings &rarr; SIEM
+2. **Install the Atomic Red Team test catalog** — Tests &rarr; Explore Coverage
+3. **Register a test runner** — Endpoints &rarr; Add runner
+4. **Import or write a detection** — Detections
+5. **Run your first test** — Tests &rarr; Run Test
 
 ---
 
@@ -144,19 +127,27 @@ PurveX validates detections — it does **not** mirror or store your SIEM data.
 - PII or customer data
 - Case notes or IR artifacts
 
+See [what PurveX does and doesn't collect](https://purvex-llc.com/install-guide/data-handling) for the full breakdown.
+
 ---
 
 ## Environment variables
 
-See [`.env.example`](.env.example) for all options. Key settings:
+See [`.env.example`](.env.example) for all options. `./scripts/purvex.sh --setup` fills in the two required secrets automatically; everything else has a sensible default.
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `DATABASE_URL` | yes | PostgreSQL connection string |
-| `JWT_SECRET_KEY` | yes | JWT signing key |
-| `PURVEX_ENCRYPTION_KEY` | yes | Fernet key for secrets at rest |
+| `JWT_SECRET_KEY` | auto-generated | JWT signing key |
+| `PURVEX_ENCRYPTION_KEY` | auto-generated | Fernet key for secrets at rest — back this up |
+| `DATABASE_URL` | no | PostgreSQL connection string; unset means local SQLite |
 | `PURVEX_ENV` | no | `dev` / `staging` / `prod` (default: `dev`) |
 | `OPENAI_API_KEY` | no | Enables AI assistant features |
+
+---
+
+## Troubleshooting & FAQ
+
+See the [troubleshooting guide](https://purvex-llc.com/install-guide/troubleshooting) and [FAQ](https://purvex-llc.com/install-guide/faq) for the problems that come up most often during and after install.
 
 ---
 

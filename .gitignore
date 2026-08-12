@@ -12,6 +12,11 @@ __pycache__/
 
 purvex.db
 
+# Per-install local state (scripts/purvex.sh) — specific to the machine
+# that ran setup, never meant to ship or be shared across installs
+.purvex_admin_bootstrapped
+.purvex_boot_choice
+
 assets/
 
 .DS_Store
