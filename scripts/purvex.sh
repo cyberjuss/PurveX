@@ -72,10 +72,82 @@ find_python() {
   echo ""
 }
 
+# Prints the actual command to run for this OS instead of leaving the
+# operator to go figure it out -- distro detected via /etc/os-release
+# (Linux) or `uname -s` (macOS); anything else falls back to a download
+# link. Never runs the command itself: installing a package (potentially
+# via sudo) without explicit confirmation is not this script's call to make.
+os_id() {
+  if [ -f /etc/os-release ]; then
+    # shellcheck disable=SC1091
+    . /etc/os-release
+    echo "${ID:-}"
+    return
+  fi
+  echo ""
+}
+
+suggest_install_python() {
+  printf "\n"
+  case "$(os_id)" in
+    ubuntu|debian|kali|linuxmint|raspbian|pop)
+      warn "Install Python ${MIN_PYTHON}+:"
+      dim "  sudo apt-get update && sudo apt-get install -y python3 python3-venv python3-pip"
+      ;;
+    fedora|rhel|centos|rocky|almalinux)
+      warn "Install Python ${MIN_PYTHON}+:"
+      dim "  sudo dnf install -y python3 python3-pip"
+      ;;
+    arch|manjaro|endeavouros)
+      warn "Install Python ${MIN_PYTHON}+:"
+      dim "  sudo pacman -S python python-pip"
+      ;;
+    *)
+      if [ "$(uname -s)" = "Darwin" ]; then
+        warn "Install Python ${MIN_PYTHON}+:"
+        dim "  brew install python@3.12"
+      else
+        warn "Download an installer for Python ${MIN_PYTHON}+: https://www.python.org/downloads/"
+      fi
+      ;;
+  esac
+  printf "\n"
+}
+
+suggest_install_node() {
+  printf "\n"
+  case "$(os_id)" in
+    ubuntu|debian|kali|linuxmint|raspbian|pop)
+      warn "Install Node.js ${MIN_NODE}+:"
+      dim "  curl -fsSL https://deb.nodesource.com/setup_${MIN_NODE}.x | sudo -E bash -"
+      dim "  sudo apt-get install -y nodejs"
+      ;;
+    fedora|rhel|centos|rocky|almalinux)
+      warn "Install Node.js ${MIN_NODE}+:"
+      dim "  curl -fsSL https://rpm.nodesource.com/setup_${MIN_NODE}.x | sudo -E bash -"
+      dim "  sudo dnf install -y nodejs"
+      ;;
+    arch|manjaro|endeavouros)
+      warn "Install Node.js ${MIN_NODE}+:"
+      dim "  sudo pacman -S nodejs npm"
+      ;;
+    *)
+      if [ "$(uname -s)" = "Darwin" ]; then
+        warn "Install Node.js ${MIN_NODE}+:"
+        dim "  brew install node@${MIN_NODE}"
+      else
+        warn "Download an installer for Node.js ${MIN_NODE}+: https://nodejs.org/en/download"
+      fi
+      ;;
+  esac
+  printf "\n"
+}
+
 check_python() {
   PYTHON="$(find_python)"
   if [ -z "$PYTHON" ]; then
-    fail "Python ${MIN_PYTHON}+ is required but not found. Install it and retry."
+    suggest_install_python
+    fail "Python ${MIN_PYTHON}+ is required but not found."
   fi
   if [ "${PURVEX_QUIET_RUNTIME:-}" != "1" ]; then
     info "Python: $($PYTHON --version)"
@@ -84,11 +156,13 @@ check_python() {
 
 check_node() {
   if ! command -v node >/dev/null 2>&1 || ! command -v npm >/dev/null 2>&1; then
-    fail "Node.js ${MIN_NODE}+ and npm are required. Install them and retry."
+    suggest_install_node
+    fail "Node.js ${MIN_NODE}+ and npm are required."
   fi
   local node_major
   node_major="$(node -v | sed 's/v//' | cut -d. -f1)"
   if [ "${node_major}" -lt "${MIN_NODE}" ]; then
+    suggest_install_node
     fail "Node.js ${MIN_NODE}+ required. Found: $(node -v)"
   fi
   if [ "${PURVEX_QUIET_RUNTIME:-}" != "1" ]; then
