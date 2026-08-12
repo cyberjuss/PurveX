@@ -266,5 +266,5 @@ if not os.getenv("JWT_SECRET_KEY"):
     _config_logger.warning(
         "JWT_SECRET_KEY is not set; generated an ephemeral key for this process. "
         "All sessions will be invalidated on the next restart. Set JWT_SECRET_KEY "
-        "in the environment (see scripts/purvex.sh setup or docs/beta-install-runbook.md)."
+        "in the environment -- scripts/purvex.sh generates and stores one in .env automatically."
     )

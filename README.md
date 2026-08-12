@@ -126,7 +126,6 @@ PurveX/
 │       ├── components/   # Shared UI components
 │       └── lib/          # API client, utilities
 ├── scripts/              # Setup and launcher scripts
-├── docs/                 # Project documentation
 └── requirements.txt      # Python dependencies
 ```
 
@@ -158,18 +157,6 @@ See [`.env.example`](.env.example) for all options. Key settings:
 | `PURVEX_ENCRYPTION_KEY` | yes | Fernet key for secrets at rest |
 | `PURVEX_ENV` | no | `dev` / `staging` / `prod` (default: `dev`) |
 | `OPENAI_API_KEY` | no | Enables AI assistant features |
-
----
-
-## Documentation
-
-Detailed docs are in the [`docs/`](docs/) directory:
-
-- [Onboarding guide](docs/guides/ONBOARDING.md)
-- [Detection workflow](docs/guides/DETECTIONS.md)
-- [Testing guide](docs/guides/TESTING.md)
-- [Security policy](docs/security/SECURITY.md)
-- [MVP status & features](docs/mvp/OVERVIEW.md)
 
 ---
 

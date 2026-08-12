@@ -5,8 +5,8 @@ Run this on the same machine that holds backend/.license_signing_key.pem
 the human from the common-case path. The Stripe webhook (a server, which
 must never hold the signing key) drops a row here for every new paid
 signup and every subscription renewal; this script, invoked on a schedule
-(cron / Windows Task Scheduler -- see docs/ship-to-production-plan.md or
-just run it manually), signs each pending row locally with
+(cron / Windows Task Scheduler -- see the ship-to-production runbook in
+PurveX-internal, or just run it manually), signs each pending row locally with
 issue_license.py's issue_token() and pushes it straight to the customer's
 portal account with deliver_to_portal(). One pass drains everything
 currently pending, then exits -- run it again on whatever cadence you want
