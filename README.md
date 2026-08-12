@@ -12,8 +12,8 @@
   </p>
 
   <p>
-    <a href="https://purvex-llc.com/install-guide">Full install guide</a> ·
-    <a href="https://purvex-llc.com">purvex-llc.com</a>
+    <a href="https://purve-x-landing-page.vercel.app/install-guide">Full install guide</a> ·
+    <a href="https://purve-x-landing-page.vercel.app">Website</a>
   </p>
 </div>
 
@@ -54,7 +54,7 @@ No database installation is required. PurveX stores its data in a local SQLite f
 The one-line installer clones the repo, installs dependencies, and starts PurveX:
 
 ```bash
-curl -fsSL https://purvex-llc.com/install.sh | bash
+curl -fsSL https://purve-x-landing-page.vercel.app/install.sh | bash
 ```
 
 If Python or Node.js is missing, it detects your OS, prints the exact command to install it, and offers to run that for you once you confirm. Once you see `Web:` and `API:` printed, open [http://localhost:1120](http://localhost:1120).
@@ -71,11 +71,11 @@ git clone https://github.com/cyberjuss/PurveX.git && \
 
 `--setup` generates `.env` and its two secrets (`JWT_SECRET_KEY`, `PURVEX_ENCRYPTION_KEY`) automatically the first time it runs — nothing to create or paste in by hand. **Back up `PURVEX_ENCRYPTION_KEY`** somewhere safe once it exists; losing it makes any stored SIEM credentials unrecoverable.
 
-Windows without Git Bash or WSL: see the [Windows setup guide](https://purvex-llc.com/install-guide/windows) for the manual two-terminal version.
+Windows without Git Bash or WSL: see the [Windows setup guide](https://purve-x-landing-page.vercel.app/install-guide/windows) for the manual two-terminal version.
 
 ### First run
 
-A fresh install has no account yet, so opening the app takes you straight to setup instead of a login form. Choose a username and password there — there is no default account. See the [First run guide](https://purvex-llc.com/install-guide/first-run) for the full walkthrough.
+A fresh install has no account yet, so opening the app takes you straight to setup instead of a login form. Choose a username and password there — there is no default account. See the [First run guide](https://purve-x-landing-page.vercel.app/install-guide/first-run) for the full walkthrough.
 
 ---
 
@@ -127,7 +127,7 @@ PurveX validates detections — it does **not** mirror or store your SIEM data.
 - PII or customer data
 - Case notes or IR artifacts
 
-See [what PurveX does and doesn't collect](https://purvex-llc.com/install-guide/data-handling) for the full breakdown.
+See [what PurveX does and doesn't collect](https://purve-x-landing-page.vercel.app/install-guide/data-handling) for the full breakdown.
 
 ---
 
@@ -147,7 +147,7 @@ See [`.env.example`](.env.example) for all options. `./scripts/purvex.sh --setup
 
 ## Troubleshooting & FAQ
 
-See the [troubleshooting guide](https://purvex-llc.com/install-guide/troubleshooting) and [FAQ](https://purvex-llc.com/install-guide/faq) for the problems that come up most often during and after install.
+See the [troubleshooting guide](https://purve-x-landing-page.vercel.app/install-guide/troubleshooting) and [FAQ](https://purve-x-landing-page.vercel.app/install-guide/faq) for the problems that come up most often during and after install.
 
 ---
 
