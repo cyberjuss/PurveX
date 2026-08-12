@@ -72,11 +72,7 @@ find_python() {
   echo ""
 }
 
-# Prints the actual command to run for this OS instead of leaving the
-# operator to go figure it out -- distro detected via /etc/os-release
-# (Linux) or `uname -s` (macOS); anything else falls back to a download
-# link. Never runs the command itself: installing a package (potentially
-# via sudo) without explicit confirmation is not this script's call to make.
+# Distro detected via /etc/os-release (Linux) or `uname -s` (macOS).
 os_id() {
   if [ -f /etc/os-release ]; then
     # shellcheck disable=SC1091
@@ -87,67 +83,97 @@ os_id() {
   echo ""
 }
 
-suggest_install_python() {
+# Reads a y/N answer from the real terminal, not this script's own stdin --
+# when invoked as `curl ... | bash`, stdin is the piped script text itself,
+# so a plain `read` would silently get nothing back. /dev/tty is the
+# controlling terminal regardless of how stdin got redirected, which is the
+# standard fix for prompting inside a piped installer. No /dev/tty (fully
+# non-interactive: CI, a script with no terminal attached at all) means
+# there is nobody to ask, so this returns "no" rather than hanging.
+confirm() {
+  local prompt="$1"
+  [ -e /dev/tty ] || return 1
+  local reply=""
+  read -r -p "${prompt} [y/N] " reply < /dev/tty || return 1
+  case "${reply}" in
+    y|Y|yes|YES) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+# Sets PYTHON_INSTALL_CMD to the install command for this OS (empty if none
+# known) and prints it either way. Never runs it here -- installing a
+# package, usually via sudo, only happens after the operator explicitly
+# confirms in check_python.
+describe_install_python() {
+  PYTHON_INSTALL_CMD=""
   printf "\n"
   case "$(os_id)" in
     ubuntu|debian|kali|linuxmint|raspbian|pop)
-      warn "Install Python ${MIN_PYTHON}+:"
-      dim "  sudo apt-get update && sudo apt-get install -y python3 python3-venv python3-pip"
+      PYTHON_INSTALL_CMD="sudo apt-get update && sudo apt-get install -y python3 python3-venv python3-pip"
       ;;
     fedora|rhel|centos|rocky|almalinux)
-      warn "Install Python ${MIN_PYTHON}+:"
-      dim "  sudo dnf install -y python3 python3-pip"
+      PYTHON_INSTALL_CMD="sudo dnf install -y python3 python3-pip"
       ;;
     arch|manjaro|endeavouros)
-      warn "Install Python ${MIN_PYTHON}+:"
-      dim "  sudo pacman -S python python-pip"
+      PYTHON_INSTALL_CMD="sudo pacman -S --noconfirm python python-pip"
       ;;
     *)
       if [ "$(uname -s)" = "Darwin" ]; then
-        warn "Install Python ${MIN_PYTHON}+:"
-        dim "  brew install python@3.12"
-      else
-        warn "Download an installer for Python ${MIN_PYTHON}+: https://www.python.org/downloads/"
+        PYTHON_INSTALL_CMD="brew install python@3.12"
       fi
       ;;
   esac
+  if [ -n "${PYTHON_INSTALL_CMD}" ]; then
+    warn "Install Python ${MIN_PYTHON}+:"
+    dim "  ${PYTHON_INSTALL_CMD}"
+  else
+    warn "Download an installer for Python ${MIN_PYTHON}+: https://www.python.org/downloads/"
+  fi
   printf "\n"
 }
 
-suggest_install_node() {
+# Same as describe_install_python, for Node.js -> NODE_INSTALL_CMD.
+describe_install_node() {
+  NODE_INSTALL_CMD=""
   printf "\n"
   case "$(os_id)" in
     ubuntu|debian|kali|linuxmint|raspbian|pop)
-      warn "Install Node.js ${MIN_NODE}+:"
-      dim "  curl -fsSL https://deb.nodesource.com/setup_${MIN_NODE}.x | sudo -E bash -"
-      dim "  sudo apt-get install -y nodejs"
+      NODE_INSTALL_CMD="curl -fsSL https://deb.nodesource.com/setup_${MIN_NODE}.x | sudo -E bash - && sudo apt-get install -y nodejs"
       ;;
     fedora|rhel|centos|rocky|almalinux)
-      warn "Install Node.js ${MIN_NODE}+:"
-      dim "  curl -fsSL https://rpm.nodesource.com/setup_${MIN_NODE}.x | sudo -E bash -"
-      dim "  sudo dnf install -y nodejs"
+      NODE_INSTALL_CMD="curl -fsSL https://rpm.nodesource.com/setup_${MIN_NODE}.x | sudo -E bash - && sudo dnf install -y nodejs"
       ;;
     arch|manjaro|endeavouros)
-      warn "Install Node.js ${MIN_NODE}+:"
-      dim "  sudo pacman -S nodejs npm"
+      NODE_INSTALL_CMD="sudo pacman -S --noconfirm nodejs npm"
       ;;
     *)
       if [ "$(uname -s)" = "Darwin" ]; then
-        warn "Install Node.js ${MIN_NODE}+:"
-        dim "  brew install node@${MIN_NODE}"
-      else
-        warn "Download an installer for Node.js ${MIN_NODE}+: https://nodejs.org/en/download"
+        NODE_INSTALL_CMD="brew install node@${MIN_NODE}"
       fi
       ;;
   esac
+  if [ -n "${NODE_INSTALL_CMD}" ]; then
+    warn "Install Node.js ${MIN_NODE}+:"
+    dim "  ${NODE_INSTALL_CMD}"
+  else
+    warn "Download an installer for Node.js ${MIN_NODE}+: https://nodejs.org/en/download"
+  fi
   printf "\n"
 }
 
 check_python() {
   PYTHON="$(find_python)"
   if [ -z "$PYTHON" ]; then
-    suggest_install_python
-    fail "Python ${MIN_PYTHON}+ is required but not found."
+    describe_install_python
+    if [ -n "${PYTHON_INSTALL_CMD}" ] && confirm "Install Python now?"; then
+      info "Running: ${PYTHON_INSTALL_CMD}"
+      bash -c "${PYTHON_INSTALL_CMD}" < /dev/tty || true
+      PYTHON="$(find_python)"
+    fi
+    if [ -z "$PYTHON" ]; then
+      fail "Python ${MIN_PYTHON}+ is required but not found."
+    fi
   fi
   if [ "${PURVEX_QUIET_RUNTIME:-}" != "1" ]; then
     info "Python: $($PYTHON --version)"
@@ -156,13 +182,18 @@ check_python() {
 
 check_node() {
   if ! command -v node >/dev/null 2>&1 || ! command -v npm >/dev/null 2>&1; then
-    suggest_install_node
-    fail "Node.js ${MIN_NODE}+ and npm are required."
+    describe_install_node
+    if [ -n "${NODE_INSTALL_CMD}" ] && confirm "Install Node.js now?"; then
+      info "Running: ${NODE_INSTALL_CMD}"
+      bash -c "${NODE_INSTALL_CMD}" < /dev/tty || true
+    fi
+    if ! command -v node >/dev/null 2>&1 || ! command -v npm >/dev/null 2>&1; then
+      fail "Node.js ${MIN_NODE}+ and npm are required."
+    fi
   fi
   local node_major
   node_major="$(node -v | sed 's/v//' | cut -d. -f1)"
   if [ "${node_major}" -lt "${MIN_NODE}" ]; then
-    suggest_install_node
     fail "Node.js ${MIN_NODE}+ required. Found: $(node -v)"
   fi
   if [ "${PURVEX_QUIET_RUNTIME:-}" != "1" ]; then
