@@ -1,13 +1,15 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useRef, useState, useEffect } from "react";
 import { usePermissions } from "@/hooks/usePermissions";
 import { Permission } from "@/lib/permissions";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
+import { Upload } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { getLicenseStatus, updateLicenseKey, clearLicenseKey, type LicenseStatus } from "@/lib/api";
+import { cn } from "@/lib/utils";
 import {
   SettingsPageShell,
   SettingsSection,
@@ -43,6 +45,9 @@ export default function LicenseSettingsPage() {
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [isClearing, setIsClearing] = useState(false);
+  const [isDragOver, setIsDragOver] = useState(false);
+  const [loadedFileName, setLoadedFileName] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -73,6 +78,7 @@ export default function LicenseSettingsPage() {
       const data = await updateLicenseKey(token);
       setStatus(data);
       setKeyInput("");
+      setLoadedFileName(null);
       setSaveSuccess(true);
     } catch (err: unknown) {
       setSaveError(getErrorMessage(err, "That license key could not be saved."));
@@ -93,6 +99,39 @@ export default function LicenseSettingsPage() {
     } finally {
       setIsClearing(false);
     }
+  };
+
+  // A JWT is three base64url segments joined by dots -- the license file
+  // from /my-license is a formatted document (who it's issued to, plan,
+  // dates) with the key embedded in it, not a bare token, so pull the key
+  // out from wherever it sits rather than trusting the whole file. The
+  // length floor keeps this from matching something shorter that happens
+  // to contain two dots.
+  const LICENSE_KEY_PATTERN = /[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/;
+
+  // Reads a dropped/picked license file and loads the key it contains into
+  // the same keyInput the textarea uses -- the backend only ever sees a
+  // string, so a file is just a friendlier way of getting that string in.
+  const loadFile = (file: File) => {
+    setSaveError(null);
+    setSaveSuccess(false);
+    const reader = new FileReader();
+    reader.onload = () => {
+      const text = typeof reader.result === "string" ? reader.result.trim() : "";
+      if (!text) {
+        setSaveError("That file appears to be empty.");
+        return;
+      }
+      const match = text.match(LICENSE_KEY_PATTERN);
+      if (!match) {
+        setSaveError("Couldn't find a license key in that file -- try pasting it instead.");
+        return;
+      }
+      setKeyInput(match[0]);
+      setLoadedFileName(file.name);
+    };
+    reader.onerror = () => setSaveError("Couldn't read that file -- try pasting the key instead.");
+    reader.readAsText(file);
   };
 
   if (loading) {
@@ -122,7 +161,7 @@ export default function LicenseSettingsPage() {
     <SettingsPageShell
       eyebrow="Workspace"
       title="License"
-      description="Paste the license key you received by email to unlock paid-tier limits — takes effect immediately, no restart needed."
+      description="Upload the license file from your account page to unlock paid-tier limits — takes effect immediately, no restart needed."
       status={
         <SettingsStatusPill tone={status.plan === "paid" ? "ok" : "muted"}>
           {status.plan === "paid" ? "Paid plan" : "Free plan"}
@@ -151,24 +190,74 @@ export default function LicenseSettingsPage() {
 
       <SettingsSection
         title="License key"
-        description="Received by email after purchase. It is a long block of text — paste the whole thing."
+        description="Download the .lic file from your account page at purvex-llc.com/my-license and upload it here."
       >
         <fieldset disabled={!canEdit} className="space-y-3 disabled:opacity-60">
           <div className="space-y-1.5">
-            <Label htmlFor="license_key">License key</Label>
-            <Textarea
-              id="license_key"
-              value={keyInput}
-              onChange={(e) => {
-                setKeyInput(e.target.value);
-                setSaveError(null);
-                setSaveSuccess(false);
+            <Label htmlFor="license_file">License file</Label>
+            <div
+              onDragOver={(e) => {
+                e.preventDefault();
+                if (canEdit) setIsDragOver(true);
               }}
-              placeholder="eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9..."
-              rows={4}
-              className="font-mono text-xs"
-            />
+              onDragLeave={() => setIsDragOver(false)}
+              onDrop={(e) => {
+                e.preventDefault();
+                setIsDragOver(false);
+                const file = e.dataTransfer.files?.[0];
+                if (file && canEdit) loadFile(file);
+              }}
+              onClick={() => canEdit && fileInputRef.current?.click()}
+              className={cn(
+                "flex flex-col items-center justify-center gap-1.5 rounded-xl border-2 border-dashed px-4 py-7 text-center transition",
+                canEdit ? "cursor-pointer" : "cursor-not-allowed",
+                isDragOver
+                  ? "border-[var(--accent-strong)] bg-[var(--accent-soft)]"
+                  : "border-[var(--stroke-soft)] hover:border-[var(--stroke-strong)]"
+              )}
+            >
+              <Upload className="h-5 w-5 text-[var(--surface-subtle-foreground)]" />
+              <p className="text-sm font-medium text-[var(--surface-card-foreground)]">
+                {loadedFileName ? `Loaded ${loadedFileName}` : "Drop your license file here, or click to browse"}
+              </p>
+              <p className="text-xs text-[var(--surface-subtle-foreground)]">purvex-license.lic</p>
+              <input
+                ref={fileInputRef}
+                id="license_file"
+                type="file"
+                accept=".lic,.txt,text/plain"
+                disabled={!canEdit}
+                className="hidden"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) loadFile(file);
+                  e.target.value = "";
+                }}
+              />
+            </div>
           </div>
+
+          <details className="text-sm">
+            <summary className="cursor-pointer select-none text-[var(--surface-subtle-foreground)] hover:text-[var(--surface-card-foreground)]">
+              Paste the key instead
+            </summary>
+            <div className="mt-2 space-y-1.5">
+              <Label htmlFor="license_key">License key</Label>
+              <Textarea
+                id="license_key"
+                value={keyInput}
+                onChange={(e) => {
+                  setKeyInput(e.target.value);
+                  setLoadedFileName(null);
+                  setSaveError(null);
+                  setSaveSuccess(false);
+                }}
+                placeholder="eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9..."
+                rows={4}
+                className="font-mono text-xs"
+              />
+            </div>
+          </details>
 
           {saveError ? (
             <SettingsBanner tone="danger" title="Could not save">

@@ -1,11 +1,12 @@
 """Issue and manage PurveX paid-plan license keys.
 
-Manual, by-hand issuance for now (v1) — run this yourself after a customer
-pays, email them the printed token. See app/utils/license.py for how a
-PurveX instance verifies it; nothing here talks to that instance, a
-database, or the network. The signing keypair lives at
+Run this yourself, or via poll_license_issuance.py's automated queue drain
+(same signing logic, imported from here as issue_token/deliver_to_portal).
+See app/utils/license.py for how a PurveX instance verifies a token;
+nothing here talks to that instance, a database, or the network beyond the
+optional --deliver-to push. The signing keypair lives at
 backend/.license_signing_key.pem (gitignored) and is created automatically
-on first use.
+on first use, and never leaves this machine either way.
 
 Usage:
     python scripts/issue_license.py keygen
@@ -56,21 +57,40 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 KEY_PATH = Path(__file__).resolve().parent.parent / ".license_signing_key.pem"
 
 
-def deliver_to_portal(portal_user_id: str, token: str) -> None:
-    """Push a just-issued token into the portal's Supabase project so the
-    customer can retrieve it themselves at /my-license. stdlib-only (no new
-    dependency) -- this is an occasional, by-hand CLI action, not something
-    that needs the Supabase Python SDK.
+class SigningKeyMissing(RuntimeError):
+    """No signing key at KEY_PATH -- run `keygen` first."""
+
+
+class DeliveryError(RuntimeError):
+    """--deliver-to (or the poller) couldn't push the token to Supabase.
+
+    The token itself was still issued successfully in every case this is
+    raised for -- callers should treat this as "delivery failed, the token
+    printed/returned above is still valid," not as issuance having failed.
     """
+
+
+def require_supabase_credentials() -> tuple[str, str]:
     supabase_url = os.environ.get("SUPABASE_URL")
     service_role_key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY")
     if not supabase_url or not service_role_key:
-        print(
+        raise DeliveryError(
             "SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY must be set to use --deliver-to "
-            "(see this script's --help for where to find them).",
-            file=sys.stderr,
+            "(see this script's --help for where to find them)."
         )
-        sys.exit(1)
+    return supabase_url, service_role_key
+
+
+def deliver_to_portal(portal_user_id: str, token: str) -> None:
+    """Push a just-issued token into the portal's Supabase project so the
+    customer can retrieve it themselves at /my-license. stdlib-only (no new
+    dependency) -- this is an occasional CLI/poller action, not something
+    that needs the Supabase Python SDK. Raises DeliveryError on any
+    failure; never exits the process, so both the CLI and the poller can
+    decide for themselves how to handle it (the CLI exits, the poller
+    marks one queue row as errored and moves on to the next).
+    """
+    supabase_url, service_role_key = require_supabase_credentials()
 
     body = json.dumps({
         "current_license_key": token,
@@ -89,7 +109,7 @@ def deliver_to_portal(portal_user_id: str, token: str) -> None:
             # filtered by a user_id that doesn't exist returns 200 with an
             # empty result rather than an error. Without checking the body,
             # a typo'd portal_user_id would silently "succeed" and do
-            # nothing, and the owner would have no idea delivery failed.
+            # nothing, and the caller would have no idea delivery failed.
             "Prefer": "return=representation",
         },
     )
@@ -97,24 +117,58 @@ def deliver_to_portal(portal_user_id: str, token: str) -> None:
         with urllib.request.urlopen(request, timeout=15) as response:
             updated_rows = json.loads(response.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:
-        print(f"Delivery failed: Supabase returned {exc.code} {exc.reason}. "
-              f"Token was still issued above -- fall back to emailing it.", file=sys.stderr)
-        sys.exit(1)
+        raise DeliveryError(
+            f"Supabase returned {exc.code} {exc.reason}. Token was still issued -- fall back to emailing it."
+        ) from exc
     except urllib.error.URLError as exc:
-        print(f"Delivery failed: {exc.reason}. Token was still issued above -- "
-              f"fall back to emailing it.", file=sys.stderr)
-        sys.exit(1)
+        raise DeliveryError(
+            f"{exc.reason}. Token was still issued -- fall back to emailing it."
+        ) from exc
 
     if not updated_rows:
-        print(
-            f"Delivery failed: no portal_profiles row matches user_id={portal_user_id}. "
-            "Double-check the id from the notification email. Token was still issued above -- "
-            "fall back to emailing it.",
-            file=sys.stderr,
+        raise DeliveryError(
+            f"No portal_profiles row matches user_id={portal_user_id}. Double-check the id. "
+            "Token was still issued -- fall back to emailing it."
         )
-        sys.exit(1)
 
-    print(f"Delivered to portal account {portal_user_id} -- they can retrieve it at /my-license now.")
+
+def issue_token(
+    *,
+    seats: int,
+    runners: int,
+    days: int,
+    plan: str = "paid",
+    schedules: bool = True,
+    detection_as_code: bool = True,
+    reports: bool = True,
+    audit_retention_days: int = 0,
+    daily_test_runs: int = 0,
+) -> str:
+    """Sign and return a license token. Pure aside from reading the local
+    signing key -- no printing, no delivery. Shared by the CLI's `issue`
+    command below and poll_license_issuance.py, so both mint tokens
+    exactly the same way. Raises SigningKeyMissing if `keygen` hasn't been
+    run yet.
+    """
+    if not KEY_PATH.exists():
+        raise SigningKeyMissing(
+            f"No signing key found at {KEY_PATH} -- run 'python scripts/issue_license.py keygen' first."
+        )
+    private_pem = KEY_PATH.read_bytes()
+    now = datetime.now(timezone.utc)
+    claims = {
+        "plan": plan,
+        "seat_limit": None if seats == 0 else seats,
+        "runner_limit": None if runners == 0 else runners,
+        "schedules_enabled": schedules,
+        "detection_as_code_enabled": detection_as_code,
+        "reports_enabled": reports,
+        "audit_retention_days": None if audit_retention_days == 0 else audit_retention_days,
+        "daily_test_run_limit": None if daily_test_runs == 0 else daily_test_runs,
+        "iat": now,
+        "exp": now + timedelta(days=days),
+    }
+    return jwt.encode(claims, private_pem, algorithm="EdDSA")
 
 
 def keygen() -> None:
@@ -154,29 +208,31 @@ def issue(
     daily_test_runs: int,
     deliver_to: str | None,
 ) -> None:
-    if not KEY_PATH.exists():
-        print("No signing key found — run 'python scripts/issue_license.py keygen' first.", file=sys.stderr)
+    try:
+        token = issue_token(
+            seats=seats,
+            runners=runners,
+            days=days,
+            plan=plan,
+            schedules=schedules,
+            detection_as_code=detection_as_code,
+            reports=reports,
+            audit_retention_days=audit_retention_days,
+            daily_test_runs=daily_test_runs,
+        )
+    except SigningKeyMissing as exc:
+        print(str(exc), file=sys.stderr)
         sys.exit(1)
 
-    private_pem = KEY_PATH.read_bytes()
-    now = datetime.now(timezone.utc)
-    claims = {
-        "plan": plan,
-        "seat_limit": None if seats == 0 else seats,
-        "runner_limit": None if runners == 0 else runners,
-        "schedules_enabled": schedules,
-        "detection_as_code_enabled": detection_as_code,
-        "reports_enabled": reports,
-        "audit_retention_days": None if audit_retention_days == 0 else audit_retention_days,
-        "daily_test_run_limit": None if daily_test_runs == 0 else daily_test_runs,
-        "iat": now,
-        "exp": now + timedelta(days=days),
-    }
-    token = jwt.encode(claims, private_pem, algorithm="EdDSA")
     print(token)
 
     if deliver_to:
-        deliver_to_portal(deliver_to, token)
+        try:
+            deliver_to_portal(deliver_to, token)
+        except DeliveryError as exc:
+            print(f"Delivery failed: {exc}", file=sys.stderr)
+            sys.exit(1)
+        print(f"Delivered to portal account {deliver_to} -- they can retrieve it at /my-license now.")
 
 
 def main() -> None:

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
@@ -12,8 +12,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { getTestSchedules, createTestSchedule, updateTestSchedule, deleteTestSchedule, getDetections, getMitreTechniques, type TestSchedule, type Detection, type MitreTechnique, TestRunMode } from "@/lib/api";
 import {
   Calendar, Clock, Pause, Play, Trash2, Plus, RefreshCw, AlertCircle, CheckCircle2,
-  TestTube, FileText
+  TestTube, FileText, ChevronDown, Search
 } from "lucide-react";
+import { cn } from "@/lib/utils";
 import { format, formatRelative, parseISO } from "date-fns";
 import { PageContainer } from "@/components/layout/page-container";
 import { PageHeader } from "@/components/layout/page-header";
@@ -115,6 +116,123 @@ function environmentTone(environment?: string | null): NonNullable<ChipProps["to
     default:
       return "neutral";
   }
+}
+
+// A plain Select doesn't scale once an org has more than a handful of
+// detections -- scrolling a long unfiltered list to find one by eye is the
+// complaint this fixes. Radix's Select primitive doesn't support an
+// embedded search input (it owns keyboard/focus for typeahead), so this is
+// a small standalone combobox instead of forcing search into SelectContent.
+function DetectionCombobox({
+  detections,
+  value,
+  onChange,
+  disabled,
+  invalid,
+}: {
+  detections: Detection[];
+  value: string;
+  onChange: (id: string) => void;
+  disabled?: boolean;
+  invalid?: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const [search, setSearch] = useState("");
+  const rootRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    function onClickOutside(e: MouseEvent) {
+      if (rootRef.current && !rootRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", onClickOutside);
+    return () => document.removeEventListener("mousedown", onClickOutside);
+  }, []);
+
+  const selected = detections.find((d) => d.id === value);
+  const query = search.trim().toLowerCase();
+  const filtered = query
+    ? detections.filter(
+        (d) =>
+          d.title.toLowerCase().includes(query) ||
+          (d.technique_id || "").toLowerCase().includes(query)
+      )
+    : detections;
+
+  return (
+    <div ref={rootRef} className="relative">
+      <button
+        type="button"
+        id="detection"
+        role="combobox"
+        aria-expanded={open}
+        aria-controls="detection-listbox"
+        aria-invalid={invalid}
+        aria-describedby="detection-error"
+        disabled={disabled}
+        onClick={() => setOpen((o) => !o)}
+        className="flex h-10 w-full items-center justify-between rounded-md border border-[var(--stroke-soft)] bg-[var(--surface-elevated)] px-3 py-2 text-sm text-[var(--foreground)] ring-offset-background focus:outline-none focus:ring-2 focus:ring-[var(--accent-line)]/40 focus:ring-offset-0 disabled:cursor-not-allowed disabled:opacity-50"
+      >
+        <span className={selected ? "" : "text-[var(--surface-subtle-foreground)]"}>
+          {selected ? selected.title : "None"}
+        </span>
+        <ChevronDown className="h-4 w-4 opacity-50" />
+      </button>
+
+      {open && (
+        <div id="detection-listbox" role="listbox" className="absolute z-50 mt-1 w-full overflow-hidden rounded-md border border-[var(--stroke-soft)] bg-[var(--surface-card)] shadow-md">
+          <div className="flex items-center gap-2 border-b border-[var(--stroke-soft)] px-2.5">
+            <Search className="h-3.5 w-3.5 shrink-0 text-[var(--surface-subtle-foreground)]" />
+            <input
+              autoFocus
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search detections..."
+              className="h-9 w-full bg-transparent text-sm text-[var(--foreground)] outline-none placeholder:text-[var(--surface-subtle-foreground)]"
+            />
+          </div>
+          <div className="max-h-56 overflow-y-auto p-1">
+            <button
+              type="button"
+              onClick={() => {
+                onChange("none");
+                setOpen(false);
+                setSearch("");
+              }}
+              className="flex w-full items-center rounded-sm px-2 py-1.5 text-left text-sm text-[var(--foreground)] hover:bg-[var(--interactive-surface-hover)]"
+            >
+              None
+            </button>
+            {filtered.length === 0 ? (
+              <p className="px-2 py-2 text-xs text-[var(--surface-subtle-foreground)]">No detections match &quot;{search}&quot;.</p>
+            ) : (
+              filtered.map((d) => (
+                <button
+                  key={d.id}
+                  type="button"
+                  onClick={() => {
+                    onChange(d.id);
+                    setOpen(false);
+                    setSearch("");
+                  }}
+                  className={cn(
+                    "flex w-full items-center justify-between gap-2 rounded-sm px-2 py-1.5 text-left text-sm hover:bg-[var(--interactive-surface-hover)]",
+                    d.id === value ? "bg-[var(--interactive-surface-hover)] text-[var(--foreground)]" : "text-[var(--foreground)]"
+                  )}
+                >
+                  <span className="truncate">{d.title}</span>
+                  {d.technique_id && (
+                    <span className="shrink-0 text-xs text-[var(--surface-subtle-foreground)]">{d.technique_id}</span>
+                  )}
+                </button>
+              ))
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
 }
 
 export default function TestSchedulesPage() {
@@ -340,25 +458,17 @@ export default function TestSchedulesPage() {
                 <div className="grid gap-4 md:grid-cols-2">
                   <div className="space-y-2">
                     <Label htmlFor="detection">Detection (Optional)</Label>
-                    <Select
+                    <DetectionCombobox
+                      detections={detections}
                       value={formDetectionId}
-                      onValueChange={(value) => {
+                      invalid={!!fieldErrors.detectionId}
+                      onChange={(value) => {
                         setFormDetectionId(value);
                         if (fieldErrors.detectionId) {
                           setFieldErrors((prev) => ({ ...prev, detectionId: undefined }));
                         }
                       }}
-                    >
-                      <SelectTrigger id="detection" aria-invalid={!!fieldErrors.detectionId} aria-describedby="detection-error">
-                        <SelectValue placeholder="Select detection" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="none">None</SelectItem>
-                        {detections.map((detection) => (
-                          <SelectItem key={detection.id} value={detection.id}>{detection.title}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                    />
                     <FieldError id="detection-error" message={fieldErrors.detectionId} />
                   </div>
 
@@ -580,7 +690,7 @@ export default function TestSchedulesPage() {
                                 <div className="rounded-md bg-sky-100 p-1.5 dark:bg-sky-500/10">
                                   <FileText className="h-3.5 w-3.5 text-sky-600 dark:text-sky-400" />
                                 </div>
-                                <div className="flex flex-col">
+                                <div className="flex flex-col gap-0.5">
                                   <span className="text-sm font-medium text-[var(--foreground)]">{detection.title}</span>
                                   <span className="text-xs text-[var(--surface-subtle-foreground)]">{detection.technique_id || "No technique"}</span>
                                 </div>
@@ -590,7 +700,7 @@ export default function TestSchedulesPage() {
                                 <div className="rounded-md bg-violet-100 p-1.5 dark:bg-violet-500/10">
                                   <TestTube className="h-3.5 w-3.5 text-violet-600 dark:text-violet-400" />
                                 </div>
-                                <div className="flex flex-col">
+                                <div className="flex flex-col gap-0.5">
                                   <span className="text-sm font-medium text-[var(--foreground)]">{schedule.technique_id}</span>
                                   <span className="text-xs text-[var(--surface-subtle-foreground)]">MITRE Technique</span>
                                 </div>

@@ -581,7 +581,17 @@ async def invite_user(
         )
         await session.commit()
 
-    return {"message": "Invite sent", "user_id": user.id, "email": user.email}
+    return {
+        "message": "Invite sent" if sent else "Invite created, but the email could not be sent",
+        "user_id": user.id,
+        "email": user.email,
+        "email_sent": sent,
+        # Only included when delivery failed -- the admin needs a way to get
+        # this person activated without waiting on an email that isn't
+        # coming. Omitted on the happy path so it's not sitting in every
+        # response for no reason.
+        "invite_link": None if sent else invite_link,
+    }
 
 
 class SetUserStatusRequest(BaseModel):

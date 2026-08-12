@@ -39,3 +39,6 @@ tmp-start-*.log
 
 # License signing private key (scripts/issue_license.py) — never commit this
 backend/.license_signing_key.pem
+
+# License poller's local log (scripts/run_poller.ps1)
+backend/.license_poller.log

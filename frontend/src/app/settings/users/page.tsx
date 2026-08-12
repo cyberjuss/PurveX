@@ -11,9 +11,9 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { getUsers, getUserRoles, assignRole, removeRole, listRoles, setUserPassword, setUserActive, apiFetch } from "@/lib/api";
 import { usePermissions } from "@/hooks/usePermissions";
 import { Permission, ROLE_GUIDANCE, Role } from "@/lib/permissions";
-import { 
-  Search, UserPlus, Shield, Key, Users, Filter, CheckCircle2, XCircle, Clock, 
-  Download, AlertCircle, Mail, Calendar, X, Loader2
+import {
+  Search, UserPlus, Shield, Key, Users, Filter, CheckCircle2, XCircle, Clock,
+  Download, AlertCircle, Mail, Calendar, X, Loader2, Copy
 } from "lucide-react";
 import { format, formatRelative } from "date-fns";
 import { cn } from "@/lib/utils";
@@ -115,6 +115,12 @@ export default function UserManagementPage() {
   const [newUserEmail, setNewUserEmail] = useState("");
   const [creatingUser, setCreatingUser] = useState(false);
   const [inviteFieldErrors, setInviteFieldErrors] = useState<{ email?: string }>({});
+  // Set only when the invite was created but the activation email couldn't
+  // actually be delivered (e.g. SMTP isn't configured) -- the API call
+  // itself still succeeds either way, so this is the one place that tells
+  // the admin "don't wait for an email that isn't coming."
+  const [inviteLinkFallback, setInviteLinkFallback] = useState<string | null>(null);
+  const [inviteLinkCopied, setInviteLinkCopied] = useState(false);
   const [viewUserDetails, setViewUserDetails] = useState<number | null>(null);
   const fetchUsers = async () => {
       try {
@@ -301,13 +307,19 @@ export default function UserManagementPage() {
       setError(null);
       setErrorIsUpgrade(false);
       setInviteFieldErrors({});
-      await apiFetch("/rbac/users/invite", {
+      const result = (await apiFetch("/rbac/users/invite", {
         method: "POST",
         body: JSON.stringify({ email: parsed.data.email }),
-      });
-      setCreateUserOpen(false);
-      setNewUserEmail("");
+      })) as { email_sent: boolean; invite_link: string | null };
       await fetchUsers();
+      if (result.email_sent) {
+        setCreateUserOpen(false);
+        setNewUserEmail("");
+      } else {
+        // Leave the dialog open with the fallback link instead of closing
+        // on a delivery failure the admin has no other way of noticing.
+        setInviteLinkFallback(result.invite_link);
+      }
     } catch (err: unknown) {
       setError(getErrorMessage(err, "Failed to send invite."));
       setErrorIsUpgrade(isUpgradeRequiredError(err));
@@ -385,7 +397,17 @@ export default function UserManagementPage() {
         </span>
       }
       actions={
-        <Dialog open={createUserOpen} onOpenChange={setCreateUserOpen}>
+        <Dialog
+          open={createUserOpen}
+          onOpenChange={(open) => {
+            setCreateUserOpen(open);
+            if (!open) {
+              setNewUserEmail("");
+              setInviteLinkFallback(null);
+              setInviteLinkCopied(false);
+            }
+          }}
+        >
           <DialogTrigger asChild>
             <Button size="sm" className="whitespace-nowrap">
               <UserPlus className="mr-2 h-4 w-4" />
@@ -399,27 +421,58 @@ export default function UserManagementPage() {
                 Invite member
               </DialogTitle>
               <DialogDescription>
-                We will email an activation link so they can set their own password.
+                {inviteLinkFallback
+                  ? "The account was created, but the activation email could not be sent."
+                  : "We will email an activation link so they can set their own password."}
               </DialogDescription>
             </DialogHeader>
             <div className="space-y-4 py-4">
-              <div className="space-y-1.5">
-                <Label htmlFor="new-email">Email</Label>
-                <Input
-                  id="new-email"
-                  type="email"
-                  value={newUserEmail}
-                  onChange={(e) => {
-                    setNewUserEmail(e.target.value);
-                    if (inviteFieldErrors.email)
-                      setInviteFieldErrors((prev) => ({ ...prev, email: undefined }));
-                  }}
-                  placeholder="user@example.com"
-                  aria-invalid={!!inviteFieldErrors.email}
-                  aria-describedby="new-email-error"
-                />
-                <FieldError id="new-email-error" message={inviteFieldErrors.email} />
-              </div>
+              {inviteLinkFallback ? (
+                <>
+                  <SettingsBanner tone="warning" title="Email not sent">
+                    SMTP isn&apos;t configured on this instance (or the send failed), so {newUserEmail || "they"} won&apos;t
+                    get an email. Share this activation link with them directly &mdash; it works the same way and expires in 7 days.
+                  </SettingsBanner>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="invite-link-fallback">Activation link</Label>
+                    <div className="flex gap-2">
+                      <Input id="invite-link-fallback" readOnly value={inviteLinkFallback} className="font-mono text-xs" />
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="icon"
+                        onClick={() => {
+                          navigator.clipboard?.writeText(inviteLinkFallback).then(() => {
+                            setInviteLinkCopied(true);
+                            setTimeout(() => setInviteLinkCopied(false), 1800);
+                          });
+                        }}
+                        aria-label="Copy activation link"
+                      >
+                        {inviteLinkCopied ? <CheckCircle2 className="h-4 w-4 text-emerald-500" /> : <Copy className="h-4 w-4" />}
+                      </Button>
+                    </div>
+                  </div>
+                </>
+              ) : (
+                <div className="space-y-1.5">
+                  <Label htmlFor="new-email">Email</Label>
+                  <Input
+                    id="new-email"
+                    type="email"
+                    value={newUserEmail}
+                    onChange={(e) => {
+                      setNewUserEmail(e.target.value);
+                      if (inviteFieldErrors.email)
+                        setInviteFieldErrors((prev) => ({ ...prev, email: undefined }));
+                    }}
+                    placeholder="user@example.com"
+                    aria-invalid={!!inviteFieldErrors.email}
+                    aria-describedby="new-email-error"
+                  />
+                  <FieldError id="new-email-error" message={inviteFieldErrors.email} />
+                </div>
+              )}
               {error && errorIsUpgrade ? (
                 <UpgradeBanner message={error} />
               ) : (
@@ -427,30 +480,46 @@ export default function UserManagementPage() {
               )}
             </div>
             <DialogFooter className="gap-2">
-              <Button
-                variant="outline"
-                onClick={() => setCreateUserOpen(false)}
-                className="flex-1"
-              >
-                Cancel
-              </Button>
-              <Button
-                onClick={handleCreateUser}
-                disabled={creatingUser}
-                className="flex-1"
-              >
-                {creatingUser ? (
-                  <>
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    Sending…
-                  </>
-                ) : (
-                  <>
-                    <UserPlus className="mr-2 h-4 w-4" />
-                    Send invite
-                  </>
-                )}
-              </Button>
+              {inviteLinkFallback ? (
+                <Button
+                  onClick={() => {
+                    setCreateUserOpen(false);
+                    setNewUserEmail("");
+                    setInviteLinkFallback(null);
+                    setInviteLinkCopied(false);
+                  }}
+                  className="flex-1"
+                >
+                  Done
+                </Button>
+              ) : (
+                <>
+                  <Button
+                    variant="outline"
+                    onClick={() => setCreateUserOpen(false)}
+                    className="flex-1"
+                  >
+                    Cancel
+                  </Button>
+                  <Button
+                    onClick={handleCreateUser}
+                    disabled={creatingUser}
+                    className="flex-1"
+                  >
+                    {creatingUser ? (
+                      <>
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                        Sending…
+                      </>
+                    ) : (
+                      <>
+                        <UserPlus className="mr-2 h-4 w-4" />
+                        Send invite
+                      </>
+                    )}
+                  </Button>
+                </>
+              )}
             </DialogFooter>
           </DialogContent>
         </Dialog>
