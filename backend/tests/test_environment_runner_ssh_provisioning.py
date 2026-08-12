@@ -179,3 +179,49 @@ def test_atomic_runner_returns_none_without_encrypted_key():
     from app.services.atomic_runner import _load_runner_pkey
 
     assert _load_runner_pkey({"key_path": "/opt/purvex/id_ed25519"}) is None
+
+
+@pytest.mark.asyncio
+async def test_agent_registration_token_rejected_as_general_credential(runner_context):
+    """An agent-registration token is meant to be embedded in a downloadable
+    script and run on a separate, less-trusted machine. It must not double
+    as a full admin session usable against arbitrary endpoints -- only
+    create_environment_runner (via get_current_user_allow_agent_registration)
+    may accept it.
+    """
+    from app.routers import settings as settings_router
+    from app.routers.auth import get_current_user
+    from fastapi import HTTPException
+
+    session, admin = runner_context
+
+    token_response = await settings_router.generate_agent_registration_token(
+        db=session, current_user=admin,
+    )
+    registration_token = token_response["token"]
+
+    with pytest.raises(HTTPException) as exc_info:
+        await get_current_user(
+            request=_fake_request(bearer_token=registration_token),
+            db=session,
+        )
+    assert exc_info.value.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_agent_registration_token_accepted_for_runner_creation_only(runner_context):
+    from app.routers import settings as settings_router
+    from app.routers.auth import get_current_user_allow_agent_registration
+
+    session, admin = runner_context
+
+    token_response = await settings_router.generate_agent_registration_token(
+        db=session, current_user=admin,
+    )
+    registration_token = token_response["token"]
+
+    user = await get_current_user_allow_agent_registration(
+        request=_fake_request(bearer_token=registration_token),
+        db=session,
+    )
+    assert user.id == admin.id

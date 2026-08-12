@@ -85,9 +85,11 @@ async def _ensure_admin_role(db: AsyncSession, user: models.User, org_id: int) -
     await db.commit()
 
 
-async def get_current_user(
+async def _authenticate_request(
     request: Request,
     db: DBSession,
+    *,
+    allow_agent_registration: bool = False,
 ) -> models.User:
     # Prefer httpOnly cookie for auth; fall back to Authorization header for
     # tooling / Swagger compatibility.
@@ -120,6 +122,22 @@ async def get_current_user(
     # rejecting any such claim here is safe and closes the bypass without
     # affecting those flows.
     if payload.get("purpose"):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Could not validate credentials",
+        )
+
+    # SECURITY: agent-registration tokens (settings.generate_agent_registration_token)
+    # are the same kind of single-purpose token, minted so they can be
+    # embedded in a downloadable script and run on a separate, less-trusted
+    # machine. Without this check they decode as an ordinary session for
+    # whichever admin generated them and remain usable as a general Bearer
+    # credential for their full TTL, on any endpoint, even after being
+    # consumed to register a runner. Only
+    # get_current_user_allow_agent_registration opts back in, for the one
+    # endpoint that legitimately needs to accept them as a credential
+    # (settings.create_environment_runner).
+    if payload.get("agent_registration") and not allow_agent_registration:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Could not validate credentials",
@@ -200,6 +218,25 @@ async def get_current_user(
         await db.refresh(user)
 
     return user
+
+
+async def get_current_user(
+    request: Request,
+    db: DBSession,
+) -> models.User:
+    return await _authenticate_request(request, db)
+
+
+async def get_current_user_allow_agent_registration(
+    request: Request,
+    db: DBSession,
+) -> models.User:
+    """Same identity resolution as get_current_user, but also accepts a
+    still-valid agent-registration token. Use only for endpoints that must
+    be callable using nothing but that token -- currently just
+    settings.create_environment_runner, which is what the downloadable
+    runner-installer script calls."""
+    return await _authenticate_request(request, db, allow_agent_registration=True)
 
 
 CurrentUser = Annotated[models.User, Depends(get_current_user)]

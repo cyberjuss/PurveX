@@ -12,7 +12,7 @@ import json
 
 from ..db import get_db, async_sessionmaker
 from .. import models, schemas
-from ..routers.auth import get_current_user
+from ..routers.auth import get_current_user, get_current_user_allow_agent_registration
 from ..utils.tenant import require_org_id
 from ..utils.authz import require_permission, Permission
 from ..utils.encryption import encrypt_value, decrypt_value
@@ -28,6 +28,12 @@ router = APIRouter(
 
 DBSession = Annotated[AsyncSession, Depends(get_db)]
 CurrentUser = Annotated[models.User, Depends(get_current_user)]
+# SECURITY: only for create_environment_runner, the one endpoint the
+# downloadable runner-installer script calls using nothing but a freshly
+# minted agent-registration token as its credential. Every other endpoint
+# must keep using CurrentUser, which now rejects that token type outright --
+# see the SECURITY comment on auth._authenticate_request for why.
+CurrentUserOrAgentToken = Annotated[models.User, Depends(get_current_user_allow_agent_registration)]
 
 # Helper function to convert JSON strings to/from Python lists/dicts
 def serialize_json_column(data):
@@ -888,7 +894,7 @@ async def create_environment_runner(
     request: Request,
     runner_create: schemas.EnvironmentRunnerConfigCreate,
     db: DBSession,
-    current_user: CurrentUser,
+    current_user: CurrentUserOrAgentToken,
 ):
     await require_permission(current_user, Permission.SETTINGS_RUNNERS_MANAGE, db, request)
     user_id, user_email = safe_user_identity(current_user)
