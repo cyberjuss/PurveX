@@ -17,6 +17,12 @@ FRONTEND_DIR="${ROOT_DIR}/frontend"
 LOG_DIR="${ROOT_DIR}/.purvex/logs"
 BACKEND_PORT="${BACKEND_PORT:-8001}"
 FRONTEND_PORT="${FRONTEND_PORT:-1120}"
+# Loopback-only by default -- deliberately not exposed to the network unless
+# the operator opts in. Set PURVEX_HOST=0.0.0.0 to reach PurveX from another
+# machine (e.g. a VM on the same host). CORS already permits private-LAN
+# origins (10.x/192.168.x) in dev mode (config.py's CORS_ALLOW_ORIGIN_REGEX),
+# so this is the only change needed for that -- no CORS/env changes required.
+PURVEX_HOST="${PURVEX_HOST:-127.0.0.1}"
 MIN_PYTHON="3.11"
 MIN_NODE="20"
 
@@ -51,6 +57,22 @@ print_urls() {
   info "Web: ${web}"
   info "API: ${api}"
   printf "\n"
+}
+
+# The address to show the operator for the printed Web/API URLs. 127.0.0.1
+# is browsable as-is; PURVEX_HOST=0.0.0.0 (bind-all, for reaching PurveX from
+# another machine) is not a real address to visit, so show the machine's
+# actual LAN IP instead when it's been overridden -- falling back to
+# PURVEX_HOST itself if detection doesn't work (e.g. on macOS, where
+# `hostname -I` isn't available).
+display_host() {
+  if [ "${PURVEX_HOST}" = "127.0.0.1" ]; then
+    echo "127.0.0.1"
+    return
+  fi
+  local lan_ip
+  lan_ip="$(hostname -I 2>/dev/null | awk '{print $1}')"
+  echo "${lan_ip:-${PURVEX_HOST}}"
 }
 
 # ── Dependency checks ────────────────────────────────────────────────────────
@@ -730,9 +752,9 @@ start_backend() {
 
   local uvicorn_level="${UVICORN_LOG_LEVEL:-warning}"
   if [ "${PURVEX_ATTACH_STARTUP_LOGS:-0}" = "1" ] || [ -z "${BACKEND_LOG_FILE}" ]; then
-    uvicorn app.main:app --host 127.0.0.1 --port "${BACKEND_PORT}" --log-level "${uvicorn_level}" &
+    uvicorn app.main:app --host "${PURVEX_HOST}" --port "${BACKEND_PORT}" --log-level "${uvicorn_level}" &
   else
-    uvicorn app.main:app --host 127.0.0.1 --port "${BACKEND_PORT}" --log-level "${uvicorn_level}" \
+    uvicorn app.main:app --host "${PURVEX_HOST}" --port "${BACKEND_PORT}" --log-level "${uvicorn_level}" \
       >>"${BACKEND_LOG_FILE}" 2>&1 &
   fi
   BACKEND_PID=$!
@@ -761,9 +783,9 @@ start_frontend() {
   fi
 
   if [ "${PURVEX_ATTACH_STARTUP_LOGS:-0}" = "1" ] || [ -z "${FRONTEND_LOG_FILE}" ]; then
-    PORT="${FRONTEND_PORT}" npx next start -p "${FRONTEND_PORT}" -H 127.0.0.1 &
+    PORT="${FRONTEND_PORT}" npx next start -p "${FRONTEND_PORT}" -H "${PURVEX_HOST}" &
   else
-    PORT="${FRONTEND_PORT}" npx next start -p "${FRONTEND_PORT}" -H 127.0.0.1 \
+    PORT="${FRONTEND_PORT}" npx next start -p "${FRONTEND_PORT}" -H "${PURVEX_HOST}" \
       >>"${FRONTEND_LOG_FILE}" 2>&1 &
   fi
   FRONTEND_PID=$!
@@ -776,7 +798,7 @@ start_frontend_dev() {
   fi
 
   rm -rf .next
-  npx next dev --webpack -p "${FRONTEND_PORT}" -H 127.0.0.1 &
+  npx next dev --webpack -p "${FRONTEND_PORT}" -H "${PURVEX_HOST}" &
   FRONTEND_PID=$!
 }
 
@@ -825,7 +847,7 @@ run_dev() {
   start_frontend_dev
   unset PURVEX_QUIET_RUNTIME
 
-  print_urls "http://127.0.0.1:${BACKEND_PORT}" "http://127.0.0.1:${FRONTEND_PORT}"
+  print_urls "http://$(display_host):${BACKEND_PORT}" "http://$(display_host):${FRONTEND_PORT}"
 
   wait
 }
@@ -873,7 +895,7 @@ run_start() {
   fi
   unset PURVEX_QUIET_RUNTIME
 
-  print_urls "http://127.0.0.1:${BACKEND_PORT}" "http://127.0.0.1:${FRONTEND_PORT}"
+  print_urls "http://$(display_host):${BACKEND_PORT}" "http://$(display_host):${FRONTEND_PORT}"
   print_log_paths
 
   wait
