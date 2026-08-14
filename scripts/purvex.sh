@@ -362,10 +362,42 @@ start_postgres_service() {
 # of the actual fix. Only touches the service when DATABASE_URL points at
 # the local instance this script manages -- never for a remote/managed DB
 # (e.g. Supabase) someone may have pointed it at instead.
+#
+# start_postgres_service swallows systemctl's exit code (it's also called
+# from setup_database, where a failure there isn't necessarily fatal) --
+# so this actually verifies the port comes up afterward instead of assuming
+# "ran the command" means "it worked", and surfaces systemctl's own status
+# output if it didn't, rather than letting it fail later as an opaque
+# asyncpg ConnectionRefusedError with no indication of the real cause.
 ensure_local_postgres_running() {
   case "${DATABASE_URL:-}" in
-    *127.0.0.1*|*localhost*) start_postgres_service ;;
+    *127.0.0.1*|*localhost*) ;;
+    *) return 0 ;;
   esac
+
+  postgres_port_open() {
+    if command -v pg_isready >/dev/null 2>&1; then
+      pg_isready -h 127.0.0.1 -p 5432 -q 2>/dev/null
+    else
+      ! can_bind_port 5432
+    fi
+  }
+
+  postgres_port_open && return 0
+
+  start_postgres_service
+
+  local attempt
+  for attempt in $(seq 1 10); do
+    postgres_port_open && return 0
+    sleep 1
+  done
+
+  warn "PostgreSQL does not appear to be running on 127.0.0.1:5432."
+  if command -v systemctl >/dev/null 2>&1; then
+    systemctl status postgresql --no-pager 2>&1 | head -20 || true
+  fi
+  fail "Could not start PostgreSQL. Fix the error above, or start it manually, then re-run --start."
 }
 
 # PostgreSQL is the required backend -- SQLite is not supported. This
