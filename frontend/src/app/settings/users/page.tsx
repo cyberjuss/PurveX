@@ -430,8 +430,7 @@ export default function UserManagementPage() {
               {inviteLinkFallback ? (
                 <>
                   <SettingsBanner tone="warning" title="Email not sent">
-                    SMTP isn&apos;t configured on this instance (or the send failed), so {newUserEmail || "they"} won&apos;t
-                    get an email. Share this activation link with them directly &mdash; it works the same way and expires in 7 days.
+                    {`SMTP isn't configured on this instance (or the send failed), so ${newUserEmail || "they"} won't get an email. Share this activation link with them directly — it works the same way and expires in 7 days.`}
                   </SettingsBanner>
                   <div className="space-y-1.5">
                     <Label htmlFor="invite-link-fallback">Activation link</Label>

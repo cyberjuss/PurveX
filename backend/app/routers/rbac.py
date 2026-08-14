@@ -1,6 +1,7 @@
 """
 RBAC API endpoints for role and permission management.
 """
+import re
 from typing import List, Optional
 from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -449,6 +450,31 @@ async def set_user_password(
     return {"message": "Password updated successfully"}
 
 
+def _derive_username_from_email(email: str) -> str:
+    """First initial + last name from the email's local part, e.g.
+    jane.doe@x.com -> jdoe. Falls back to the full local part when it has
+    no name-like separator to split on (e.g. jduru213@gmail.com), since
+    there's no first/last name to derive from an address like that.
+    """
+    local_part = email.split("@", 1)[0]
+    name_parts = [p for p in re.split(r"[._\-+]+", local_part) if p]
+    if len(name_parts) >= 2:
+        return (name_parts[0][0] + name_parts[-1]).lower()
+    return local_part
+
+
+async def _unique_username(db: DBSession, base: str) -> str:
+    """base, or base2/base3/... if base is already taken."""
+    candidate = base
+    suffix = 1
+    while True:
+        existing = await db.execute(select(models.User.id).where(models.User.username == candidate))
+        if existing.scalar_one_or_none() is None:
+            return candidate
+        suffix += 1
+        candidate = f"{base}{suffix}"
+
+
 class InviteUserRequest(BaseModel):
     email: str
     username: Optional[str] = None
@@ -518,7 +544,9 @@ async def invite_user(
                 )
             raise HTTPException(status_code=402, detail=detail)
 
-    username = (payload.username or email.split("@")[0]).strip() or None
+    requested_username = (payload.username or "").strip()
+    base_username = requested_username or _derive_username_from_email(email)
+    username = await _unique_username(db, base_username) if base_username else None
 
     import secrets as _secrets
 
