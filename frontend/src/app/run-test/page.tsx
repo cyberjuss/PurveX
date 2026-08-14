@@ -641,7 +641,7 @@ function RunTestPageContent() {
         <TestsHubTabs />
       </div>
 
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_420px]">
+      <div className="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,1fr)_420px]">
         {/* Left pane: pick what to test */}
         <div className="space-y-4">
           <ModePickerStep value={testType} onSelect={handleSelectMode} />
@@ -701,7 +701,7 @@ function RunTestPageContent() {
         </div>
 
         {/* Right pane: run configuration, builds up live as selections are made */}
-        <div className="lg:sticky lg:top-20 lg:self-start lg:max-h-[calc(100vh-5.5rem)] lg:overflow-y-auto space-y-4">
+        <div className="xl:sticky xl:top-20 xl:self-start xl:max-h-[calc(100vh-5.5rem)] xl:overflow-y-auto space-y-4">
           {!testType ? (
             <div className="rounded-2xl border border-dashed border-[var(--stroke-soft)] bg-[var(--surface-elevated)] p-8 text-center">
               <Target className="mx-auto h-8 w-8 text-[var(--surface-subtle-foreground)]" />
