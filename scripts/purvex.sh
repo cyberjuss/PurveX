@@ -241,13 +241,25 @@ env_var_is_set() {
 set_env_var() {
   local key="$1"
   local value="$2"
-  if grep -qE "^${key}=" "${ROOT_DIR}/.env" 2>/dev/null; then
-    # -i.bak suffix form works on both GNU sed (Linux/Git Bash) and BSD sed
-    # (macOS) without needing an OS check.
-    sed -i.bak "s|^${key}=.*|${key}=${value}|" "${ROOT_DIR}/.env" && rm -f "${ROOT_DIR}/.env.bak"
-  else
-    printf '%s=%s\n' "${key}" "${value}" >>"${ROOT_DIR}/.env"
+  # load_env sources .env as real shell code (`. .env`), so a raw,
+  # unquoted value containing $, `, #, or a space gets silently mangled or
+  # misinterpreted on the next load -- e.g. a password of `my$pass` becomes
+  # just `my` with no error at all. Single-quote the value (escaping any
+  # embedded single quotes the standard way: close, escaped literal quote,
+  # reopen) so sourcing always treats it as a literal string. Built via
+  # intermediate variables, not inline backslashes in the expansion itself --
+  # the latter does not escape the way it looks like it should.
+  local q="'"
+  local bs="\\"
+  local esc_quote="${q}${bs}${q}${q}"
+  local escaped=${value//\'/$esc_quote}
+  local tmp
+  tmp="$(mktemp)"
+  if [ -f "${ROOT_DIR}/.env" ]; then
+    grep -vE "^${key}=" "${ROOT_DIR}/.env" >"${tmp}" || true
   fi
+  printf "%s='%s'\n" "${key}" "${escaped}" >>"${tmp}"
+  mv "${tmp}" "${ROOT_DIR}/.env"
 }
 
 ensure_env_file() {
