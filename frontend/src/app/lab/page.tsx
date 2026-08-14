@@ -394,15 +394,6 @@ function LabPageContent() {
     ).length;
   }, [endpoints]);
 
-  const latestCheckInCount = useMemo(() => {
-    return endpoints.filter((endpoint) => {
-      if (!endpoint.lastCheckInAt) return false;
-      return Date.now() - new Date(endpoint.lastCheckInAt).getTime() <= 15 * 60 * 1000;
-    }).length;
-  }, [endpoints]);
-
-  const attentionCount = statusCounts.degraded + statusCounts.unknown;
-
   const currentTestStatus = (currentTest?.status || "pending").toLowerCase();
   const currentTestProgress =
     currentTestStatus === "running" ? 62 : currentTestStatus === "pending" ? 24 : 100;
@@ -635,26 +626,6 @@ function LabPageContent() {
           </button>
         </div>
       ) : null}
-
-      {/* Stat tiles. */}
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-        <StatTile
-          icon={<HardDrive className="h-4 w-4" />}
-          value={filteredEndpoints.length}
-          label="in scope"
-        />
-        <StatTile
-          icon={<Activity className="h-4 w-4" />}
-          value={latestCheckInCount}
-          label="live heartbeat"
-        />
-        <StatTile
-          icon={<AlertTriangle className="h-4 w-4" />}
-          value={attentionCount}
-          label="needs eyes"
-          warning={attentionCount > 0}
-        />
-      </div>
 
       {/* Search + status tabs + triage toggle. */}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -1171,44 +1142,6 @@ export default function LabPage() {
     <Suspense fallback={<div className="min-h-screen bg-[var(--background)]" />}>
       <LabPageContent />
     </Suspense>
-  );
-}
-
-/**
- * Metric stat tile — icon box + value + label, matching the recipe used on
- * /dashboard's stats grid.
- */
-function StatTile({
-  icon,
-  value,
-  label,
-  warning,
-}: {
-  icon: React.ReactNode;
-  value: number;
-  label: string;
-  warning?: boolean;
-}) {
-  return (
-    <div
-      className={cn(
-        "flex items-center gap-3 rounded-xl border border-[var(--stroke-soft)] bg-[var(--surface-elevated)] p-3 shadow-sm transition-colors hover:border-[var(--accent-line)]",
-        warning && "border-amber-500/30",
-      )}
-    >
-      <span
-        className={cn(
-          "flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-[var(--stroke-soft)] bg-[var(--surface-subtle)] text-[var(--accent-strong)]",
-          warning && "text-amber-500",
-        )}
-      >
-        {icon}
-      </span>
-      <div>
-        <p className="font-display text-2xl font-bold text-[var(--foreground)]">{value}</p>
-        <p className="text-[11px] text-[var(--surface-subtle-foreground)]">{label}</p>
-      </div>
-    </div>
   );
 }
 
