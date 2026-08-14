@@ -29,9 +29,9 @@ const loginSchema = z.object({
 
 type LoginFieldErrors = Partial<Record<"username" | "password", string>>;
 
-const LOCKOUT_WINDOW_MS = 10 * 60 * 1000;
-const LOCKOUT_DURATION_MS = 5 * 60 * 1000;
-const LOCKOUT_MAX_ATTEMPTS = 5;
+const LOCKOUT_WINDOW_MS = 5 * 60 * 1000;
+const LOCKOUT_DURATION_MS = 1 * 60 * 1000;
+const LOCKOUT_MAX_ATTEMPTS = 15;
 
 type ErrorKind = "network" | "auth" | "session" | "generic";
 
