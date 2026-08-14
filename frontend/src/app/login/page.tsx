@@ -29,10 +29,6 @@ const loginSchema = z.object({
 
 type LoginFieldErrors = Partial<Record<"username" | "password", string>>;
 
-const LOCKOUT_WINDOW_MS = 5 * 60 * 1000;
-const LOCKOUT_DURATION_MS = 1 * 60 * 1000;
-const LOCKOUT_MAX_ATTEMPTS = 15;
-
 type ErrorKind = "network" | "auth" | "session" | "generic";
 
 async function checkBackendHealthWithFallback(apiBases: string[]): Promise<boolean> {
@@ -58,7 +54,6 @@ function LoginPageContent() {
   const [showPassword, setShowPassword] = useState(false);
   const [capsLockOn, setCapsLockOn] = useState(false);
   const [isReturning, setIsReturning] = useState(false);
-  const [lockoutUntil, setLockoutUntil] = useState<number | null>(null);
   const [backendStatus, setBackendStatus] = useState<"checking" | "online" | "offline">("checking");
   const [fieldErrors, setFieldErrors] = useState<LoginFieldErrors>({});
 
@@ -109,39 +104,9 @@ function LoginPageContent() {
     };
   }, [router]);
 
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    const now = Date.now();
-    const raw = window.localStorage.getItem("purvex_login_failures") || "[]";
-    const entries: number[] = JSON.parse(raw).filter((ts: number) => now - ts < LOCKOUT_WINDOW_MS);
-    if (entries.length) window.localStorage.setItem("purvex_login_failures", JSON.stringify(entries));
-    const storedLockout = window.localStorage.getItem("purvex_login_lockout_until");
-    const until = storedLockout ? Number(storedLockout) : null;
-    if (until && !Number.isNaN(until) && now < until) {
-      setLockoutUntil(until);
-      return;
-    }
-    if (storedLockout) window.localStorage.removeItem("purvex_login_lockout_until");
-    setLockoutUntil(null);
-  }, []);
-
   const handleCapsLockCheck = (e: React.KeyboardEvent<HTMLInputElement>) => {
     const capsLock = e.getModifierState?.("CapsLock");
     if (typeof capsLock === "boolean") setCapsLockOn(capsLock);
-  };
-
-  const registerLoginFailure = () => {
-    if (typeof window === "undefined") return;
-    const now = Date.now();
-    const raw = window.localStorage.getItem("purvex_login_failures") || "[]";
-    const entries: number[] = JSON.parse(raw).filter((ts: number) => now - ts < LOCKOUT_WINDOW_MS);
-    entries.push(now);
-    window.localStorage.setItem("purvex_login_failures", JSON.stringify(entries));
-    if (entries.length >= LOCKOUT_MAX_ATTEMPTS) {
-      const until = now + LOCKOUT_DURATION_MS;
-      window.localStorage.setItem("purvex_login_lockout_until", String(until));
-      setLockoutUntil(until);
-    }
   };
 
   function setErrorState(msg: string, kind: ErrorKind = "generic") {
@@ -163,10 +128,6 @@ function LoginPageContent() {
     const formData = new FormData(e.currentTarget as HTMLFormElement);
     const submittedUsername = String(formData.get("username") || "").trim();
     const submittedPassword = String(formData.get("password") || "");
-    if (lockoutUntil && Date.now() < lockoutUntil) {
-      setErrorState("Too many login attempts. Please wait 5 minutes.", "auth");
-      return;
-    }
 
     const parsed = loginSchema.safeParse({
       username: submittedUsername,
@@ -226,9 +187,6 @@ function LoginPageContent() {
       try {
         if (typeof window !== "undefined") {
           window.localStorage.setItem("purvex_username", submittedUsername);
-          window.localStorage.removeItem("purvex_login_failures");
-          window.localStorage.removeItem("purvex_login_lockout_until");
-          setLockoutUntil(null);
           window.localStorage.setItem(
             "purvex_seen_login",
             typeof data.is_first_login === "boolean" ? (data.is_first_login ? "0" : "1") : "1",
@@ -242,7 +200,6 @@ function LoginPageContent() {
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : "";
       const name = err instanceof Error ? err.name : "";
-      registerLoginFailure();
       if (message === "Failed to fetch" || name === "TypeError") {
         setBackendStatus("offline");
         setErrorState("Cannot connect to the backend server. Ensure it is running and try again.", "network");
@@ -276,8 +233,6 @@ function LoginPageContent() {
     }
     return "/dashboard";
   }
-
-  const isLocked = !!(lockoutUntil && Date.now() < lockoutUntil);
 
   return (
     <div className="flex min-h-screen flex-col bg-background text-foreground">
@@ -320,7 +275,7 @@ function LoginPageContent() {
                         setFieldErrors((prev) => ({ ...prev, username: undefined }));
                       }
                     }}
-                    disabled={phase === "auth" || isLocked}
+                    disabled={phase === "auth"}
                     aria-invalid={!!fieldErrors.username}
                     aria-describedby="login-username-error"
                     className={FIELD_CLASSNAME}
@@ -359,7 +314,7 @@ function LoginPageContent() {
                     }}
                     onKeyDown={handleCapsLockCheck}
                     onKeyUp={handleCapsLockCheck}
-                    disabled={phase === "auth" || isLocked}
+                    disabled={phase === "auth"}
                     aria-invalid={!!fieldErrors.password}
                     aria-describedby="login-password-error"
                     className={`${FIELD_CLASSNAME} pr-11`}
@@ -426,7 +381,7 @@ function LoginPageContent() {
 
               <button
                 type="submit"
-                disabled={phase === "auth" || isLocked}
+                disabled={phase === "auth"}
                 className={`flex h-12 w-full items-center justify-center gap-2 rounded-lg text-base font-medium transition disabled:cursor-not-allowed disabled:opacity-50 ${PRIMARY_BUTTON_CLASSNAME}`}
               >
                 {phase === "auth" ? (
@@ -434,8 +389,6 @@ function LoginPageContent() {
                     <Loader2 className="h-4 w-4 animate-spin" />
                     Authenticating
                   </>
-                ) : isLocked ? (
-                  "Locked — try again later"
                 ) : (
                   "Sign in"
                 )}
