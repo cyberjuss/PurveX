@@ -88,7 +88,7 @@ set -e
 API_URL="${apiUrl}"
 PUBLIC_KEY="${publicKey}"
 TOKEN_PLACEHOLDER="__PURVEX_TOKEN_PLACEHOLDER__"
-API_TOKEN="${"${PURVEX_API_TOKEN:-__PURVEX_TOKEN_VALUE__}"}"
+API_TOKEN="${"${PURVEX_API_TOKEN:-__PURVEX_TOKEN_PLACEHOLDER__}"}"
 ENV="lab"
 HOSTNAME=""
 PORT="22"
@@ -434,7 +434,7 @@ fi`;
 param(
     [string]$ApiUrl = "${apiUrl}",
     [string]$PublicKey = "${publicKey}",
-    [string]$Token = "__PURVEX_TOKEN_VALUE__",
+    [string]$Token = $(if ($env:PURVEX_API_TOKEN) { $env:PURVEX_API_TOKEN } else { "__PURVEX_TOKEN_PLACEHOLDER__" }),
     [string]$Env = "lab",
     [string]$Hostname = $env:COMPUTERNAME,
     [int]$Port = 22,
@@ -954,7 +954,7 @@ def main():
     parser = argparse.ArgumentParser(description="Register this machine as a PurveX test runner agent")
     parser.add_argument('--api-url', default=os.getenv('PURVEX_API_URL', '${apiUrl}'), help='PurveX API base URL')
     token_placeholder = "__PURVEX_TOKEN_PLACEHOLDER__"
-    parser.add_argument('--token', default=os.getenv('PURVEX_API_TOKEN', "__PURVEX_TOKEN_VALUE__"), help='Registration token (required)')
+    parser.add_argument('--token', default=os.getenv('PURVEX_API_TOKEN', "__PURVEX_TOKEN_PLACEHOLDER__"), help='Registration token (required)')
     parser.add_argument('--env', default=os.getenv('PURVEX_ENV', 'lab'), help='Environment name: lab, dev, or prod')
     parser.add_argument('--hostname', default=None, help='Custom hostname (auto-detected if not provided)')
     parser.add_argument('--port', type=int, default=22, help='SSH port (default: 22)')
