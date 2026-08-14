@@ -26,10 +26,6 @@ import {
   getAtomicTests,
   getAtomicCatalogStatus,
   downloadAtomicCatalog,
-  getCoverageSummary,
-  getCoverageTrend,
-  type CoverageSummary,
-  type CoverageTrend,
   type Detection,
   type MitreTechnique,
   type AtomicTestDefinition,
@@ -44,10 +40,7 @@ import {
   FlaskConical,
   ChevronRight,
   Download,
-  AlertTriangle,
-  TrendingUp,
 } from "lucide-react";
-import { Skeleton } from "@/components/ui/skeleton";
 
 type CoverageStatus = "validated" | "at_risk" | "mapped" | "unmapped";
 
@@ -168,19 +161,6 @@ function MitreViewPageContent() {
     if (!e) return null;
     return e instanceof Error ? e.message : "Failed to load MITRE data.";
   })();
-
-  // Executive card (summary + trend). Failures stay null — the card just
-  // hides. Key scoped separately so a hiccup here can't block the grid.
-  const summaryQ = useSWR<CoverageSummary | null>("mitre:coverage-summary", () =>
-    getCoverageSummary().catch(() => null)
-  );
-  const trendQ = useSWR<CoverageTrend | null>("mitre:coverage-trend-30", () =>
-    getCoverageTrend(30).catch(() => null)
-  );
-  const coverageSummary = summaryQ.data ?? null;
-  const coverageTrend = trendQ.data ?? null;
-  const summaryLoading =
-    (!summaryQ.data && !summaryQ.error) || (!trendQ.data && !trendQ.error);
 
   useEffect(() => {
     if (focus === "uncovered") setStatusFilter("unmapped");
@@ -411,20 +391,6 @@ function MitreViewPageContent() {
           <StatInline label="Unmapped" value={counts.unmapped} color={toneClasses("muted").text} />
         </div>
       </div>
-
-      {coverageSummary ? (
-        <ExecutiveSummary
-          summary={coverageSummary}
-          trend={coverageTrend}
-          onTechniqueClick={(id) => {
-            const found = enriched.find((t) => t.id === id);
-            if (found) handleSelectTechnique(found);
-            else router.push(`/detections?search=${encodeURIComponent(id)}`);
-          }}
-        />
-      ) : summaryLoading ? (
-        <ExecutiveSummarySkeleton />
-      ) : null}
 
       {/* Toolbar */}
       <div className="flex flex-wrap items-center gap-3">
@@ -858,238 +824,6 @@ function StatBlock({ label, value }: { label: string; value: number }) {
     <div className="rounded-lg border border-[var(--stroke-soft)] bg-[var(--surface-elevated)] p-3 text-center">
       <p className="text-[10px] font-bold uppercase tracking-wider text-[var(--surface-subtle-foreground)]">{label}</p>
       <p className="mt-1 text-xl font-bold text-[var(--foreground)]">{value}</p>
-    </div>
-  );
-}
-
-/**
- * Zero-dependency SVG sparkline. Intentionally tiny — ~60 lines of markup
- * with no ResizeObserver, no animation loop, no chart framework. A 30-point
- * trend renders in well under 1ms and never triggers layout thrash, which
- * matters here because the /mitre page has ~700 other buttons competing for
- * the main thread on first paint.
- */
-function Sparkline({
-  values,
-  labels,
-  width = 240,
-  height = 48,
-}: {
-  values: number[];
-  labels: string[];
-  width?: number;
-  height?: number;
-}) {
-  if (values.length < 2) return null;
-
-  const min = Math.min(...values);
-  const max = Math.max(...values);
-  const range = max - min || 1;
-  const padX = 2;
-  const padY = 4;
-  const innerW = width - padX * 2;
-  const innerH = height - padY * 2;
-
-  const toX = (i: number) => padX + (i / (values.length - 1)) * innerW;
-  const toY = (v: number) => padY + innerH - ((v - min) / range) * innerH;
-
-  const pathD = values
-    .map((v, i) => `${i === 0 ? "M" : "L"} ${toX(i).toFixed(1)} ${toY(v).toFixed(1)}`)
-    .join(" ");
-  const areaD = `${pathD} L ${toX(values.length - 1).toFixed(1)} ${(height - padY).toFixed(1)} L ${toX(0).toFixed(1)} ${(height - padY).toFixed(1)} Z`;
-
-  const lastIdx = values.length - 1;
-  const lastDate = labels[lastIdx] ? new Date(labels[lastIdx]).toLocaleDateString() : "";
-  const firstDate = labels[0] ? new Date(labels[0]).toLocaleDateString() : "";
-
-  return (
-    <div>
-      <svg
-        viewBox={`0 0 ${width} ${height}`}
-        width="100%"
-        height={height}
-        preserveAspectRatio="none"
-        className="overflow-visible"
-        role="img"
-        aria-label={`Validated techniques trend: ${values[0]} on ${firstDate} to ${values[lastIdx]} on ${lastDate}`}
-      >
-        <path d={areaD} fill="var(--accent-soft)" />
-        <path d={pathD} fill="none" stroke="var(--accent-strong)" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
-        <circle cx={toX(lastIdx)} cy={toY(values[lastIdx])} r={2.5} fill="var(--accent-strong)" />
-      </svg>
-      <div className="mt-1 flex justify-between text-[10px] text-[var(--surface-subtle-foreground)]">
-        <span>{firstDate}</span>
-        <span>{lastDate}</span>
-      </div>
-    </div>
-  );
-}
-
-function ExecutiveSummarySkeleton() {
-  return (
-    <div className="grid gap-4 lg:grid-cols-3">
-      <div className="rounded-2xl border border-[var(--stroke-soft)] bg-[var(--surface-card)] p-5 dark:border-white/10 dark:bg-white/5 lg:col-span-1">
-        <Skeleton className="h-3 w-24" />
-        <Skeleton className="mt-2 h-9 w-28" />
-        <Skeleton className="mt-3 h-14 w-full" />
-      </div>
-      <div className="rounded-2xl border border-[var(--stroke-soft)] bg-[var(--surface-card)] p-5 dark:border-white/10 dark:bg-white/5 lg:col-span-2">
-        <Skeleton className="h-3 w-24" />
-        <Skeleton className="mt-2 h-4 w-40" />
-        <div className="mt-4 space-y-2.5">
-          <Skeleton className="h-8 w-full" />
-          <Skeleton className="h-8 w-full" />
-          <Skeleton className="h-8 w-3/4" />
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// Color the "next actions" chips by severity so the eye lands on CRITICAL first.
-const CRITICALITY_TONE: Record<string, NonNullable<ChipProps["tone"]>> = {
-  CRITICAL: "danger",
-  HIGH: "warning",
-  MEDIUM: "info",
-  LOW: "muted",
-};
-
-function ExecutiveSummary({
-  summary,
-  trend,
-  onTechniqueClick,
-}: {
-  summary: CoverageSummary;
-  trend: CoverageTrend | null;
-  onTechniqueClick: (techniqueId: string) => void;
-}) {
-  // Merge failing + untested into a single prioritized action list. Failing
-  // rules come first because "your rule is broken" is a higher-urgency signal
-  // than "you haven't tested this yet".
-  const topActions = [
-    ...summary.top_failing_high_value.map((g) => ({ ...g, reason: "failing" as const })),
-    ...summary.top_untested_high_value.map((g) => ({ ...g, reason: "untested" as const })),
-  ].slice(0, 5);
-
-  const trendPoints = trend?.points.map((p) => ({ day: p.day, validated: p.validated })) || [];
-  const trendDelta = (() => {
-    if (trendPoints.length < 2) return 0;
-    const first = trendPoints[0].validated;
-    const last = trendPoints[trendPoints.length - 1].validated;
-    return last - first;
-  })();
-
-  return (
-    <div className="grid gap-4 lg:grid-cols-3">
-      {/* Weighted coverage + sparkline */}
-      <div className="rounded-2xl border border-[var(--stroke-soft)] bg-[var(--surface-card)] p-5 dark:border-white/10 dark:bg-white/5 lg:col-span-1">
-        <div className="flex items-start justify-between">
-          <div>
-            <p className="text-[11px] font-bold uppercase tracking-wider text-[var(--accent-strong)]">
-              Weighted coverage
-            </p>
-            <p className="mt-1 text-4xl font-bold tabular-nums text-[var(--foreground)]">
-              {summary.weighted_coverage_percent.toFixed(1)}
-              <span className="ml-1 text-lg font-semibold text-[var(--surface-subtle-foreground)]">%</span>
-            </p>
-            <p className="mt-1 text-xs text-[var(--surface-subtle-foreground)]">
-              Of instrumented techniques, weighted by severity.
-            </p>
-          </div>
-          {trendDelta !== 0 && (
-            <Chip
-              tone={trendDelta > 0 ? "success" : "danger"}
-              title="Change in validated techniques over the last 30 days"
-            >
-              <TrendingUp className={cn("h-3 w-3", trendDelta < 0 && "rotate-180")} />
-              {trendDelta > 0 ? "+" : ""}{trendDelta}
-            </Chip>
-          )}
-        </div>
-
-        {trendPoints.length > 1 && (
-          <div className="mt-3">
-            <Sparkline
-              values={trendPoints.map((p) => p.validated)}
-              labels={trendPoints.map((p) => p.day)}
-            />
-          </div>
-        )}
-
-        <div className="mt-3 flex items-center gap-4 text-[11px] text-[var(--surface-subtle-foreground)]">
-          <span>
-            Simple:{" "}
-            <span className="font-semibold text-[var(--foreground)]">
-              {summary.simple_coverage_percent.toFixed(1)}%
-            </span>
-          </span>
-          <span>·</span>
-          <span>
-            {summary.totals.validated} of {summary.totals.total_techniques} techniques validated
-          </span>
-        </div>
-      </div>
-
-      {/* Next actions */}
-      <div className="rounded-2xl border border-[var(--stroke-soft)] bg-[var(--surface-card)] p-5 dark:border-white/10 dark:bg-white/5 lg:col-span-2">
-        <div className="flex items-center justify-between">
-          <div>
-            <p className="text-[11px] font-bold uppercase tracking-wider text-[var(--accent-strong)]">
-              Next actions
-            </p>
-            <p className="text-sm font-semibold text-[var(--foreground)] dark:text-white">
-              Top high-value gaps
-            </p>
-          </div>
-          <span className="text-[11px] text-[var(--surface-subtle-foreground)]">Sorted by severity</span>
-        </div>
-
-        {topActions.length === 0 ? (
-          <p className="mt-4 text-sm text-[var(--surface-subtle-foreground)]">
-            No high-value gaps — every HIGH and CRITICAL detection is validated. Nicely done.
-          </p>
-        ) : (
-          <ul className="mt-3 divide-y divide-slate-200 dark:divide-white/10">
-            {topActions.map((action) => (
-              <li key={`${action.reason}-${action.technique_id}`}>
-                <button
-                  type="button"
-                  onClick={() => onTechniqueClick(action.technique_id)}
-                  className="flex w-full items-center gap-3 py-2.5 text-left transition hover:bg-[var(--surface-subtle)]"
-                >
-                  <span
-                    className={cn(
-                      "flex h-7 w-7 shrink-0 items-center justify-center rounded-full",
-                      `${toneClasses(action.reason === "failing" ? "danger" : "warning").bg}/15`,
-                      toneClasses(action.reason === "failing" ? "danger" : "warning").text,
-                    )}
-                    title={action.reason === "failing" ? "Detection is failing" : "Never tested"}
-                  >
-                    <AlertTriangle className="h-3.5 w-3.5" />
-                  </span>
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-2">
-                      <span className="font-mono text-[11px] font-bold text-[var(--accent-strong)]">
-                        {action.technique_id}
-                      </span>
-                      <Chip tone={CRITICALITY_TONE[action.max_criticality] || CRITICALITY_TONE.MEDIUM} size="sm">
-                        {action.max_criticality}
-                      </Chip>
-                      <span className="text-[11px] text-[var(--surface-subtle-foreground)]">
-                        {action.reason === "failing" ? "Failing" : "Never tested"}
-                      </span>
-                    </div>
-                    <p className="truncate text-sm text-[var(--foreground)]">
-                      {action.technique_name}
-                    </p>
-                  </div>
-                  <ChevronRight className="h-4 w-4 shrink-0 text-[var(--surface-subtle-foreground)]" />
-                </button>
-              </li>
-            ))}
-          </ul>
-        )}
-      </div>
     </div>
   );
 }
