@@ -9,8 +9,23 @@ import re
 import jwt
 from jwt import PyJWTError
 from passlib.context import CryptContext
+import bcrypt as _bcrypt
 
 from .config import settings
+
+# bcrypt >=4.x removed the `__about__` submodule that passlib 1.7.4
+# (unmaintained) still probes for a version-logging line. The probe is
+# wrapped in a bare except in passlib itself, so this never breaks hashing
+# or verification (see ensure_bcrypt_compatible() in main.py, which
+# round-trips a real hash at startup) -- but it does make passlib log a full
+# "(trapped) error reading bcrypt version" traceback the first time a
+# password is hashed, which reads as a crash even though nothing failed.
+# Patching the missing attribute makes the probe succeed instead of hitting
+# that except branch at all.
+if not hasattr(_bcrypt, "__about__"):
+    class _BcryptAbout:
+        __version__ = getattr(_bcrypt, "__version__", "unknown")
+    _bcrypt.__about__ = _BcryptAbout()
 
 # Use bcrypt for password hashing (more secure than sha256_crypt).
 # SECURITY: Pin bcrypt rounds explicitly so cost is controlled and auditable.
