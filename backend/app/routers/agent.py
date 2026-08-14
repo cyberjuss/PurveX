@@ -53,6 +53,14 @@ async def agent_heartbeat(
     if "status" not in update_data:
         update_data["status"] = "online"
     update_data["last_check_in"] = datetime.utcnow()
+    # A paused/stopped runner keeps heartbeating (it's still alive and
+    # reachable) but its agent script unconditionally reports "online" in
+    # every heartbeat body. Only the command-ack flow (PAUSE_AGENT/
+    # RESUME_AGENT/STOP_AGENT completing) may clear those states, otherwise
+    # the very next heartbeat -- seconds later -- silently undoes an
+    # operator's pause/stop.
+    if runner.status in ("paused", "stopped") and update_data.get("status") == "online":
+        update_data.pop("status", None)
     for key, value in update_data.items():
         setattr(runner, key, value)
     if is_first_check_in and runner.organization_id is not None:
