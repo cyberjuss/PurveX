@@ -407,10 +407,16 @@ WHERE EXISTS (SELECT FROM pg_roles WHERE rolname = 'purvex')
 \gexec
 SQL
     chmod 644 "${pg_role_sql}"
-    sudo -u postgres psql -v ON_ERROR_STOP=1 -v pass="${pg_password}" -f "${pg_role_sql}" >/dev/null
-    local pg_role_status=$?
-    rm -f "${pg_role_sql}"
-    [ "${pg_role_status}" -eq 0 ] || fail "Could not configure the PostgreSQL role."
+    local pg_role_log
+    pg_role_log="$(mktemp)"
+    if ! sudo -u postgres psql -v ON_ERROR_STOP=1 -v pass="${pg_password}" -f "${pg_role_sql}" >"${pg_role_log}" 2>&1; then
+      rm -f "${pg_role_sql}"
+      warn "Could not configure the PostgreSQL role:"
+      cat "${pg_role_log}"
+      rm -f "${pg_role_log}"
+      fail "Fix the error above and re-run --setup."
+    fi
+    rm -f "${pg_role_sql}" "${pg_role_log}"
     if ! sudo -u postgres psql -tc "SELECT 1 FROM pg_database WHERE datname = 'purvex'" | grep -q 1; then
       sudo -u postgres psql -c "CREATE DATABASE purvex OWNER purvex;" >/dev/null || fail "Could not create the 'purvex' database."
     fi
@@ -425,7 +431,15 @@ SQL
   elif [ -f "venv/bin/activate" ]; then
     source venv/bin/activate
   fi
-  alembic upgrade head >/dev/null 2>&1 || fail "Database migration failed. Run 'cd backend && alembic upgrade head' to see details."
+  local alembic_log
+  alembic_log="$(mktemp)"
+  if ! alembic upgrade head >"${alembic_log}" 2>&1; then
+    warn "Database migration failed:"
+    cat "${alembic_log}"
+    rm -f "${alembic_log}"
+    fail "Fix the error above, or set DATABASE_URL to an existing PostgreSQL server in .env, then re-run --setup."
+  fi
+  rm -f "${alembic_log}"
 }
 
 run_setup() {
