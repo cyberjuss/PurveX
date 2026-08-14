@@ -75,13 +75,13 @@ type LabTestSummary = {
 
 type EndpointBucket = "online" | "degraded" | "paused" | "unknown";
 type StatusFilter = "all" | EndpointBucket;
-type OsFilter = "all" | "windows" | "linux" | "other";
+type OsFamily = "windows" | "linux" | "other";
 
 type LabEndpoint = {
   id: number;
   hostname: string;
   os: string;
-  osFamily: OsFilter;
+  osFamily: OsFamily;
   ipAddress: string;
   status: string;
   statusBucket: EndpointBucket;
@@ -100,13 +100,6 @@ const STATUS_FILTERS: Array<{ key: StatusFilter; label: string }> = [
   { key: "degraded", label: "Needs review" },
   { key: "paused", label: "Paused" },
   { key: "unknown", label: "Silent" },
-];
-
-const PLATFORM_FILTERS: Array<{ key: OsFilter; label: string }> = [
-  { key: "all", label: "All surfaces" },
-  { key: "windows", label: "Windows" },
-  { key: "linux", label: "Linux" },
-  { key: "other", label: "Other" },
 ];
 
 function endpointTone(bucket: EndpointBucket): NonNullable<ChipProps["tone"]> {
@@ -143,7 +136,7 @@ function toneDotColor(tone: NonNullable<ChipProps["tone"]>): string {
   }
 }
 
-function mapOsFamily(os: string): OsFilter {
+function mapOsFamily(os: string): OsFamily {
   const value = os.toLowerCase();
   if (value.includes("windows")) return "windows";
   if (value.includes("linux") || value.includes("ubuntu") || value.includes("debian")) {
@@ -194,10 +187,7 @@ function LabPageContent() {
 
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
-  const [environmentFilter, setEnvironmentFilter] = useState<string>("all");
-  const [osFilter, setOsFilter] = useState<OsFilter>("all");
   const [failingOnly, setFailingOnly] = useState(false);
-  const [filtersOpen, setFiltersOpen] = useState(false);
 
   // Sheet inspector — selection is stored as an id (not the row object) so
   // it stays correct across refetches/local status updates instead of
@@ -357,18 +347,10 @@ function LabPageContent() {
     void fetchEndpoints();
   }, []);
 
-  const environmentOptions = useMemo(() => {
-    return ["all", ...new Set(endpoints.map((endpoint) => endpoint.environment))];
-  }, [endpoints]);
-
   const filteredEndpoints = useMemo(() => {
     const query = search.trim().toLowerCase();
     return endpoints.filter((endpoint) => {
       if (statusFilter !== "all" && endpoint.statusBucket !== statusFilter) return false;
-      if (environmentFilter !== "all" && endpoint.environment !== environmentFilter) {
-        return false;
-      }
-      if (osFilter !== "all" && endpoint.osFamily !== osFilter) return false;
       if (
         failingOnly &&
         !endpoint.recentTests.some((test) => {
@@ -391,7 +373,7 @@ function LabPageContent() {
         .toLowerCase()
         .includes(query);
     });
-  }, [endpoints, environmentFilter, failingOnly, osFilter, search, statusFilter]);
+  }, [endpoints, failingOnly, search, statusFilter]);
 
   const statusCounts = useMemo(() => {
     return endpoints.reduce<Record<EndpointBucket, number>>(
@@ -590,32 +572,8 @@ function LabPageContent() {
   function clearFilters() {
     setSearch("");
     setStatusFilter("all");
-    setEnvironmentFilter("all");
-    setOsFilter("all");
     setFailingOnly(false);
   }
-
-  // Build counts for the secondary filter rows. Computed inline so the
-  // component stays simple — no preprocessing in useMemo since this is
-  // already O(n) over endpoints and the row only renders when expanded.
-  const environmentCounts: Record<string, number> = environmentOptions.reduce(
-    (acc, env) => {
-      acc[env] = env === "all"
-        ? endpoints.length
-        : endpoints.filter((e) => e.environment === env).length;
-      return acc;
-    },
-    {} as Record<string, number>,
-  );
-  const osCounts: Record<string, number> = PLATFORM_FILTERS.reduce(
-    (acc, item) => {
-      acc[item.key] = item.key === "all"
-        ? endpoints.length
-        : endpoints.filter((e) => e.osFamily === item.key).length;
-      return acc;
-    },
-    {} as Record<string, number>,
-  );
 
   if (endpointsLoading && endpoints.length === 0) {
     return (
@@ -678,122 +636,82 @@ function LabPageContent() {
         </div>
       ) : null}
 
-      {/* Search — single hairline underline, no border box. */}
-      <div className="relative border-b border-[var(--stroke-soft)] pb-2">
-        <Search className="pointer-events-none absolute left-1 top-1 h-4 w-4 text-[var(--surface-subtle-foreground)]" />
-        <input
-          value={search}
-          onChange={(event) => setSearch(event.target.value)}
-          placeholder="Search host, lane, IP, runner profile, or operator…"
-          className="w-full bg-transparent pl-7 text-sm text-[var(--foreground)] placeholder:text-[var(--surface-subtle-foreground)] focus:outline-none"
+      {/* Stat tiles. */}
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+        <StatTile
+          icon={<HardDrive className="h-4 w-4" />}
+          value={filteredEndpoints.length}
+          label="in scope"
+        />
+        <StatTile
+          icon={<Activity className="h-4 w-4" />}
+          value={latestCheckInCount}
+          label="live heartbeat"
+        />
+        <StatTile
+          icon={<AlertTriangle className="h-4 w-4" />}
+          value={attentionCount}
+          label="needs eyes"
+          warning={attentionCount > 0}
         />
       </div>
 
-      {/* Primary filter row — text-led, underline on active. */}
-      <nav className="flex flex-wrap items-center gap-x-6 gap-y-2 text-sm">
-        {STATUS_FILTERS.map((item) => {
-          const active = statusFilter === item.key;
-          const count = item.key === "all" ? endpoints.length : statusCounts[item.key];
-          return (
-            <button
-              key={item.key}
-              type="button"
-              onClick={() => setStatusFilter(item.key)}
-              className={cn(
-                "inline-flex items-baseline gap-1.5 pb-1 transition-colors",
-                active
-                  ? "border-b-2 border-[var(--foreground)] font-semibold text-[var(--foreground)]"
-                  : "border-b-2 border-transparent text-slate-500 hover:text-[var(--foreground)] dark:text-slate-400",
-              )}
-            >
-              <span>{item.label}</span>
-              <span className={cn("text-xs", active ? "text-[var(--foreground)]" : "text-slate-400 dark:text-slate-500")}>
-                {count}
-              </span>
-            </button>
-          );
-        })}
-      </nav>
-
-      {/* Metric strip + inline toggles + filters expander. */}
-      <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-3">
-        <div className="flex flex-wrap items-center gap-3">
-          <div className="console-metric-strip">
-            <span className="console-metric-icon">
-              <HardDrive className="h-4 w-4" />
-            </span>
-            <div>
-              <p className="console-metric-value">{filteredEndpoints.length}</p>
-              <p className="text-[11px] text-[var(--surface-subtle-foreground)]">in scope</p>
-            </div>
-          </div>
-          <div className="console-metric-strip">
-            <span className="console-metric-icon">
-              <Activity className="h-4 w-4" />
-            </span>
-            <div>
-              <p className="console-metric-value">{latestCheckInCount}</p>
-              <p className="text-[11px] text-[var(--surface-subtle-foreground)]">live heartbeat</p>
-            </div>
-          </div>
-          <div
-            className="console-metric-strip"
-            data-tone={attentionCount > 0 ? "warning" : undefined}
-          >
-            <span className="console-metric-icon">
-              <AlertTriangle className="h-4 w-4" />
-            </span>
-            <div>
-              <p className="console-metric-value">{attentionCount}</p>
-              <p className="text-[11px] text-[var(--surface-subtle-foreground)]">needs eyes</p>
-            </div>
-          </div>
+      {/* Search + status tabs + triage toggle. */}
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="relative w-full sm:max-w-xs">
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--surface-subtle-foreground)]" />
+          <input
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+            placeholder="Search host, IP, or profile…"
+            className="w-full rounded-lg border border-[var(--stroke-soft)] bg-[var(--surface-elevated)] py-2 pl-9 pr-3 text-sm text-[var(--foreground)] placeholder:text-[var(--surface-subtle-foreground)] shadow-sm focus:border-[var(--accent-line)] focus:outline-none"
+          />
         </div>
-        <div className="flex flex-wrap items-center gap-x-4 text-xs text-slate-500 dark:text-slate-400">
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="inline-flex flex-wrap items-center gap-1 rounded-lg border border-[var(--stroke-soft)] bg-[var(--surface-elevated)] p-1">
+            {STATUS_FILTERS.map((item) => {
+              const active = statusFilter === item.key;
+              const count = item.key === "all" ? endpoints.length : statusCounts[item.key];
+              return (
+                <button
+                  key={item.key}
+                  type="button"
+                  onClick={() => setStatusFilter(item.key)}
+                  className={cn(
+                    "inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium transition-colors",
+                    active
+                      ? "bg-[var(--surface-card)] text-[var(--foreground)] shadow-sm"
+                      : "text-[var(--surface-subtle-foreground)] hover:text-[var(--foreground)]",
+                  )}
+                >
+                  {item.label}
+                  <span
+                    className={cn(
+                      "text-[10px]",
+                      active ? "text-[var(--surface-subtle-foreground)]" : "text-slate-400 dark:text-slate-500",
+                    )}
+                  >
+                    {count}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
           <button
             type="button"
             onClick={() => setFailingOnly((value) => !value)}
-            className={cn(
-              "transition-colors",
-              failingOnly
-                ? "font-semibold text-[var(--foreground)] underline underline-offset-4"
-                : "text-slate-500 hover:text-[var(--foreground)] dark:text-slate-400",
-            )}
+            className="rounded-full focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-line)]"
           >
-            Needs triage
-          </button>
-          <button
-            type="button"
-            onClick={() => setFiltersOpen((value) => !value)}
-            className="text-slate-500 hover:text-[var(--foreground)] dark:text-slate-400"
-          >
-            {filtersOpen ? "− filters" : "+ filters"}
+            <Chip
+              tone={failingOnly ? "warning" : "muted"}
+              appearance={failingOnly ? "subtle" : "outline"}
+              className="cursor-pointer"
+            >
+              Needs triage
+            </Chip>
           </button>
         </div>
       </div>
-
-      {/* Secondary filters — only on demand. Reads as a sentence. */}
-      {filtersOpen ? (
-        <div className="space-y-2 text-xs text-slate-500 dark:text-slate-400">
-          <SecondaryFilterRow
-            label="Terrain"
-            options={environmentOptions.map((env) => ({
-              key: env,
-              label: env === "all" ? "Any" : env,
-            }))}
-            active={environmentFilter}
-            onChange={(value) => setEnvironmentFilter(value)}
-            counts={environmentCounts}
-          />
-          <SecondaryFilterRow
-            label="Footprint"
-            options={PLATFORM_FILTERS.map((item) => ({ key: item.key, label: item.label }))}
-            active={osFilter}
-            onChange={(value) => setOsFilter(value as OsFilter)}
-            counts={osCounts}
-          />
-        </div>
-      ) : null}
 
       {/* Content — no outer card, just spacing. */}
       <div className="min-w-0">
@@ -841,193 +759,150 @@ function LabPageContent() {
             </div>
           ) : (
             <div
+              key={`${statusFilter}|${failingOnly}|${search}`}
               className={cn(
-                "overflow-x-auto transition-opacity duration-200",
+                "stagger-children grid grid-cols-1 gap-4 transition-opacity duration-200 md:grid-cols-2 2xl:grid-cols-3",
                 refreshing && endpoints.length > 0 && "pointer-events-none opacity-60",
               )}
             >
-              <table className="console-table text-sm">
-                <thead>
-                  <tr>
-                    <th>Endpoint</th>
-                    <th>State</th>
-                    <th>Platform</th>
-                    <th>Network</th>
-                    <th>Recent validation</th>
-                    <th>Check-in</th>
-                    <th className="text-right">Actions</th>
-                  </tr>
-                </thead>
-                <tbody
-                  key={`${statusFilter}|${environmentFilter}|${osFilter}|${failingOnly}|${search}`}
-                  className="stagger-children"
-                >
-                  {filteredEndpoints.map((endpoint) => {
-                    const latestTest = endpoint.recentTests[0];
-                    const isSelected = selectedEndpointId === endpoint.id;
-                    const isLive =
-                      currentTestLive &&
-                      liveEndpointMatch !== null &&
-                      liveEndpointMatch.id === endpoint.id;
-                    const tint = recentlyChanged?.id === endpoint.id ? recentlyChanged.tone : null;
-                    return (
-                      <tr
-                        key={endpoint.id}
-                        onClick={() => setSelectedEndpointId(endpoint.id)}
-                        className={cn(
-                          "group cursor-pointer transition-colors",
-                          isSelected && "bg-[var(--surface-subtle)]",
-                          tint === "success" && "bg-emerald-500/10",
-                          tint === "warning" && "bg-amber-500/10",
+              {filteredEndpoints.map((endpoint) => {
+                const latestTest = endpoint.recentTests[0];
+                const isSelected = selectedEndpointId === endpoint.id;
+                const isLive =
+                  currentTestLive &&
+                  liveEndpointMatch !== null &&
+                  liveEndpointMatch.id === endpoint.id;
+                const tint = recentlyChanged?.id === endpoint.id ? recentlyChanged.tone : null;
+                return (
+                  <div
+                    key={endpoint.id}
+                    onClick={() => setSelectedEndpointId(endpoint.id)}
+                    className={cn(
+                      "group relative cursor-pointer rounded-xl border border-[var(--stroke-soft)] bg-[var(--surface-elevated)] p-4 shadow-sm transition-all duration-200 hover:border-[var(--accent-line)] hover:shadow-md",
+                      isSelected && "border-[var(--accent-line)] bg-[var(--surface-subtle)]",
+                      tint === "success" && "bg-emerald-500/10",
+                      tint === "warning" && "bg-amber-500/10",
+                    )}
+                  >
+                    <ChevronRight className="absolute right-4 top-4 h-4 w-4 shrink-0 text-[var(--surface-subtle-foreground)] opacity-0 transition-opacity duration-150 group-hover:opacity-100" />
+
+                    <div className="flex items-center gap-2 pr-6">
+                      <HardDrive className="h-4 w-4 shrink-0 text-[var(--accent-strong)]" />
+                      <span className="truncate font-medium text-[var(--foreground)]">
+                        {endpoint.hostname}
+                      </span>
+                      <Chip tone={endpointTone(endpoint.statusBucket)} dot className="ml-auto shrink-0">
+                        {endpoint.status}
+                      </Chip>
+                      {isLive ? (
+                        <span
+                          aria-hidden
+                          title="Live run in progress"
+                          className="h-2 w-2 shrink-0 animate-pulse rounded-full bg-sky-500"
+                        />
+                      ) : null}
+                    </div>
+
+                    <div className="mt-2 flex flex-wrap items-center gap-1.5 text-[11px] text-[var(--surface-subtle-foreground)]">
+                      <span className="console-pill">{endpoint.environment}</span>
+                      <span className="console-pill console-mono">
+                        {endpoint.runnerType || "runner"}
+                      </span>
+                      {endpoint.username ? (
+                        <span className="console-pill console-mono">{endpoint.username}</span>
+                      ) : null}
+                    </div>
+
+                    <div className="mt-3 space-y-2 border-t border-[var(--stroke-soft)] pt-3 text-sm">
+                      <div className="flex items-center gap-2 text-[var(--foreground)]">
+                        {endpoint.osFamily === "windows" ? (
+                          <Monitor className="h-4 w-4 shrink-0 text-sky-500" />
+                        ) : (
+                          <Terminal className="h-4 w-4 shrink-0 text-emerald-500" />
                         )}
-                      >
-                        <td>
-                          <div className="flex items-center justify-between gap-2">
-                            <div className="space-y-1">
-                              <div className="flex items-center gap-2">
-                                <HardDrive className="h-4 w-4 text-[var(--accent-strong)]" />
-                                <span className="font-medium text-[var(--foreground)]">
-                                  {endpoint.hostname}
-                                </span>
-                              </div>
-                              <div className="flex flex-wrap items-center gap-2 text-[11px] text-[var(--surface-subtle-foreground)]">
-                                <span className="console-pill">{endpoint.environment}</span>
-                                <span className="console-pill console-mono">
-                                  {endpoint.runnerType || "runner"}
-                                </span>
-                                {endpoint.username ? (
-                                  <span className="console-pill console-mono">
-                                    {endpoint.username}
-                                  </span>
-                                ) : null}
-                              </div>
-                            </div>
-                            <ChevronRight className="h-4 w-4 shrink-0 text-[var(--surface-subtle-foreground)] opacity-0 transition-opacity duration-150 group-hover:opacity-100" />
-                          </div>
-                        </td>
-                        <td>
-                          <div className="flex items-center gap-2">
-                            <Chip tone={endpointTone(endpoint.statusBucket)} dot>
-                              {endpoint.status}
-                            </Chip>
-                            {isLive ? (
-                              <span
-                                aria-hidden
-                                title="Live run in progress"
-                                className="h-2 w-2 animate-pulse rounded-full bg-sky-500"
-                              />
-                            ) : null}
-                          </div>
-                        </td>
-                        <td>
-                          <div className="space-y-1">
-                            <div className="flex items-center gap-2 text-[var(--foreground)]">
-                              {endpoint.osFamily === "windows" ? (
-                                <Monitor className="h-4 w-4 text-sky-500" />
-                              ) : (
-                                <Terminal className="h-4 w-4 text-emerald-500" />
-                              )}
-                              <span>{endpoint.os}</span>
-                            </div>
-                            <p className="console-mono text-[11px] text-[var(--surface-subtle-foreground)]">
-                              agent {endpoint.agentVersion}
-                            </p>
-                          </div>
-                        </td>
-                        <td>
-                          <div className="flex items-center gap-2 text-[var(--foreground)]">
-                            <Wifi className="h-4 w-4 text-[var(--accent-strong)]" />
-                            <span className="console-mono text-[11px]">
-                              {endpoint.ipAddress}
-                            </span>
-                          </div>
-                        </td>
-                        <td>
-                          {latestTest ? (
-                            <div className="space-y-1">
-                              <div className="flex items-center gap-2">
-                                <Chip tone={testTone(latestTest.status)}>
-                                  {latestTest.status || "--"}
-                                </Chip>
-                                <span className="truncate text-[var(--foreground)]">
-                                  {latestTestLabel(latestTest)}
-                                </span>
-                              </div>
-                              <p className="text-[11px] text-[var(--surface-subtle-foreground)]">
-                                {formatRelativeTime(
-                                  latestTest.started_at ||
-                                    latestTest.created_at ||
-                                    latestTest.finished_at,
-                                )}
-                              </p>
-                            </div>
-                          ) : (
-                            <span className="text-[11px] text-[var(--surface-subtle-foreground)]">
-                              No runs captured
-                            </span>
-                          )}
-                        </td>
-                        <td title={formatTimestamp(endpoint.lastCheckInAt)}>
-                          <div className="space-y-1">
-                            <p className="text-[var(--foreground)]">
-                              {formatRelativeTime(endpoint.lastCheckInAt)}
+                        <span>{endpoint.os}</span>
+                        <span className="console-mono text-[11px] text-[var(--surface-subtle-foreground)]">
+                          agent {endpoint.agentVersion}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-2 text-[var(--foreground)]">
+                        <Wifi className="h-4 w-4 shrink-0 text-[var(--accent-strong)]" />
+                        <span className="console-mono text-[11px]">{endpoint.ipAddress}</span>
+                      </div>
+                      {latestTest ? (
+                        <div className="flex items-start gap-2">
+                          <Chip tone={testTone(latestTest.status)} className="mt-0.5 shrink-0">
+                            {latestTest.status || "--"}
+                          </Chip>
+                          <div className="min-w-0">
+                            <p className="truncate text-[var(--foreground)]">
+                              {latestTestLabel(latestTest)}
                             </p>
                             <p className="text-[11px] text-[var(--surface-subtle-foreground)]">
-                              {formatTimestamp(endpoint.lastCheckInAt)}
+                              {formatRelativeTime(
+                                latestTest.started_at ||
+                                  latestTest.created_at ||
+                                  latestTest.finished_at,
+                              )}
                             </p>
                           </div>
-                        </td>
-                        <td onClick={(event) => event.stopPropagation()}>
-                          <div className="flex justify-end gap-2">
-                            {endpoint.statusBucket === "paused" ? (
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                onClick={() =>
-                                  setResumeEndpoint({
-                                    id: endpoint.id,
-                                    name: endpoint.hostname,
-                                  })
-                                }
-                              >
-                                <PlayCircle className="h-3.5 w-3.5" />
-                                Resume
-                              </Button>
-                            ) : (
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                onClick={() =>
-                                  setPauseEndpoint({
-                                    id: endpoint.id,
-                                    name: endpoint.hostname,
-                                  })
-                                }
-                              >
-                                <PauseCircle className="h-3.5 w-3.5" />
-                                Pause
-                              </Button>
-                            )}
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              onClick={() =>
-                                setDeleteEndpoint({
-                                  id: endpoint.id,
-                                  name: endpoint.hostname,
-                                })
-                              }
-                            >
-                              <Trash2 className="h-3.5 w-3.5" />
-                              Remove
-                            </Button>
-                          </div>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
+                        </div>
+                      ) : (
+                        <p className="text-[11px] text-[var(--surface-subtle-foreground)]">
+                          No runs captured
+                        </p>
+                      )}
+                    </div>
+
+                    <div className="mt-3 flex items-center justify-between gap-2 border-t border-[var(--stroke-soft)] pt-3">
+                      <span
+                        title={formatTimestamp(endpoint.lastCheckInAt)}
+                        className="text-[11px] text-[var(--surface-subtle-foreground)]"
+                      >
+                        Checked in {formatRelativeTime(endpoint.lastCheckInAt)}
+                      </span>
+                      <div
+                        className="flex gap-2"
+                        onClick={(event) => event.stopPropagation()}
+                      >
+                        {endpoint.statusBucket === "paused" ? (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() =>
+                              setResumeEndpoint({ id: endpoint.id, name: endpoint.hostname })
+                            }
+                          >
+                            <PlayCircle className="h-3.5 w-3.5" />
+                            Resume
+                          </Button>
+                        ) : (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() =>
+                              setPauseEndpoint({ id: endpoint.id, name: endpoint.hostname })
+                            }
+                          >
+                            <PauseCircle className="h-3.5 w-3.5" />
+                            Pause
+                          </Button>
+                        )}
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() =>
+                            setDeleteEndpoint({ id: endpoint.id, name: endpoint.hostname })
+                          }
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                          Remove
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           )}
       </div>
@@ -1300,54 +1175,39 @@ export default function LabPage() {
 }
 
 /**
- * Secondary filter row — reads as a sentence: "Terrain: Any · lab · prod".
- * Active option is bold + underlined; inactive options are muted text.
- * Same component as the proposals page so the two redesigned pages
- * present a consistent vocabulary.
+ * Metric stat tile — icon box + value + label, matching the recipe used on
+ * /dashboard's stats grid.
  */
-function SecondaryFilterRow<T extends string>({
+function StatTile({
+  icon,
+  value,
   label,
-  options,
-  active,
-  onChange,
-  counts,
+  warning,
 }: {
+  icon: React.ReactNode;
+  value: number;
   label: string;
-  options: Array<{ key: T; label: string }>;
-  active: T;
-  onChange: (value: T) => void;
-  counts: Record<string, number>;
+  warning?: boolean;
 }) {
   return (
-    <div className="flex flex-wrap items-baseline gap-x-3">
-      <span className="text-[11px] uppercase tracking-[0.14em] text-slate-400 dark:text-slate-500">
-        {label}
+    <div
+      className={cn(
+        "flex items-center gap-3 rounded-xl border border-[var(--stroke-soft)] bg-[var(--surface-elevated)] p-3 shadow-sm transition-colors hover:border-[var(--accent-line)]",
+        warning && "border-amber-500/30",
+      )}
+    >
+      <span
+        className={cn(
+          "flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-[var(--stroke-soft)] bg-[var(--surface-subtle)] text-[var(--accent-strong)]",
+          warning && "text-amber-500",
+        )}
+      >
+        {icon}
       </span>
-      {options.map((option, idx) => {
-        const isActive = option.key === active;
-        return (
-          <span key={option.key} className="flex items-baseline gap-x-3">
-            {idx > 0 ? <span aria-hidden className="text-slate-400 dark:text-slate-600">·</span> : null}
-            <button
-              type="button"
-              onClick={() => onChange(option.key)}
-              className={cn(
-                "transition-colors",
-                isActive
-                  ? "font-semibold text-[var(--foreground)] underline underline-offset-4"
-                  : "text-slate-500 hover:text-[var(--foreground)] dark:text-slate-400",
-              )}
-            >
-              {option.label}
-              {option.key === "all" ? null : (
-                <span className="ml-1 text-[10px] text-slate-400 dark:text-slate-500">
-                  {counts[option.key] ?? 0}
-                </span>
-              )}
-            </button>
-          </span>
-        );
-      })}
+      <div>
+        <p className="font-display text-2xl font-bold text-[var(--foreground)]">{value}</p>
+        <p className="text-[11px] text-[var(--surface-subtle-foreground)]">{label}</p>
+      </div>
     </div>
   );
 }
