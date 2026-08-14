@@ -1,5 +1,3 @@
-import type { ComponentType } from "react";
-import { CheckCircle2, Search, Target, Waves } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { UiTestType } from "../types";
 
@@ -7,8 +5,6 @@ export type TestModeMeta = {
   id: UiTestType;
   title: string;
   question: string;
-  icon: ComponentType<{ className?: string }>;
-  step2Label: string;
 };
 
 export const TEST_MODES: TestModeMeta[] = [
@@ -16,25 +12,22 @@ export const TEST_MODES: TestModeMeta[] = [
     id: "detection_validation",
     title: "Validate a Detection",
     question: "I already have a rule — does it work?",
-    icon: Target,
-    step2Label: "Pick Detection",
   },
   {
     id: "find_detection_coverage",
     title: "Explore Coverage",
     question: "What should detect this ATT&CK technique?",
-    icon: Search,
-    step2Label: "Pick Technique",
   },
   {
     id: "telemetry_check",
     title: "Verify Telemetry Readiness",
     question: "Are logs even arriving?",
-    icon: Waves,
-    step2Label: "Pick Scenario",
   },
 ];
 
+// Pill tab bar — same toggle pattern already used for labOs/runMode in
+// RunConfigStep, kept consistent rather than introducing the shadcn Tabs
+// primitive (used once elsewhere in the app with non-matching tokens).
 export function ModePickerStep({
   value,
   onSelect,
@@ -42,51 +35,29 @@ export function ModePickerStep({
   value: UiTestType | null;
   onSelect: (mode: UiTestType) => void;
 }) {
+  const activeMode = TEST_MODES.find((m) => m.id === value);
   return (
-    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-      {TEST_MODES.map((mode) => {
-        const Icon = mode.icon;
-        const isActive = value === mode.id;
-        return (
+    <div className="space-y-2">
+      <div className="inline-flex flex-wrap rounded-lg border border-[var(--stroke-soft)] bg-[var(--surface-elevated)] p-1">
+        {TEST_MODES.map((mode) => (
           <button
             key={mode.id}
             type="button"
             onClick={() => onSelect(mode.id)}
             className={cn(
-              "relative overflow-hidden p-4 rounded-xl border-2 transition-all text-left group bg-[var(--surface-card)]",
-              isActive
-                ? "border-[var(--accent-strong)] shadow-sm"
-                : "border-[var(--stroke-soft)] hover:border-[var(--accent-line)]"
+              "px-4 py-2 rounded-md text-sm font-medium transition-all border",
+              value === mode.id
+                ? "bg-[var(--surface-card)] text-[var(--foreground)] border-[var(--stroke-soft)] shadow-sm"
+                : "text-[var(--surface-subtle-foreground)] border-transparent hover:text-[var(--foreground)] hover:bg-[var(--surface-card)]"
             )}
           >
-            <div
-              className={cn(
-                "absolute inset-x-0 top-0 h-1 transition-all",
-                isActive ? "bg-[var(--accent-strong)]" : "bg-transparent"
-              )}
-            />
-            <div className="flex items-start gap-3">
-              <div
-                className={cn(
-                  "h-10 w-10 rounded-lg flex items-center justify-center transition-colors",
-                  isActive
-                    ? "bg-[var(--accent-soft)] text-[var(--accent-strong)]"
-                    : "bg-[var(--surface-subtle)] text-[var(--surface-subtle-foreground)]"
-                )}
-              >
-                <Icon className="h-5 w-5" />
-              </div>
-              <div className="flex-1 space-y-1">
-                <h3 className="font-display font-semibold text-[var(--foreground)]">{mode.title}</h3>
-                <p className="text-xs text-[var(--surface-subtle-foreground)] leading-relaxed">{mode.question}</p>
-              </div>
-              {isActive && (
-                <CheckCircle2 className="h-5 w-5 text-[var(--accent-strong)] flex-shrink-0" />
-              )}
-            </div>
+            {mode.title}
           </button>
-        );
-      })}
+        ))}
+      </div>
+      {activeMode && (
+        <p className="text-xs text-[var(--surface-subtle-foreground)] leading-relaxed">{activeMode.question}</p>
+      )}
     </div>
   );
 }

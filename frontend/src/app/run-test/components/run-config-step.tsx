@@ -1,4 +1,4 @@
-import { AlertTriangle, ChevronLeft, Loader2, Play, Server, Settings } from "lucide-react";
+import { AlertTriangle, Loader2, Play, Server, Settings } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -43,8 +43,6 @@ export function RunConfigStep({
   scheduleIntervalMinutes,
   onScheduleIntervalChange,
   isScheduling,
-  showPrevious,
-  onPrevious,
   canRun,
   onRunTest,
 }: {
@@ -79,13 +77,16 @@ export function RunConfigStep({
   scheduleIntervalMinutes: string;
   onScheduleIntervalChange: (value: string) => void;
   isScheduling: boolean;
-  showPrevious: boolean;
-  onPrevious: () => void;
   canRun: boolean;
   onRunTest: () => void;
 }) {
   return (
     <div className="space-y-8">
+      {!canSelectTargetHost && (
+        <p className="text-xs text-[var(--surface-subtle-foreground)] leading-relaxed">
+          Pick a target on the left to configure environment and host.
+        </p>
+      )}
       <div className="grid gap-6 md:grid-cols-2">
         <div className="space-y-3">
           <Label htmlFor="environment-select" className="text-[var(--foreground)] text-sm font-medium flex items-center gap-2">
@@ -352,13 +353,7 @@ export function RunConfigStep({
         )}
 
         {/* Action Buttons */}
-        <div className="flex items-center justify-between gap-4 pt-6 border-t border-[var(--stroke-soft)]">
-          {showPrevious && (
-            <Button onClick={onPrevious} variant="outline" className="h-11 px-4">
-              <ChevronLeft className="h-4 w-4 mr-2" />
-              Previous
-            </Button>
-          )}
+        <div className="flex items-center gap-4 pt-6 border-t border-[var(--stroke-soft)]">
           <Button
             onClick={onRunTest}
             disabled={!canRun}

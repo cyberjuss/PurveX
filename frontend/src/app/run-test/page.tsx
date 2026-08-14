@@ -19,7 +19,7 @@ import {
 } from "@/lib/api";
 import { usePermissions } from "@/hooks/usePermissions";
 import { Permission } from "@/lib/permissions";
-import { Loader2 } from "lucide-react";
+import { Loader2, Target } from "lucide-react";
 import { PageContainer } from "@/components/layout/page-container";
 import { TestsHubTabs } from "@/components/tests/tests-hub-tabs";
 import { isUpgradeRequiredError } from "@/components/ui/upgrade-banner";
@@ -35,9 +35,8 @@ import type {
   UiTestType,
 } from "./types";
 import { uiToBackendMode } from "./types";
-import { RunTestStepper, type RunTestStep } from "./components/run-test-stepper";
 import { RunTestSummary } from "./components/run-test-summary";
-import { ModePickerStep, TEST_MODES } from "./components/mode-picker-step";
+import { ModePickerStep } from "./components/mode-picker-step";
 import { DetectionPicker } from "./components/detection-picker";
 import { TelemetryScenarioPicker } from "./components/telemetry-scenario-picker";
 import { TechniquePicker } from "./components/technique-picker";
@@ -120,7 +119,6 @@ function RunTestPageContent() {
   const [environment, setEnvironment] = useState<"lab" | "dev" | "prod">(() => initialParams.env || "lab");
   const [targetHost, setTargetHost] = useState<string>(() => initialParams.host || "");
   const [testType, setTestType] = useState<UiTestType | null>(() => resolveInitialMode(initialParams));
-  const [currentStep, setCurrentStep] = useState<RunTestStep>(() => (resolveInitialMode(initialParams) ? 2 : 1));
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -549,7 +547,6 @@ function RunTestPageContent() {
     setSelectedSubtechniqueId("");
     setResult(null);
     setError(null);
-    setCurrentStep(2);
   }
 
   function handleDetectionCreated(created: Detection) {
@@ -626,32 +623,6 @@ function RunTestPageContent() {
     scenarioNameFromExplore ||
     (techniqueLabelFromExplore ? `Technique ${techniqueLabelFromExplore}` : "Selected scenario");
 
-  const step1Done = !!testType;
-  const step2Done =
-    step1Done &&
-    ((testType === "telemetry_check" && !!selectedScenario) ||
-      (testType === "detection_validation" && !!selectedDetection) ||
-      (testType === "find_detection_coverage" && coverageScenarioConfirmed));
-
-  // Step 2 unlocks once a mode is picked; step 3 unlocks once step 2's
-  // target selection is complete.
-  const maxUnlockedStep: RunTestStep = step2Done ? 3 : step1Done ? 2 : 1;
-  useEffect(() => {
-    setCurrentStep((prev) => (prev > maxUnlockedStep ? maxUnlockedStep : prev));
-  }, [maxUnlockedStep]);
-
-  function handleStepClick(step: RunTestStep) {
-    if (step <= maxUnlockedStep) {
-      setCurrentStep(step);
-    }
-  }
-
-  function handlePrevious() {
-    if (currentStep > 1) {
-      setCurrentStep((prev) => (prev > 1 ? ((prev - 1) as RunTestStep) : prev));
-    }
-  }
-
   const selectedDetectionRecord = detections.find((d) => d.id === selectedDetection);
   const summaryDetectionTitle =
     testType === "detection_validation"
@@ -664,44 +635,26 @@ function RunTestPageContent() {
       ? technique || null
       : selectedSubtechniqueId || selectedDetectionRecord?.technique_id || null;
 
-  const step2Label = testType ? TEST_MODES.find((m) => m.id === testType)?.step2Label || "Select target" : "Select target";
-
   return (
     <PageContainer>
       <div className="mb-6">
         <TestsHubTabs />
       </div>
 
-      <div className="mb-6">
-        <RunTestStepper
-          currentStep={currentStep}
-          maxUnlockedStep={maxUnlockedStep}
-          step2Label={step2Label}
-          onStepClick={handleStepClick}
-        />
-      </div>
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_420px]">
+        {/* Left pane: pick what to test */}
+        <div className="space-y-4">
+          <ModePickerStep value={testType} onSelect={handleSelectMode} />
 
-      <Card className="border border-[var(--stroke-soft)] shadow-[var(--shadow-soft)] rounded-2xl">
-        <CardContent className="pt-6">
-          <div className="space-y-6">
-            <RunTestSummary
-              testType={testType}
-              detectionTitle={summaryDetectionTitle}
-              techniqueId={summaryTechniqueId}
-              environment={targetHost ? environment : null}
-              targetHost={targetHost || null}
-            />
+          {loading && (
+            <div className="flex items-center gap-2 text-sm text-[var(--surface-subtle-foreground)]">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              Loading...
+            </div>
+          )}
 
-            {currentStep === 1 && <ModePickerStep value={testType} onSelect={handleSelectMode} />}
-
-            {currentStep === 2 && loading && (
-              <div className="flex items-center gap-2 text-sm text-[var(--surface-subtle-foreground)]">
-                <Loader2 className="h-4 w-4 animate-spin" />
-                Loading...
-              </div>
-            )}
-
-            {currentStep === 2 && testType === "detection_validation" && (
+          {testType === "detection_validation" && (
+            <div className="rounded-2xl border border-[var(--stroke-soft)] bg-[var(--surface-card)] p-5">
               <DetectionPicker
                 detections={detections}
                 detectionsForUi={detectionsForUi}
@@ -718,9 +671,11 @@ function RunTestPageContent() {
                 selectedSubtechniqueId={selectedSubtechniqueId}
                 onSelectSubtechnique={setSelectedSubtechniqueId}
               />
-            )}
+            </div>
+          )}
 
-            {currentStep === 2 && testType === "telemetry_check" && (
+          {testType === "telemetry_check" && (
+            <div className="rounded-2xl border border-[var(--stroke-soft)] bg-[var(--surface-card)] p-5">
               <TelemetryScenarioPicker
                 scenarios={telemetryScenarios}
                 selectedScenario={selectedScenario}
@@ -728,73 +683,93 @@ function RunTestPageContent() {
                 detections={detections}
                 isRunning={isRunning}
               />
-            )}
+            </div>
+          )}
 
-            {currentStep === 2 && testType === "find_detection_coverage" && (
-              <TechniquePicker
-                mitreTechniques={mitreTechniques}
-                detections={detections}
-                techniqueFromExplore={technique || null}
-                scenarioCardTitle={scenarioCardTitle}
-                scenarioDescriptionFromExplore={scenarioDescriptionFromExplore}
-                coverageScenarioConfirmed={coverageScenarioConfirmed}
-                onConfirmScenario={() => setCoverageScenarioConfirmed(true)}
-                onSelectTechnique={(id) => setTechnique(id)}
+          {testType === "find_detection_coverage" && (
+            <TechniquePicker
+              mitreTechniques={mitreTechniques}
+              detections={detections}
+              techniqueFromExplore={technique || null}
+              scenarioCardTitle={scenarioCardTitle}
+              scenarioDescriptionFromExplore={scenarioDescriptionFromExplore}
+              coverageScenarioConfirmed={coverageScenarioConfirmed}
+              onConfirmScenario={() => setCoverageScenarioConfirmed(true)}
+              onSelectTechnique={(id) => setTechnique(id)}
+            />
+          )}
+        </div>
+
+        {/* Right pane: run configuration, builds up live as selections are made */}
+        <div className="lg:sticky lg:top-20 lg:self-start lg:max-h-[calc(100vh-5.5rem)] lg:overflow-y-auto space-y-4">
+          {!testType ? (
+            <div className="rounded-2xl border border-dashed border-[var(--stroke-soft)] bg-[var(--surface-elevated)] p-8 text-center">
+              <Target className="mx-auto h-8 w-8 text-[var(--surface-subtle-foreground)]" />
+              <p className="mt-3 text-sm text-[var(--surface-subtle-foreground)]">
+                Pick a detection, technique, or scenario on the left to start building this run.
+              </p>
+            </div>
+          ) : (
+            <>
+              <RunTestSummary
+                testType={testType}
+                detectionTitle={summaryDetectionTitle}
+                techniqueId={summaryTechniqueId}
+                environment={targetHost ? environment : null}
+                targetHost={targetHost || null}
               />
-            )}
-
-            {currentStep === 3 && step2Done && (
-              <RunConfigStep
-                environment={environment}
-                onEnvironmentChange={setEnvironment}
-                canRunInEnv={canRunTest}
-                targetHost={targetHost}
-                onTargetHostChange={setTargetHost}
-                runnerTargets={runnerTargets}
-                environmentRunnersCount={environmentRunners.length}
-                canSelectTargetHost={canSelectTargetHost}
-                fieldErrors={fieldErrors}
-                onClearFieldError={(field) => setFieldErrors((prev) => ({ ...prev, [field]: undefined }))}
-                isRunning={isRunning}
-                labOs={labOs}
-                onLabOsChange={setLabOs}
-                error={error}
-                errorIsUpgrade={errorIsUpgrade}
-                stillProcessing={stillProcessing}
-                mitreLoadWarning={mitreLoadWarning}
-                runnerLoadWarning={runnerLoadWarning}
-                execution={execution}
-                logsExpanded={logsExpanded}
-                onToggleLogs={() => setLogsExpanded((v) => !v)}
-                runMode={runMode}
-                onRunModeChange={setRunMode}
-                canScheduleInEnv={canScheduleTest}
-                scheduleType={scheduleType}
-                onScheduleTypeChange={setScheduleType}
-                scheduleTime={scheduleTime}
-                onScheduleTimeChange={setScheduleTime}
-                scheduleIntervalMinutes={scheduleIntervalMinutes}
-                onScheduleIntervalChange={setScheduleIntervalMinutes}
-                isScheduling={isScheduling}
-                showPrevious={currentStep > 1}
-                onPrevious={handlePrevious}
-                canRun={canRun}
-                onRunTest={() => void handleRunTest()}
-              />
-            )}
-          </div>
-        </CardContent>
-      </Card>
-
-      {result && (
-        <ValidationResultCard
-          result={result}
-          lastRunType={lastRunType}
-          canRun={canRun}
-          onRunAgain={() => void handleRunTest()}
-          onViewReport={() => router.push(`/tests/${result.run_id}`)}
-        />
-      )}
+              <Card className="border border-[var(--stroke-soft)] shadow-[var(--shadow-soft)] rounded-2xl">
+                <CardContent className="pt-6">
+                  <RunConfigStep
+                    environment={environment}
+                    onEnvironmentChange={setEnvironment}
+                    canRunInEnv={canRunTest}
+                    targetHost={targetHost}
+                    onTargetHostChange={setTargetHost}
+                    runnerTargets={runnerTargets}
+                    environmentRunnersCount={environmentRunners.length}
+                    canSelectTargetHost={canSelectTargetHost}
+                    fieldErrors={fieldErrors}
+                    onClearFieldError={(field) => setFieldErrors((prev) => ({ ...prev, [field]: undefined }))}
+                    isRunning={isRunning}
+                    labOs={labOs}
+                    onLabOsChange={setLabOs}
+                    error={error}
+                    errorIsUpgrade={errorIsUpgrade}
+                    stillProcessing={stillProcessing}
+                    mitreLoadWarning={mitreLoadWarning}
+                    runnerLoadWarning={runnerLoadWarning}
+                    execution={execution}
+                    logsExpanded={logsExpanded}
+                    onToggleLogs={() => setLogsExpanded((v) => !v)}
+                    runMode={runMode}
+                    onRunModeChange={setRunMode}
+                    canScheduleInEnv={canScheduleTest}
+                    scheduleType={scheduleType}
+                    onScheduleTypeChange={setScheduleType}
+                    scheduleTime={scheduleTime}
+                    onScheduleTimeChange={setScheduleTime}
+                    scheduleIntervalMinutes={scheduleIntervalMinutes}
+                    onScheduleIntervalChange={setScheduleIntervalMinutes}
+                    isScheduling={isScheduling}
+                    canRun={canRun}
+                    onRunTest={() => void handleRunTest()}
+                  />
+                </CardContent>
+              </Card>
+              {result && (
+                <ValidationResultCard
+                  result={result}
+                  lastRunType={lastRunType}
+                  canRun={canRun}
+                  onRunAgain={() => void handleRunTest()}
+                  onViewReport={() => router.push(`/tests/${result.run_id}`)}
+                />
+              )}
+            </>
+          )}
+        </div>
+      </div>
 
       <ProdConfirmDialog
         open={prodConfirmOpen}
