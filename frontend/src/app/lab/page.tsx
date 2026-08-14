@@ -722,7 +722,7 @@ function LabPageContent() {
             <div
               key={`${statusFilter}|${failingOnly}|${search}`}
               className={cn(
-                "stagger-children grid grid-cols-1 gap-4 transition-opacity duration-200 md:grid-cols-2 2xl:grid-cols-3",
+                "stagger-children divide-y divide-[var(--stroke-soft)] overflow-hidden rounded-xl border border-[var(--stroke-soft)] bg-[var(--surface-elevated)] shadow-sm transition-opacity duration-200",
                 refreshing && endpoints.length > 0 && "pointer-events-none opacity-60",
               )}
             >
@@ -739,20 +739,32 @@ function LabPageContent() {
                     key={endpoint.id}
                     onClick={() => setSelectedEndpointId(endpoint.id)}
                     className={cn(
-                      "group relative cursor-pointer rounded-xl border border-[var(--stroke-soft)] bg-[var(--surface-elevated)] p-4 shadow-sm transition-all duration-200 hover:border-[var(--accent-line)] hover:shadow-md",
-                      isSelected && "border-[var(--accent-line)] bg-[var(--surface-subtle)]",
+                      "group flex cursor-pointer flex-wrap items-center gap-x-6 gap-y-2 px-4 py-3 transition-colors hover:bg-[var(--surface-subtle)]",
+                      isSelected && "bg-[var(--surface-subtle)]",
                       tint === "success" && "bg-emerald-500/10",
                       tint === "warning" && "bg-amber-500/10",
                     )}
                   >
-                    <ChevronRight className="absolute right-4 top-4 h-4 w-4 shrink-0 text-[var(--surface-subtle-foreground)] opacity-0 transition-opacity duration-150 group-hover:opacity-100" />
+                    <div className="min-w-[220px] flex-1 space-y-1">
+                      <div className="flex items-center gap-2">
+                        <HardDrive className="h-4 w-4 shrink-0 text-[var(--accent-strong)]" />
+                        <span className="truncate font-medium text-[var(--foreground)]">
+                          {endpoint.hostname}
+                        </span>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <span className="console-pill">{endpoint.environment}</span>
+                        <span className="console-pill console-mono">
+                          {endpoint.runnerType || "runner"}
+                        </span>
+                        {endpoint.username ? (
+                          <span className="console-pill console-mono">{endpoint.username}</span>
+                        ) : null}
+                      </div>
+                    </div>
 
-                    <div className="flex items-center gap-2 pr-6">
-                      <HardDrive className="h-4 w-4 shrink-0 text-[var(--accent-strong)]" />
-                      <span className="truncate font-medium text-[var(--foreground)]">
-                        {endpoint.hostname}
-                      </span>
-                      <Chip tone={endpointTone(endpoint.statusBucket)} dot className="ml-auto shrink-0">
+                    <div className="flex w-28 shrink-0 items-center gap-2">
+                      <Chip tone={endpointTone(endpoint.statusBucket)} dot>
                         {endpoint.status}
                       </Chip>
                       {isLive ? (
@@ -764,17 +776,7 @@ function LabPageContent() {
                       ) : null}
                     </div>
 
-                    <div className="mt-2 flex flex-wrap items-center gap-1.5 text-[11px] text-[var(--surface-subtle-foreground)]">
-                      <span className="console-pill">{endpoint.environment}</span>
-                      <span className="console-pill console-mono">
-                        {endpoint.runnerType || "runner"}
-                      </span>
-                      {endpoint.username ? (
-                        <span className="console-pill console-mono">{endpoint.username}</span>
-                      ) : null}
-                    </div>
-
-                    <div className="mt-3 space-y-2 border-t border-[var(--stroke-soft)] pt-3 text-sm">
+                    <div className="w-36 shrink-0 space-y-1 text-sm">
                       <div className="flex items-center gap-2 text-[var(--foreground)]">
                         {endpoint.osFamily === "windows" ? (
                           <Monitor className="h-4 w-4 shrink-0 text-sky-500" />
@@ -782,14 +784,18 @@ function LabPageContent() {
                           <Terminal className="h-4 w-4 shrink-0 text-emerald-500" />
                         )}
                         <span>{endpoint.os}</span>
-                        <span className="console-mono text-[11px] text-[var(--surface-subtle-foreground)]">
-                          agent {endpoint.agentVersion}
-                        </span>
                       </div>
-                      <div className="flex items-center gap-2 text-[var(--foreground)]">
-                        <Wifi className="h-4 w-4 shrink-0 text-[var(--accent-strong)]" />
-                        <span className="console-mono text-[11px]">{endpoint.ipAddress}</span>
-                      </div>
+                      <p className="console-mono text-[11px] text-[var(--surface-subtle-foreground)]">
+                        agent {endpoint.agentVersion}
+                      </p>
+                    </div>
+
+                    <div className="flex w-40 shrink-0 items-center gap-2 text-sm text-[var(--foreground)]">
+                      <Wifi className="h-4 w-4 shrink-0 text-[var(--accent-strong)]" />
+                      <span className="console-mono text-[11px]">{endpoint.ipAddress}</span>
+                    </div>
+
+                    <div className="min-w-[160px] flex-1 text-sm">
                       {latestTest ? (
                         <div className="flex items-start gap-2">
                           <Chip tone={testTone(latestTest.status)} className="mt-0.5 shrink-0">
@@ -815,52 +821,53 @@ function LabPageContent() {
                       )}
                     </div>
 
-                    <div className="mt-3 flex items-center justify-between gap-2 border-t border-[var(--stroke-soft)] pt-3">
-                      <span
-                        title={formatTimestamp(endpoint.lastCheckInAt)}
-                        className="text-[11px] text-[var(--surface-subtle-foreground)]"
-                      >
-                        Checked in {formatRelativeTime(endpoint.lastCheckInAt)}
-                      </span>
-                      <div
-                        className="flex gap-2"
-                        onClick={(event) => event.stopPropagation()}
-                      >
-                        {endpoint.statusBucket === "paused" ? (
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() =>
-                              setResumeEndpoint({ id: endpoint.id, name: endpoint.hostname })
-                            }
-                          >
-                            <PlayCircle className="h-3.5 w-3.5" />
-                            Resume
-                          </Button>
-                        ) : (
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() =>
-                              setPauseEndpoint({ id: endpoint.id, name: endpoint.hostname })
-                            }
-                          >
-                            <PauseCircle className="h-3.5 w-3.5" />
-                            Pause
-                          </Button>
-                        )}
+                    <div
+                      className="w-28 shrink-0 text-[11px] text-[var(--surface-subtle-foreground)]"
+                      title={formatTimestamp(endpoint.lastCheckInAt)}
+                    >
+                      {formatRelativeTime(endpoint.lastCheckInAt)}
+                    </div>
+
+                    <div
+                      className="flex shrink-0 items-center gap-2"
+                      onClick={(event) => event.stopPropagation()}
+                    >
+                      {endpoint.statusBucket === "paused" ? (
                         <Button
                           variant="outline"
                           size="sm"
                           onClick={() =>
-                            setDeleteEndpoint({ id: endpoint.id, name: endpoint.hostname })
+                            setResumeEndpoint({ id: endpoint.id, name: endpoint.hostname })
                           }
                         >
-                          <Trash2 className="h-3.5 w-3.5" />
-                          Remove
+                          <PlayCircle className="h-3.5 w-3.5" />
+                          Resume
                         </Button>
-                      </div>
+                      ) : (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() =>
+                            setPauseEndpoint({ id: endpoint.id, name: endpoint.hostname })
+                          }
+                        >
+                          <PauseCircle className="h-3.5 w-3.5" />
+                          Pause
+                        </Button>
+                      )}
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() =>
+                          setDeleteEndpoint({ id: endpoint.id, name: endpoint.hostname })
+                        }
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                        Remove
+                      </Button>
                     </div>
+
+                    <ChevronRight className="h-4 w-4 shrink-0 text-[var(--surface-subtle-foreground)] opacity-0 transition-opacity duration-150 group-hover:opacity-100" />
                   </div>
                 );
               })}
