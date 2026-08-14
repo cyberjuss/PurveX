@@ -398,7 +398,7 @@ export default function SiemSettingsPage() {
 
   if (loading) {
     return (
-      <SettingsPageShell eyebrow="Configuration" title="SIEM" divided={false}>
+      <SettingsPageShell eyebrow="Configuration" title="SIEM" width="wide" divided={false}>
         <PageSkeleton withEyebrow withActions variant="list" rows={3} />
       </SettingsPageShell>
     );
@@ -410,6 +410,7 @@ export default function SiemSettingsPage() {
     <SettingsPageShell
       eyebrow="Configuration"
       title="SIEM"
+      width="wide"
       description="Connect your SIEM so PurveX can validate detections and pull evidence on demand. Read-only access only — raw logs never leave your environment."
       status={
         <SettingsStatusPill tone={connections.length > 0 ? "ok" : "muted"}>
@@ -435,6 +436,7 @@ export default function SiemSettingsPage() {
       }
     >
       {showAddForm ? (
+        <div className="max-w-3xl">
         <SiemForm
           editing={!!editingConnection}
           isSaving={isSaving}
@@ -497,6 +499,7 @@ export default function SiemSettingsPage() {
           sentinelWorkspaceName={sentinelWorkspaceName}
           setSentinelWorkspaceName={setSentinelWorkspaceName}
         />
+        </div>
       ) : connections.length === 0 ? (
         <SettingsSection
           title="No connections yet"
