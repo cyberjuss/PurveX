@@ -12,7 +12,6 @@ import {
   PauseCircle,
   Play,
   PlayCircle,
-  RefreshCw,
   Search,
   ServerCog,
   Settings,
@@ -586,15 +585,6 @@ function LabPageContent() {
           Endpoints
         </h1>
         <div className="flex items-center gap-2">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => void fetchEndpoints()}
-            disabled={refreshing}
-          >
-            <RefreshCw className={cn("h-3.5 w-3.5", refreshing && "animate-spin")} />
-            Sync board
-          </Button>
           <Button size="sm" onClick={() => setRegisterOpen(true)}>
             <ServerCog className="h-3.5 w-3.5" />
             Add runner
