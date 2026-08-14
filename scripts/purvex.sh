@@ -356,6 +356,18 @@ start_postgres_service() {
   fi
 }
 
+# Postgres being stopped (e.g. after a reboot, since a fresh install doesn't
+# always leave the service enabled depending on distro/environment) used to
+# surface as a raw asyncpg ConnectionRefusedError on --start with no hint
+# of the actual fix. Only touches the service when DATABASE_URL points at
+# the local instance this script manages -- never for a remote/managed DB
+# (e.g. Supabase) someone may have pointed it at instead.
+ensure_local_postgres_running() {
+  case "${DATABASE_URL:-}" in
+    *127.0.0.1*|*localhost*) start_postgres_service ;;
+  esac
+}
+
 # PostgreSQL is the required backend -- SQLite is not supported. This
 # installs/configures it automatically, prompting only for a password: the
 # role and database are both fixed at "purvex" so there's nothing else to
@@ -751,6 +763,7 @@ run_dev() {
   check_python
   check_node
   load_env
+  ensure_local_postgres_running
 
   stop_matching_processes "backend" "*PurveX*backend*uvicorn*"
   stop_matching_processes "frontend" "*PurveX*frontend*next*dev*"
@@ -790,6 +803,7 @@ run_start() {
   check_python
   check_node
   load_env
+  ensure_local_postgres_running
   prepare_log_files
 
   stop_matching_processes "backend" "*PurveX*backend*uvicorn*"
