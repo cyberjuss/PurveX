@@ -376,16 +376,29 @@ setup_database() {
       fail "A password is required."
     fi
 
-    sudo -u postgres psql -v ON_ERROR_STOP=1 -v pass="${pg_password}" -c "
-      DO \$\$
-      BEGIN
-        IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'purvex') THEN
-          CREATE ROLE purvex LOGIN PASSWORD :'pass';
-        ELSE
-          ALTER ROLE purvex WITH PASSWORD :'pass';
-        END IF;
-      END
-      \$\$;" >/dev/null || fail "Could not configure the PostgreSQL role."
+    # psql's `-v`/`:'pass'` interpolation is only honored when reading a
+    # script (-f or stdin) -- it silently does not apply to -c, and separately
+    # does not apply inside a DO $$ ... $$ block even when it otherwise would.
+    # So: build the CREATE/ALTER as a plain top-level statement, \gexec it,
+    # and run it via a temp file rather than -c. quote_literal() re-quotes the
+    # password for the *generated* command -- concatenation with || yields
+    # the bare value, not a literal, so without it a password containing a
+    # quote breaks the \gexec'd command.
+    local pg_role_sql
+    pg_role_sql="$(mktemp)"
+    cat >"${pg_role_sql}" <<'SQL'
+SELECT 'CREATE ROLE purvex LOGIN PASSWORD ' || quote_literal(:'pass')
+WHERE NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'purvex')
+UNION ALL
+SELECT 'ALTER ROLE purvex WITH PASSWORD ' || quote_literal(:'pass')
+WHERE EXISTS (SELECT FROM pg_roles WHERE rolname = 'purvex')
+\gexec
+SQL
+    chmod 644 "${pg_role_sql}"
+    sudo -u postgres psql -v ON_ERROR_STOP=1 -v pass="${pg_password}" -f "${pg_role_sql}" >/dev/null
+    local pg_role_status=$?
+    rm -f "${pg_role_sql}"
+    [ "${pg_role_status}" -eq 0 ] || fail "Could not configure the PostgreSQL role."
     if ! sudo -u postgres psql -tc "SELECT 1 FROM pg_database WHERE datname = 'purvex'" | grep -q 1; then
       sudo -u postgres psql -c "CREATE DATABASE purvex OWNER purvex;" >/dev/null || fail "Could not create the 'purvex' database."
     fi
