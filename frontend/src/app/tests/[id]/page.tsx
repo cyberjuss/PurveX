@@ -18,6 +18,7 @@ import {
   type DetectionAlert,
 } from "@/lib/api";
 import { format, formatDistanceToNow, intervalToDuration } from "date-fns";
+import { buildRunTestHref } from "@/app/run-test/lib/run-test-url";
 import { cn } from "@/lib/utils";
 import {
   AlertTriangle,
@@ -258,7 +259,7 @@ export default function TestDetailPage() {
         icon={<ModeIcon className="h-5 w-5" />}
         actions={
           detection ? (
-            <Link href={`/run-test?detectionId=${detection.id}`}>
+            <Link href={buildRunTestHref({ d: detection.id })}>
               <Button className="h-10">
                 <Play className="mr-2 h-4 w-4" />
                 Revalidate

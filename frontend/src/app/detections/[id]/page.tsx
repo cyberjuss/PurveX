@@ -32,6 +32,7 @@ import {
 } from "@/lib/api";
 import { Permission } from "@/lib/permissions";
 import { usePermissions } from "@/hooks/usePermissions";
+import { buildRunTestHref } from "@/app/run-test/lib/run-test-url";
 import { cn } from "@/lib/utils";
 import { PageContainer } from "@/components/layout/page-container";
 import { Button } from "@/components/ui/button";
@@ -443,7 +444,7 @@ export default function DetectionDetailPage() {
             detectionId={detection.id}
             detectionTitle={detection.title}
           />
-          <Link href={`/run-test?detectionId=${detection.id}`}>
+          <Link href={buildRunTestHref({ d: detection.id })}>
             <Button className="h-10">
               <Play className="mr-2 h-4 w-4" />
               Validate now
@@ -529,7 +530,7 @@ export default function DetectionDetailPage() {
                           // The whole point of landing here after editing a
                           // rule is to ask "is my edit OK?" — silence is
                           // the wrong answer. Give the user the next move.
-                          <Link href={`/run-test?detection_id=${detection.id}`}>
+                          <Link href={buildRunTestHref({ d: detection.id })}>
                             <Button size="sm" variant="outline">
                               <Play className="mr-1.5 h-3.5 w-3.5" />
                               Run a validation
@@ -847,7 +848,7 @@ export default function DetectionDetailPage() {
                   </pre>
                 </div>
                 <div className="flex flex-wrap gap-2">
-                  <Link href={`/run-test?detectionId=${detection.id}`}>
+                  <Link href={buildRunTestHref({ d: detection.id })}>
                     <Button size="sm">Revalidate</Button>
                   </Link>
                   <Link href={`/agent?detectionId=${detection.id}&alertId=${selectedEvidence.id}`}>

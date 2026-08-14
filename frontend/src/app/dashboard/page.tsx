@@ -32,6 +32,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { LifecycleProgress } from "@/components/lifecycle/LifecycleVisualizer";
+import { buildRunTestHref } from "@/app/run-test/lib/run-test-url";
 import { cn } from "@/lib/utils";
 import { PageContainer } from "@/components/layout/page-container";
 import { PageHeader } from "@/components/layout/page-header";
@@ -728,7 +729,7 @@ export default function DashboardPage() {
             <CardContent className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
               <button
                 type="button"
-                onClick={() => router.push("/run-test?focus=validation&step=2")}
+                onClick={() => router.push(buildRunTestHref({ mode: "validation" }))}
                 className="group rounded-2xl border border-[var(--stroke-soft)] bg-[var(--surface-elevated)] p-4 text-left transition hover:border-[var(--accent-line)] hover:shadow-sm"
               >
                 <div className="flex items-start gap-3">
@@ -760,8 +761,10 @@ export default function DashboardPage() {
                 type="button"
                 onClick={() =>
                   firstTelemetryGapDetection
-                    ? router.push(`/run-test?detectionId=${firstTelemetryGapDetection.id}&environment=${DEFAULT_RERUN_ENV}&focus=telemetry&step=2`)
-                    : router.push("/run-test?focus=telemetry&step=2")
+                    ? router.push(
+                        buildRunTestHref({ d: firstTelemetryGapDetection.id, env: DEFAULT_RERUN_ENV, mode: "telemetry" })
+                      )
+                    : router.push(buildRunTestHref({ mode: "telemetry" }))
                 }
                 className="group rounded-2xl border border-[var(--stroke-soft)] bg-[var(--surface-elevated)] p-4 text-left transition hover:border-[var(--accent-line)] hover:shadow-sm"
               >
@@ -819,7 +822,15 @@ export default function DashboardPage() {
                     </Link>
                   </Button>
                   <Button 
-                    onClick={() => router.push(`/run-test?detectionId=${firstFailure.detection_id || ""}&technique_id=${firstFailure.technique_id || ""}&environment=${firstFailure.environment || DEFAULT_RERUN_ENV}`)}
+                    onClick={() =>
+                      router.push(
+                        buildRunTestHref({
+                          d: firstFailure.detection_id || undefined,
+                          t: firstFailure.technique_id || undefined,
+                          env: (firstFailure.environment as "lab" | "dev" | "prod" | undefined) || DEFAULT_RERUN_ENV,
+                        })
+                      )
+                    }
                     aria-label="Rerun the failed test"
                   >
                     <Play className="h-4 w-4 mr-2" aria-hidden="true" />

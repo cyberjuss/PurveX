@@ -1432,6 +1432,15 @@ export async function getAtomicTests(params?: {
   });
 }
 
+// Resolves a single atomic test definition by its id — used to look up a
+// display name/description from just the `a` query param on /run-test
+// instead of carrying atomic_name/atomic_number around in the URL.
+export async function getAtomicTest(atomicId: string): Promise<AtomicTestDefinition> {
+  return apiFetch(`/atomic/tests/${encodeURIComponent(atomicId)}`, {
+    cache: "no-store",
+  });
+}
+
 export interface AtomicCatalogStatus {
   installed: boolean;
   count: number;

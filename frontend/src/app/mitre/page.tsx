@@ -34,6 +34,7 @@ import {
   type MitreTechnique,
   type AtomicTestDefinition,
 } from "@/lib/api";
+import { buildRunTestHref } from "@/app/run-test/lib/run-test-url";
 import {
   Loader2,
   Search,
@@ -729,15 +730,12 @@ function MitreViewPageContent() {
                           key={test.id || i}
                           test={test}
                           onRun={() => {
-                            const params = new URLSearchParams({
-                              step: "3",
-                              focus: "stale",
-                              technique_id: test.technique_id || selectedTechnique.id,
-                            });
-                            if (test.id) params.set("atomic_id", String(test.id));
-                            if (test.name) params.set("atomic_name", String(test.name));
-                            if (test.test_number) params.set("atomic_number", String(test.test_number));
-                            router.push(`/run-test?${params.toString()}`);
+                            router.push(
+                              buildRunTestHref({
+                                t: test.technique_id || selectedTechnique.id,
+                                a: test.id ? String(test.id) : undefined,
+                              })
+                            );
                           }}
                         />
                       ))}
@@ -755,7 +753,7 @@ function MitreViewPageContent() {
                 >
                   Explore detections
                 </Button>
-                <Button onClick={() => router.push(`/run-test?technique_id=${selectedTechnique.id}`)}>
+                <Button onClick={() => router.push(buildRunTestHref({ t: selectedTechnique.id }))}>
                   <Play className="mr-1.5 h-3.5 w-3.5" />
                   Run test
                 </Button>

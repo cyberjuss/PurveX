@@ -16,6 +16,7 @@ import {
   getAtomicTests,
   getMitreTechniques,
 } from "@/lib/api";
+import { buildRunTestHref } from "@/app/run-test/lib/run-test-url";
 
 export default function TechniqueExplorePage() {
   const params = useParams<{ techniqueId: string }>();
@@ -41,9 +42,10 @@ export default function TechniqueExplorePage() {
     allLabSafe || anyLabSafe
       ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
       : "bg-amber-50 text-amber-700 border border-amber-200";
-  const summaryRunHref = `/run-test?step=3&focus=stale&technique_id=${encodeURIComponent(techniqueId)}${
-    atomics[0]?.name ? `&atomic_name=${encodeURIComponent(atomics[0].name)}` : ""
-  }`;
+  const summaryRunHref = buildRunTestHref({
+    t: techniqueId,
+    a: atomics[0]?.id ? String(atomics[0].id) : undefined,
+  });
   const summaryAtomicDocs = `https://github.com/redcanaryco/atomic-red-team/blob/master/atomics/${techniqueId}/${techniqueId}.md`;
 
   useEffect(() => {
@@ -332,9 +334,10 @@ export default function TechniqueExplorePage() {
                                   </div>
                                   <div className="flex items-center gap-2">
                                     <Link
-                                      href={`/run-test?step=3&focus=stale&technique_id=${encodeURIComponent(
-                                        test.technique_id,
-                                      )}&atomic_name=${encodeURIComponent(test.name)}`}
+                                      href={buildRunTestHref({
+                                        t: test.technique_id,
+                                        a: test.id ? String(test.id) : undefined,
+                                      })}
                                     >
                                       <Button
                                         size="sm"
