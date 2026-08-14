@@ -421,13 +421,16 @@ SQL
       sudo -u postgres psql -c "CREATE DATABASE purvex OWNER purvex;" >/dev/null || fail "Could not create the 'purvex' database."
     fi
 
-    # 127.0.0.1, not "localhost" -- some minimal/containerized environments
-    # have no working hostname resolution for "localhost" at all (NSS/
-    # /etc/hosts misconfigured), even though the literal loopback address
-    # works fine. The role/database setup above never hit this because it
-    # connects via the Unix socket (sudo -u postgres psql, no -h), never a
-    # hostname; this is the first connection in the whole flow that does.
-    set_env_var "DATABASE_URL" "postgresql+asyncpg://purvex:${pg_password}@127.0.0.1:5432/purvex"
+    # A password containing a URL-reserved character (@, :, /, ?, #, %, ...)
+    # silently breaks the connection string if dropped in raw: an @ in the
+    # password, e.g., makes the URL parser split userinfo/host on the wrong
+    # @, so "host" ends up as garbage like "123@127.0.0.1" instead of
+    # 127.0.0.1 -- which then fails to resolve, looking exactly like a DNS
+    # problem even though it never was one. Percent-encode it so any
+    # character in the password is safe here regardless of what it is.
+    local pg_password_urlenc
+    pg_password_urlenc="$($PYTHON -c 'import urllib.parse, sys; print(urllib.parse.quote(sys.argv[1], safe=""))' "${pg_password}")"
+    set_env_var "DATABASE_URL" "postgresql+asyncpg://purvex:${pg_password_urlenc}@127.0.0.1:5432/purvex"
     load_env
   fi
 
