@@ -121,6 +121,7 @@ function MitreViewPageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const focus = searchParams.get("focus");
+  const tacticParam = searchParams.get("tactic");
 
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<"all" | CoverageStatus>("all");
@@ -165,6 +166,10 @@ function MitreViewPageContent() {
   useEffect(() => {
     if (focus === "uncovered") setStatusFilter("unmapped");
   }, [focus]);
+
+  useEffect(() => {
+    if (tacticParam) setSelectedTactic(tacticParam);
+  }, [tacticParam]);
 
   const loadAtomicTestsForTechnique = useCallback(async (techniqueId: string) => {
     if (atomicCatalogAvailable === false) {
