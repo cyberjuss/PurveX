@@ -578,6 +578,12 @@ export default function SiemSettingsPage() {
                           ? new Date(conn.last_validated_at).toLocaleString()
                           : "never"}
                       </p>
+                      {!isConnected && health?.message ? (
+                        <p className="flex items-start gap-1.5 text-xs text-rose-600 dark:text-rose-300">
+                          <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                          <span>{health.message}</span>
+                        </p>
+                      ) : null}
                     </div>
                   </div>
                   <div className="flex shrink-0 flex-wrap items-center gap-2 sm:justify-end">
