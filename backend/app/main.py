@@ -230,7 +230,7 @@ async def create_db_and_tables():
                 # password-change session revocation. Without this column,
                 # every User query errors with "no such column".
                 if "token_valid_after" not in user_columns:
-                    sync_conn.execute(text("ALTER TABLE users ADD COLUMN token_valid_after DATETIME"))
+                    sync_conn.execute(text("ALTER TABLE users ADD COLUMN token_valid_after TIMESTAMP"))
                 runner_columns = {col["name"] for col in inspector.get_columns("environment_runner_configs")}
                 if "os" not in runner_columns:
                     sync_conn.execute(text("ALTER TABLE environment_runner_configs ADD COLUMN os VARCHAR(255)"))
@@ -239,15 +239,15 @@ async def create_db_and_tables():
                 if "agent_version" not in runner_columns:
                     sync_conn.execute(text("ALTER TABLE environment_runner_configs ADD COLUMN agent_version VARCHAR(255)"))
                 if "last_check_in" not in runner_columns:
-                    sync_conn.execute(text("ALTER TABLE environment_runner_configs ADD COLUMN last_check_in DATETIME"))
+                    sync_conn.execute(text("ALTER TABLE environment_runner_configs ADD COLUMN last_check_in TIMESTAMP"))
                 if "status" not in runner_columns:
                     sync_conn.execute(text("ALTER TABLE environment_runner_configs ADD COLUMN status VARCHAR(100)"))
                 if "runner_token_hash" not in runner_columns:
                     sync_conn.execute(text("ALTER TABLE environment_runner_configs ADD COLUMN runner_token_hash VARCHAR(255)"))
                 if "runner_token_last_rotated_at" not in runner_columns:
-                    sync_conn.execute(text("ALTER TABLE environment_runner_configs ADD COLUMN runner_token_last_rotated_at DATETIME"))
+                    sync_conn.execute(text("ALTER TABLE environment_runner_configs ADD COLUMN runner_token_last_rotated_at TIMESTAMP"))
                 if "runner_token_expires_at" not in runner_columns:
-                    sync_conn.execute(text("ALTER TABLE environment_runner_configs ADD COLUMN runner_token_expires_at DATETIME"))
+                    sync_conn.execute(text("ALTER TABLE environment_runner_configs ADD COLUMN runner_token_expires_at TIMESTAMP"))
                 if "owner_name" not in runner_columns:
                     sync_conn.execute(text("ALTER TABLE environment_runner_configs ADD COLUMN owner_name VARCHAR(255)"))
                 if "owner_email" not in runner_columns:
@@ -294,9 +294,9 @@ async def create_db_and_tables():
                 if "enabled_upstream" not in detection_columns:
                     sync_conn.execute(text("ALTER TABLE detections ADD COLUMN enabled_upstream BOOLEAN"))
                 if "last_synced_at" not in detection_columns:
-                    sync_conn.execute(text("ALTER TABLE detections ADD COLUMN last_synced_at DATETIME"))
+                    sync_conn.execute(text("ALTER TABLE detections ADD COLUMN last_synced_at TIMESTAMP"))
                 if "drift_detected_at" not in detection_columns:
-                    sync_conn.execute(text("ALTER TABLE detections ADD COLUMN drift_detected_at DATETIME"))
+                    sync_conn.execute(text("ALTER TABLE detections ADD COLUMN drift_detected_at TIMESTAMP"))
                 # Git provenance columns (alembic 0007 — Detection-as-Code).
                 if "detection_source_id" not in detection_columns:
                     sync_conn.execute(

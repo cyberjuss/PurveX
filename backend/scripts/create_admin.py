@@ -86,7 +86,7 @@ async def main() -> None:
             if verify_password(settings.DEFAULT_ADMIN_PASSWORD, admin.hashed_password):
                 print("Default admin password detected. Please set a new password.")
                 username = admin.username or admin.email
-                password = args.password or getpass.getpass("Admin password: ")
+                password = args.password or getpass.getpass("Enter password: ")
                 if not password:
                     raise SystemExit("Password is required.")
                 admin.hashed_password = hash_password(password)
@@ -96,15 +96,12 @@ async def main() -> None:
             else:
                 print("Admin password is already non-default; no action needed.")
             return
-        username = (args.username or "").strip()
-        email = (args.email or "").strip()
-        if not username:
-            username = input("Admin username: ").strip()
-        if not email:
-            email = username
-        password = args.password or getpass.getpass("Admin password: ")
-        if not username or not password:
-            raise SystemExit("Username and password are required.")
+        username = (args.username or "").strip() or "admin"
+        email = (args.email or "").strip() or username
+        print("Create Admin")
+        password = args.password or getpass.getpass("Enter password: ")
+        if not password:
+            raise SystemExit("Password is required.")
         org = await ensure_org(session)
         user = admin
         if not user:

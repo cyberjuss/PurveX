@@ -6,7 +6,7 @@ when the backend starts, without requiring a manual script run.
 """
 import asyncio
 import logging
-from sqlalchemy import text, select
+from sqlalchemy import text, select, inspect
 from datetime import datetime
 
 from ..db import async_sessionmaker, async_engine
@@ -30,40 +30,39 @@ async def ensure_rbac_tables():
     """
     try:
         async with async_engine.begin() as conn:
-            # Add criticality column to detections if it doesn't exist
-            # This is a migration for existing databases
-            try:
-                await conn.execute(text("""
-                    ALTER TABLE detections ADD COLUMN criticality VARCHAR DEFAULT 'MEDIUM'
-                """))
-                logger.info("✅ Added criticality column to detections")
-            except Exception:
-                # Column might already exist - that's fine
-                pass
-            
-            # SECURITY: Add account lockout fields to users table if they don't exist
-            try:
-                await conn.execute(text("""
-                    ALTER TABLE users ADD COLUMN failed_login_attempts INTEGER
-                """))
-                # Set default value for existing rows
-                await conn.execute(text("""
-                    UPDATE users SET failed_login_attempts = 0 WHERE failed_login_attempts IS NULL
-                """))
-                logger.info("✅ Added failed_login_attempts column to users")
-            except Exception:
-                # Column might already exist - that's fine
-                pass
-            
-            try:
-                await conn.execute(text("""
-                    ALTER TABLE users ADD COLUMN locked_until DATETIME
-                """))
-                logger.info("✅ Added locked_until column to users")
-            except Exception:
-                # Column might already exist - that's fine
-                pass
-            
+            def _add_missing_columns(sync_conn):
+                inspector = inspect(sync_conn)
+
+                detection_columns = {col["name"] for col in inspector.get_columns("detections")}
+                if "criticality" not in detection_columns:
+                    sync_conn.execute(text("""
+                        ALTER TABLE detections ADD COLUMN criticality VARCHAR DEFAULT 'MEDIUM'
+                    """))
+                    logger.info("✅ Added criticality column to detections")
+
+                # SECURITY: account lockout fields
+                user_columns = {col["name"] for col in inspector.get_columns("users")}
+                if "failed_login_attempts" not in user_columns:
+                    sync_conn.execute(text("""
+                        ALTER TABLE users ADD COLUMN failed_login_attempts INTEGER
+                    """))
+                    sync_conn.execute(text("""
+                        UPDATE users SET failed_login_attempts = 0 WHERE failed_login_attempts IS NULL
+                    """))
+                    logger.info("✅ Added failed_login_attempts column to users")
+                if "locked_until" not in user_columns:
+                    sync_conn.execute(text("""
+                        ALTER TABLE users ADD COLUMN locked_until TIMESTAMP
+                    """))
+                    logger.info("✅ Added locked_until column to users")
+
+            # Column existence is checked up front (rather than try/ALTER/except)
+            # because Postgres aborts the whole transaction on a failed DDL
+            # statement -- a later, legitimate ALTER in the same connection
+            # would silently never apply once an earlier one hit a
+            # "column already exists" error.
+            await conn.run_sync(_add_missing_columns)
+
     except Exception as e:
         logger.warning(f"Could not add columns (may already exist): {e}")
 
@@ -150,13 +149,21 @@ async def map_role_permissions_if_needed():
             role_id = role_ids[role]
             for perm_name, perm_id in all_perms.items():
                 if perm_name in allowed_names:
-                    await session.execute(
+                    existing_mapping = await session.execute(
                         text("""
-                            INSERT OR IGNORE INTO role_permissions (role_id, permission_id)
-                            VALUES (:role_id, :perm_id)
+                            SELECT 1 FROM role_permissions
+                            WHERE role_id = :role_id AND permission_id = :perm_id
                         """),
                         {"role_id": role_id, "perm_id": perm_id}
                     )
+                    if existing_mapping.scalar_one_or_none() is None:
+                        await session.execute(
+                            text("""
+                                INSERT INTO role_permissions (role_id, permission_id)
+                                VALUES (:role_id, :perm_id)
+                            """),
+                            {"role_id": role_id, "perm_id": perm_id}
+                        )
                 else:
                     await session.execute(
                         text("""

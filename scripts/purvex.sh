@@ -167,7 +167,7 @@ check_python() {
   if [ -z "$PYTHON" ]; then
     describe_install_python
     if [ -n "${PYTHON_INSTALL_CMD}" ] && confirm "Install Python now?"; then
-      info "Running: ${PYTHON_INSTALL_CMD}"
+      info "Installing Python..."
       bash -c "${PYTHON_INSTALL_CMD}" < /dev/tty || true
       PYTHON="$(find_python)"
     fi
@@ -184,7 +184,7 @@ check_node() {
   if ! command -v node >/dev/null 2>&1 || ! command -v npm >/dev/null 2>&1; then
     describe_install_node
     if [ -n "${NODE_INSTALL_CMD}" ] && confirm "Install Node.js now?"; then
-      info "Running: ${NODE_INSTALL_CMD}"
+      info "Installing Node.js..."
       bash -c "${NODE_INSTALL_CMD}" < /dev/tty || true
     fi
     if ! command -v node >/dev/null 2>&1 || ! command -v npm >/dev/null 2>&1; then
@@ -264,15 +264,14 @@ ensure_env_file() {
     local jwt_key
     jwt_key="$($PYTHON -c 'import secrets; print(secrets.token_urlsafe(32))')"
     set_env_var "JWT_SECRET_KEY" "${jwt_key}"
-    info "Generated JWT_SECRET_KEY"
+    info "Generated secret key"
   fi
 
   if ! env_var_is_set "PURVEX_ENCRYPTION_KEY"; then
     local enc_key
     enc_key="$($PYTHON -c 'import base64, secrets; print(base64.urlsafe_b64encode(secrets.token_bytes(32)).decode())')"
     set_env_var "PURVEX_ENCRYPTION_KEY" "${enc_key}"
-    info "Generated PURVEX_ENCRYPTION_KEY"
-    warn "Back up PURVEX_ENCRYPTION_KEY (in .env) somewhere safe -- losing it makes any stored SIEM credentials unrecoverable."
+    info "Generated encryption key"
   fi
 }
 
@@ -315,6 +314,95 @@ setup_frontend() {
   info "Frontend dependencies installed."
 }
 
+# Sets PG_INSTALL_CMD to the install command for this OS (empty if none
+# known), same pattern as describe_install_python/describe_install_node.
+describe_install_postgres() {
+  PG_INSTALL_CMD=""
+  case "$(os_id)" in
+    ubuntu|debian|kali|linuxmint|raspbian|pop)
+      PG_INSTALL_CMD="sudo apt-get update && sudo apt-get install -y postgresql"
+      ;;
+    fedora|rhel|centos|rocky|almalinux)
+      PG_INSTALL_CMD="sudo dnf install -y postgresql-server postgresql-contrib && sudo postgresql-setup --initdb"
+      ;;
+    arch|manjaro|endeavouros)
+      PG_INSTALL_CMD="sudo pacman -S --noconfirm postgresql && sudo -u postgres initdb -D /var/lib/postgres/data"
+      ;;
+    *)
+      if [ "$(uname -s)" = "Darwin" ]; then
+        PG_INSTALL_CMD="brew install postgresql@16"
+      fi
+      ;;
+  esac
+}
+
+start_postgres_service() {
+  if command -v systemctl >/dev/null 2>&1; then
+    sudo systemctl enable --now postgresql >/dev/null 2>&1 || true
+  elif command -v brew >/dev/null 2>&1; then
+    brew services start postgresql@16 >/dev/null 2>&1 || brew services start postgresql >/dev/null 2>&1 || true
+  fi
+}
+
+# PostgreSQL is the required backend -- SQLite is not supported. This
+# installs/configures it automatically, prompting only for a password: the
+# role and database are both fixed at "purvex" so there's nothing else to
+# type. Safe to re-run: skips straight to migrations if DATABASE_URL is
+# already set, and role/database creation is idempotent.
+setup_database() {
+  if env_var_is_set "DATABASE_URL"; then
+    info "DATABASE_URL already set; skipping PostgreSQL install/role setup."
+  else
+    if ! command -v psql >/dev/null 2>&1; then
+      describe_install_postgres
+      if [ -z "${PG_INSTALL_CMD}" ]; then
+        fail "PostgreSQL is required. Install it and set DATABASE_URL in .env, then re-run --setup."
+      fi
+      info "Installing PostgreSQL..."
+      bash -c "${PG_INSTALL_CMD}" < /dev/tty || fail "PostgreSQL installation failed."
+      command -v psql >/dev/null 2>&1 || fail "PostgreSQL installation did not put 'psql' on PATH."
+    fi
+
+    start_postgres_service
+
+    if [ ! -e /dev/tty ]; then
+      fail "PostgreSQL needs a password and no terminal is attached. Set DATABASE_URL in .env manually, then re-run --setup."
+    fi
+
+    local pg_password
+    read -r -s -p "Enter password: " pg_password < /dev/tty
+    printf "\n"
+    if [ -z "${pg_password}" ]; then
+      fail "A password is required."
+    fi
+
+    sudo -u postgres psql -v ON_ERROR_STOP=1 -v pass="${pg_password}" -c "
+      DO \$\$
+      BEGIN
+        IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'purvex') THEN
+          CREATE ROLE purvex LOGIN PASSWORD :'pass';
+        ELSE
+          ALTER ROLE purvex WITH PASSWORD :'pass';
+        END IF;
+      END
+      \$\$;" >/dev/null || fail "Could not configure the PostgreSQL role."
+    if ! sudo -u postgres psql -tc "SELECT 1 FROM pg_database WHERE datname = 'purvex'" | grep -q 1; then
+      sudo -u postgres psql -c "CREATE DATABASE purvex OWNER purvex;" >/dev/null || fail "Could not create the 'purvex' database."
+    fi
+
+    set_env_var "DATABASE_URL" "postgresql+asyncpg://purvex:${pg_password}@localhost:5432/purvex"
+    load_env
+  fi
+
+  cd "${BACKEND_DIR}"
+  if [ -f "venv/Scripts/activate" ]; then
+    source venv/Scripts/activate
+  elif [ -f "venv/bin/activate" ]; then
+    source venv/bin/activate
+  fi
+  alembic upgrade head >/dev/null 2>&1 || fail "Database migration failed. Run 'cd backend && alembic upgrade head' to see details."
+}
+
 run_setup() {
   check_python
   check_node
@@ -322,7 +410,13 @@ run_setup() {
   load_env
   setup_backend
   setup_frontend
-  info "Setup complete. Run: ./scripts/purvex.sh --start"
+  setup_database
+  info "Setup complete."
+  if confirm "Start PurveX now?"; then
+    run_start
+  else
+    info "Run ./scripts/purvex.sh --start when you're ready."
+  fi
 }
 
 # ── Start ────────────────────────────────────────────────────────────────────
@@ -508,15 +602,6 @@ cleanup() {
 
 trap cleanup EXIT INT TERM
 
-wait_for_db() {
-  local db_path="${BACKEND_DIR}/purvex.db"
-  for _ in $(seq 1 30); do
-    if [ -f "${db_path}" ]; then return 0; fi
-    sleep 0.5
-  done
-  return 1
-}
-
 bootstrap_admin() {
   local marker="${ROOT_DIR}/.purvex_admin_bootstrapped"
   if [ -f "${marker}" ]; then return; fi
@@ -530,14 +615,14 @@ bootstrap_admin() {
     source venv/bin/activate
   fi
 
-  if wait_for_db; then
-    info "First-run admin setup..."
-    if $PYTHON scripts/create_admin.py --only-if-missing; then
-      touch "${marker}"
-      info "Admin created. Use those credentials to sign in."
-    else
-      warn "Admin bootstrap failed; will retry next start."
-    fi
+  # Reached after wait_for_backend_ready, so the DB (Postgres) is already
+  # up and migrated -- no separate readiness wait needed here. create_admin.py
+  # prints its own "Create Admin" header.
+  if $PYTHON scripts/create_admin.py --only-if-missing; then
+    touch "${marker}"
+    info "Admin created. Use those credentials to sign in."
+  else
+    warn "Admin bootstrap failed; will retry next start."
   fi
 }
 

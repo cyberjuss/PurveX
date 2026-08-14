@@ -45,7 +45,7 @@ PurveX is a detection validation platform for security teams. It connects to you
 | npm | 9+ | `npm --version` |
 | Git | optional | `git --version` |
 
-No database installation is required. PurveX stores its data in a local SQLite file by default; PostgreSQL is only worth setting up once more than a couple of people share the same instance (set `DATABASE_URL` to switch).
+PurveX runs on PostgreSQL. `./scripts/purvex.sh --setup` installs and configures it for you (prompting only for a database password) — no separate install step needed.
 
 ---
 
@@ -133,13 +133,13 @@ See [what PurveX does and doesn't collect](https://purve-x-landing-page.vercel.a
 
 ## Environment variables
 
-See [`.env.example`](.env.example) for all options. `./scripts/purvex.sh --setup` fills in the two required secrets automatically; everything else has a sensible default.
+See [`.env.example`](.env.example) for all options. `./scripts/purvex.sh --setup` fills in the required secrets and PostgreSQL connection automatically; everything else has a sensible default.
 
 | Variable | Required | Description |
 |----------|----------|-------------|
 | `JWT_SECRET_KEY` | auto-generated | JWT signing key |
 | `PURVEX_ENCRYPTION_KEY` | auto-generated | Fernet key for secrets at rest — back this up |
-| `DATABASE_URL` | no | PostgreSQL connection string; unset means local SQLite |
+| `DATABASE_URL` | auto-configured | PostgreSQL connection string |
 | `PURVEX_ENV` | no | `dev` / `staging` / `prod` (default: `dev`) |
 | `OPENAI_API_KEY` | no | Enables AI assistant features |
 
