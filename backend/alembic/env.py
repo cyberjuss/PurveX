@@ -17,7 +17,11 @@ config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-config.set_main_option("sqlalchemy.url", settings.database_url)
+# configparser (which backs alembic's Config) treats % as the start of
+# %(name)s-style interpolation, so a percent-encoded character anywhere in
+# the URL -- e.g. %40 for an @ in the DB password -- raises
+# "invalid interpolation syntax" unless every literal % is escaped as %%.
+config.set_main_option("sqlalchemy.url", settings.database_url.replace("%", "%%"))
 
 target_metadata = Base.metadata
 
