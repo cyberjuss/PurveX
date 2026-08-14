@@ -421,7 +421,13 @@ SQL
       sudo -u postgres psql -c "CREATE DATABASE purvex OWNER purvex;" >/dev/null || fail "Could not create the 'purvex' database."
     fi
 
-    set_env_var "DATABASE_URL" "postgresql+asyncpg://purvex:${pg_password}@localhost:5432/purvex"
+    # 127.0.0.1, not "localhost" -- some minimal/containerized environments
+    # have no working hostname resolution for "localhost" at all (NSS/
+    # /etc/hosts misconfigured), even though the literal loopback address
+    # works fine. The role/database setup above never hit this because it
+    # connects via the Unix socket (sudo -u postgres psql, no -h), never a
+    # hostname; this is the first connection in the whole flow that does.
+    set_env_var "DATABASE_URL" "postgresql+asyncpg://purvex:${pg_password}@127.0.0.1:5432/purvex"
     load_env
   fi
 
