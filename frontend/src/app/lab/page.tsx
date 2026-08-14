@@ -2,11 +2,10 @@
 
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { Fragment, Suspense, useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useState } from "react";
 import {
   Activity,
   AlertTriangle,
-  ChevronDown,
   ChevronRight,
   HardDrive,
   Monitor,
@@ -20,6 +19,7 @@ import {
   Terminal,
   Trash2,
   Wifi,
+  X,
 } from "lucide-react";
 
 import { PageContainer } from "@/components/layout/page-container";
@@ -33,7 +33,15 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { LoadingState } from "@/components/ui/loading-state";
+import {
+  Sheet,
+  SheetBody,
+  SheetContent,
+  SheetFooter,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet";
+import { PageSkeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/components/ui/toast";
 import { apiFetch, getTest, type TestDetailResponse } from "@/lib/api";
 import { cn } from "@/lib/utils";
@@ -117,6 +125,24 @@ function testTone(status?: string | null): NonNullable<ChipProps["tone"]> {
   return "muted";
 }
 
+// Small solid dot color for the reliability trend in the endpoint Sheet —
+// same tone vocabulary as testTone/Chip, just rendered as a plain dot
+// instead of a full pill so a run of them reads as a sparkline.
+function toneDotColor(tone: NonNullable<ChipProps["tone"]>): string {
+  switch (tone) {
+    case "success":
+      return "bg-emerald-500";
+    case "danger":
+      return "bg-red-500";
+    case "warning":
+      return "bg-amber-500";
+    case "info":
+      return "bg-sky-500";
+    default:
+      return "bg-slate-400 dark:bg-slate-500";
+  }
+}
+
 function mapOsFamily(os: string): OsFilter {
   const value = os.toLowerCase();
   if (value.includes("windows")) return "windows";
@@ -172,7 +198,25 @@ function LabPageContent() {
   const [osFilter, setOsFilter] = useState<OsFilter>("all");
   const [failingOnly, setFailingOnly] = useState(false);
   const [filtersOpen, setFiltersOpen] = useState(false);
-  const [expandedRows, setExpandedRows] = useState<Set<number>>(new Set());
+
+  // Sheet inspector — selection is stored as an id (not the row object) so
+  // it stays correct across refetches/local status updates instead of
+  // holding a stale snapshot. `sheetMounted`/`sheetVisible` drive our own
+  // open/close transition since Sheet's built-in animate-in/out classes are
+  // dead code app-wide (no tailwindcss-animate plugin installed).
+  const [selectedEndpointId, setSelectedEndpointId] = useState<number | null>(null);
+  const [displayEndpoint, setDisplayEndpoint] = useState<LabEndpoint | null>(null);
+  const [sheetMounted, setSheetMounted] = useState(false);
+  const [sheetVisible, setSheetVisible] = useState(false);
+
+  // Brief tone-tinted row background after a pause/resume succeeds.
+  const [recentlyChanged, setRecentlyChanged] = useState<{
+    id: number;
+    tone: "success" | "warning";
+  } | null>(null);
+
+  const [autoOpenedTestId, setAutoOpenedTestId] = useState<number | null>(null);
+  const [liveBannerDismissed, setLiveBannerDismissed] = useState(false);
 
   const [registerOpen, setRegisterOpen] = useState(false);
   const [deleteEndpoint, setDeleteEndpoint] = useState<{ id: number; name: string } | null>(null);
@@ -380,6 +424,74 @@ function LabPageContent() {
   const currentTestStatus = (currentTest?.status || "pending").toLowerCase();
   const currentTestProgress =
     currentTestStatus === "running" ? 62 : currentTestStatus === "pending" ? 24 : 100;
+  const currentTestLive = currentTestStatus === "running" || currentTestStatus === "pending";
+
+  // Reuse the same endpoint <-> test association the recent-runs cross
+  // reference already relies on (hostname match first, environment as a
+  // fallback) so the live-run panel and pulse indicator anchor to the same
+  // row the "Recent validation" column would.
+  const liveEndpointMatch = useMemo(() => {
+    if (!currentTest) return null;
+    return (
+      endpoints.find((endpoint) => endpoint.hostname === currentTest.endpoint) ||
+      endpoints.find((endpoint) => endpoint.environment === currentTest.environment) ||
+      null
+    );
+  }, [currentTest, endpoints]);
+
+  const selectedEndpoint = useMemo(() => {
+    if (selectedEndpointId === null) return null;
+    return endpoints.find((endpoint) => endpoint.id === selectedEndpointId) || null;
+  }, [endpoints, selectedEndpointId]);
+
+  // Keep rendering the last-known endpoint while the Sheet is fading out so
+  // the panel doesn't go blank mid-transition (selectedEndpoint itself goes
+  // null the instant the row/close action fires).
+  useEffect(() => {
+    if (selectedEndpoint) setDisplayEndpoint(selectedEndpoint);
+  }, [selectedEndpoint]);
+
+  // Hand-rolled open/close transition: `sheetMounted` keeps the Sheet's DOM
+  // around long enough for the exit transition to play (Radix would
+  // otherwise unmount instantly since there's no CSS *animation* — only a
+  // transition — for it to wait on). `sheetVisible` is the actual
+  // entered/exited flag the transform/opacity classes key off of.
+  useEffect(() => {
+    if (selectedEndpointId !== null) {
+      setSheetMounted(true);
+      let raf2 = 0;
+      const raf1 = requestAnimationFrame(() => {
+        raf2 = requestAnimationFrame(() => setSheetVisible(true));
+      });
+      return () => {
+        cancelAnimationFrame(raf1);
+        cancelAnimationFrame(raf2);
+      };
+    }
+    setSheetVisible(false);
+    const timeout = setTimeout(() => setSheetMounted(false), 300);
+    return () => clearTimeout(timeout);
+  }, [selectedEndpointId]);
+
+  // Auto-open the Sheet on the matching row the first time a given live run
+  // is detected — guarded by autoOpenedTestId so it doesn't keep reopening
+  // a Sheet the user deliberately closed on every 3s poll tick.
+  useEffect(() => {
+    if (!currentTest) return;
+    if (autoOpenedTestId === currentTest.id) return;
+    if (liveEndpointMatch) {
+      setSelectedEndpointId(liveEndpointMatch.id);
+      setAutoOpenedTestId(currentTest.id);
+    }
+  }, [currentTest, liveEndpointMatch, autoOpenedTestId]);
+
+  useEffect(() => {
+    setLiveBannerDismissed(false);
+  }, [currentTest?.id]);
+
+  function closeSheet() {
+    setSelectedEndpointId(null);
+  }
 
   async function handleDeleteEndpoint(endpointId: number) {
     try {
@@ -389,6 +501,7 @@ function LabPageContent() {
       setEndpoints((previous) =>
         previous.filter((endpoint) => endpoint.id !== endpointId),
       );
+      setSelectedEndpointId((current) => (current === endpointId ? null : current));
       toast({
         type: "success",
         title: "Endpoint removed",
@@ -416,6 +529,12 @@ function LabPageContent() {
             : endpoint,
         ),
       );
+      setRecentlyChanged({ id: endpointId, tone: "warning" });
+      setTimeout(() => {
+        setRecentlyChanged((previous) =>
+          previous?.id === endpointId ? null : previous,
+        );
+      }, 1500);
       toast({
         type: "success",
         title: "Pause requested",
@@ -445,6 +564,12 @@ function LabPageContent() {
             : endpoint,
         ),
       );
+      setRecentlyChanged({ id: endpointId, tone: "success" });
+      setTimeout(() => {
+        setRecentlyChanged((previous) =>
+          previous?.id === endpointId ? null : previous,
+        );
+      }, 1500);
       toast({
         type: "success",
         title: "Resume requested",
@@ -460,6 +585,14 @@ function LabPageContent() {
             : "Unable to send resume command.",
       });
     }
+  }
+
+  function clearFilters() {
+    setSearch("");
+    setStatusFilter("all");
+    setEnvironmentFilter("all");
+    setOsFilter("all");
+    setFailingOnly(false);
   }
 
   // Build counts for the secondary filter rows. Computed inline so the
@@ -482,6 +615,18 @@ function LabPageContent() {
       return acc;
     },
     {} as Record<string, number>,
+  );
+
+  if (endpointsLoading && endpoints.length === 0) {
+    return (
+      <PageContainer maxWidth="full" className="space-y-6">
+        <PageSkeleton variant="table" withActions rows={8} />
+      </PageContainer>
+    );
+  }
+
+  const isLiveMatch = Boolean(
+    currentTest && liveEndpointMatch && displayEndpoint && liveEndpointMatch.id === displayEndpoint.id,
   );
 
   return (
@@ -507,6 +652,31 @@ function LabPageContent() {
           </Button>
         </div>
       </header>
+
+      {currentTest && !liveEndpointMatch && !liveBannerDismissed ? (
+        <div className="flex items-center justify-between gap-3 rounded-xl border border-[var(--stroke-soft)] bg-[var(--surface-elevated)] px-4 py-2.5 text-sm">
+          <div className="flex min-w-0 items-center gap-2">
+            <span
+              aria-hidden
+              className="h-2 w-2 shrink-0 animate-pulse rounded-full bg-sky-500"
+            />
+            <span className="truncate text-[var(--foreground)]">
+              Lab run #{currentTest.id} is live but isn&apos;t linked to a registered endpoint.
+            </span>
+            <Chip tone={testTone(currentTest.status)} size="sm">
+              {currentTest.status || "pending"}
+            </Chip>
+          </div>
+          <button
+            type="button"
+            onClick={() => setLiveBannerDismissed(true)}
+            className="shrink-0 rounded-full p-1 text-[var(--surface-subtle-foreground)] hover:text-[var(--foreground)]"
+            aria-label="Dismiss"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+      ) : null}
 
       {/* Search — single hairline underline, no border box. */}
       <div className="relative border-b border-[var(--stroke-soft)] pb-2">
@@ -545,22 +715,41 @@ function LabPageContent() {
         })}
       </nav>
 
-      {/* Stat line + inline toggles + filters expander. */}
-      <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-2 text-xs text-slate-500 dark:text-slate-400">
-        <div className="flex flex-wrap items-center gap-x-3">
-          <span>
-            <span className="font-medium text-[var(--foreground)]">{filteredEndpoints.length}</span> in scope
-          </span>
-          <span aria-hidden>·</span>
-          <span>
-            <span className="font-medium text-[var(--foreground)]">{latestCheckInCount}</span> live heartbeat
-          </span>
-          <span aria-hidden>·</span>
-          <span>
-            <span className="font-medium text-[var(--foreground)]">{attentionCount}</span> needs eyes
-          </span>
+      {/* Metric strip + inline toggles + filters expander. */}
+      <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-3">
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="console-metric-strip">
+            <span className="console-metric-icon">
+              <HardDrive className="h-4 w-4" />
+            </span>
+            <div>
+              <p className="console-metric-value">{filteredEndpoints.length}</p>
+              <p className="text-[11px] text-[var(--surface-subtle-foreground)]">in scope</p>
+            </div>
+          </div>
+          <div className="console-metric-strip">
+            <span className="console-metric-icon">
+              <Activity className="h-4 w-4" />
+            </span>
+            <div>
+              <p className="console-metric-value">{latestCheckInCount}</p>
+              <p className="text-[11px] text-[var(--surface-subtle-foreground)]">live heartbeat</p>
+            </div>
+          </div>
+          <div
+            className="console-metric-strip"
+            data-tone={attentionCount > 0 ? "warning" : undefined}
+          >
+            <span className="console-metric-icon">
+              <AlertTriangle className="h-4 w-4" />
+            </span>
+            <div>
+              <p className="console-metric-value">{attentionCount}</p>
+              <p className="text-[11px] text-[var(--surface-subtle-foreground)]">needs eyes</p>
+            </div>
+          </div>
         </div>
-        <div className="flex flex-wrap items-center gap-x-4">
+        <div className="flex flex-wrap items-center gap-x-4 text-xs text-slate-500 dark:text-slate-400">
           <button
             type="button"
             onClick={() => setFailingOnly((value) => !value)}
@@ -617,9 +806,23 @@ function LabPageContent() {
             </div>
           ) : null}
 
-          {endpointsLoading && endpoints.length === 0 ? (
-            <div className="py-14">
-              <LoadingState message="Loading endpoint inventory..." size="sm" />
+          {endpoints.length === 0 ? (
+            <div className="flex flex-col items-center justify-center gap-3 px-6 py-20 text-center">
+              <ServerCog className="h-8 w-8 text-[var(--surface-subtle-foreground)]" />
+              <div>
+                <p className="text-base font-semibold text-[var(--foreground)]">
+                  No runners registered yet.
+                </p>
+                <p className="mt-1 max-w-lg text-sm text-[var(--surface-subtle-foreground)]">
+                  A runner is an agent installed on a Windows or Linux endpoint that
+                  executes atomic validation tests on PurveX&apos;s behalf. Register one
+                  to start building your fleet.
+                </p>
+              </div>
+              <Button size="sm" onClick={() => setRegisterOpen(true)}>
+                <ServerCog className="h-3.5 w-3.5" />
+                Add runner
+              </Button>
             </div>
           ) : filteredEndpoints.length === 0 ? (
             <div className="flex flex-col items-center justify-center gap-3 px-6 py-20 text-center">
@@ -629,16 +832,23 @@ function LabPageContent() {
                   No runners match these filters.
                 </p>
                 <p className="mt-1 max-w-lg text-sm text-[var(--surface-subtle-foreground)]">
-                  Clear filters or add a runner to see results.
+                  Clear filters to see the full fleet.
                 </p>
               </div>
+              <Button variant="outline" size="sm" onClick={clearFilters}>
+                Clear filters
+              </Button>
             </div>
           ) : (
-            <div className="overflow-x-auto">
+            <div
+              className={cn(
+                "overflow-x-auto transition-opacity duration-200",
+                refreshing && endpoints.length > 0 && "pointer-events-none opacity-60",
+              )}
+            >
               <table className="console-table text-sm">
                 <thead>
                   <tr>
-                    <th className="w-10" />
                     <th>Endpoint</th>
                     <th>State</th>
                     <th>Platform</th>
@@ -648,37 +858,31 @@ function LabPageContent() {
                     <th className="text-right">Actions</th>
                   </tr>
                 </thead>
-                <tbody>
+                <tbody
+                  key={`${statusFilter}|${environmentFilter}|${osFilter}|${failingOnly}|${search}`}
+                  className="stagger-children"
+                >
                   {filteredEndpoints.map((endpoint) => {
-                    const expanded = expandedRows.has(endpoint.id);
                     const latestTest = endpoint.recentTests[0];
+                    const isSelected = selectedEndpointId === endpoint.id;
+                    const isLive =
+                      currentTestLive &&
+                      liveEndpointMatch !== null &&
+                      liveEndpointMatch.id === endpoint.id;
+                    const tint = recentlyChanged?.id === endpoint.id ? recentlyChanged.tone : null;
                     return (
-                      <Fragment key={endpoint.id}>
-                        <tr
-                          className={cn(expanded && "bg-[var(--surface-subtle)]")}
-                        >
-                          <td>
-                            <button
-                              type="button"
-                              className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-[var(--stroke-soft)] bg-[var(--surface-elevated)] text-[var(--surface-subtle-foreground)]"
-                              onClick={() =>
-                                setExpandedRows((previous) => {
-                                  const next = new Set(previous);
-                                  if (next.has(endpoint.id)) next.delete(endpoint.id);
-                                  else next.add(endpoint.id);
-                                  return next;
-                                })
-                              }
-                              aria-label={`${expanded ? "Collapse" : "Expand"} ${endpoint.hostname}`}
-                            >
-                              {expanded ? (
-                                <ChevronDown className="h-4 w-4" />
-                              ) : (
-                                <ChevronRight className="h-4 w-4" />
-                              )}
-                            </button>
-                          </td>
-                          <td>
+                      <tr
+                        key={endpoint.id}
+                        onClick={() => setSelectedEndpointId(endpoint.id)}
+                        className={cn(
+                          "group cursor-pointer transition-colors",
+                          isSelected && "bg-[var(--surface-subtle)]",
+                          tint === "success" && "bg-emerald-500/10",
+                          tint === "warning" && "bg-amber-500/10",
+                        )}
+                      >
+                        <td>
+                          <div className="flex items-center justify-between gap-2">
                             <div className="space-y-1">
                               <div className="flex items-center gap-2">
                                 <HardDrive className="h-4 w-4 text-[var(--accent-strong)]" />
@@ -698,219 +902,128 @@ function LabPageContent() {
                                 ) : null}
                               </div>
                             </div>
-                          </td>
-                          <td>
-                            <div className="space-y-2">
-                              <Chip tone={endpointTone(endpoint.statusBucket)} dot>
-                                {endpoint.status}
-                              </Chip>
-                              <p className="text-[11px] text-[var(--surface-subtle-foreground)]">
-                                bucket: {endpoint.statusBucket}
-                              </p>
+                            <ChevronRight className="h-4 w-4 shrink-0 text-[var(--surface-subtle-foreground)] opacity-0 transition-opacity duration-150 group-hover:opacity-100" />
+                          </div>
+                        </td>
+                        <td>
+                          <div className="flex items-center gap-2">
+                            <Chip tone={endpointTone(endpoint.statusBucket)} dot>
+                              {endpoint.status}
+                            </Chip>
+                            {isLive ? (
+                              <span
+                                aria-hidden
+                                title="Live run in progress"
+                                className="h-2 w-2 animate-pulse rounded-full bg-sky-500"
+                              />
+                            ) : null}
+                          </div>
+                        </td>
+                        <td>
+                          <div className="space-y-1">
+                            <div className="flex items-center gap-2 text-[var(--foreground)]">
+                              {endpoint.osFamily === "windows" ? (
+                                <Monitor className="h-4 w-4 text-sky-500" />
+                              ) : (
+                                <Terminal className="h-4 w-4 text-emerald-500" />
+                              )}
+                              <span>{endpoint.os}</span>
                             </div>
-                          </td>
-                          <td>
+                            <p className="console-mono text-[11px] text-[var(--surface-subtle-foreground)]">
+                              agent {endpoint.agentVersion}
+                            </p>
+                          </div>
+                        </td>
+                        <td>
+                          <div className="flex items-center gap-2 text-[var(--foreground)]">
+                            <Wifi className="h-4 w-4 text-[var(--accent-strong)]" />
+                            <span className="console-mono text-[11px]">
+                              {endpoint.ipAddress}
+                            </span>
+                          </div>
+                        </td>
+                        <td>
+                          {latestTest ? (
                             <div className="space-y-1">
-                              <div className="flex items-center gap-2 text-[var(--foreground)]">
-                                {endpoint.osFamily === "windows" ? (
-                                  <Monitor className="h-4 w-4 text-sky-500" />
-                                ) : (
-                                  <Terminal className="h-4 w-4 text-emerald-500" />
-                                )}
-                                <span>{endpoint.os}</span>
-                              </div>
-                              <p className="console-mono text-[11px] text-[var(--surface-subtle-foreground)]">
-                                agent {endpoint.agentVersion}
-                              </p>
-                            </div>
-                          </td>
-                          <td>
-                            <div className="space-y-1">
-                              <div className="flex items-center gap-2 text-[var(--foreground)]">
-                                <Wifi className="h-4 w-4 text-[var(--accent-strong)]" />
-                                <span className="console-mono text-[11px]">
-                                  {endpoint.ipAddress}
+                              <div className="flex items-center gap-2">
+                                <Chip tone={testTone(latestTest.status)}>
+                                  {latestTest.status || "--"}
+                                </Chip>
+                                <span className="truncate text-[var(--foreground)]">
+                                  {latestTestLabel(latestTest)}
                                 </span>
                               </div>
-                              <p className="console-mono text-[11px] text-[var(--surface-subtle-foreground)]">
-                                port {endpoint.port ?? "--"}
-                              </p>
-                            </div>
-                          </td>
-                          <td>
-                            {latestTest ? (
-                              <div className="space-y-1">
-                                <div className="flex items-center gap-2">
-                                  <Chip tone={testTone(latestTest.status)}>
-                                    {latestTest.status || "--"}
-                                  </Chip>
-                                  <span className="truncate text-[var(--foreground)]">
-                                    {latestTestLabel(latestTest)}
-                                  </span>
-                                </div>
-                                <p className="text-[11px] text-[var(--surface-subtle-foreground)]">
-                                  {formatRelativeTime(
-                                    latestTest.started_at ||
-                                      latestTest.created_at ||
-                                      latestTest.finished_at,
-                                  )}
-                                </p>
-                              </div>
-                            ) : (
-                              <span className="text-[11px] text-[var(--surface-subtle-foreground)]">
-                                No runs captured
-                              </span>
-                            )}
-                          </td>
-                          <td title={formatTimestamp(endpoint.lastCheckInAt)}>
-                            <div className="space-y-1">
-                              <p className="text-[var(--foreground)]">
-                                {formatRelativeTime(endpoint.lastCheckInAt)}
-                              </p>
                               <p className="text-[11px] text-[var(--surface-subtle-foreground)]">
-                                {formatTimestamp(endpoint.lastCheckInAt)}
+                                {formatRelativeTime(
+                                  latestTest.started_at ||
+                                    latestTest.created_at ||
+                                    latestTest.finished_at,
+                                )}
                               </p>
                             </div>
-                          </td>
-                          <td>
-                            <div className="flex justify-end gap-2">
-                              {endpoint.statusBucket === "paused" ? (
-                                <Button
-                                  variant="outline"
-                                  size="sm"
-                                  onClick={() =>
-                                    setResumeEndpoint({
-                                      id: endpoint.id,
-                                      name: endpoint.hostname,
-                                    })
-                                  }
-                                >
-                                  <PlayCircle className="h-3.5 w-3.5" />
-                                  Resume
-                                </Button>
-                              ) : (
-                                <Button
-                                  variant="outline"
-                                  size="sm"
-                                  onClick={() =>
-                                    setPauseEndpoint({
-                                      id: endpoint.id,
-                                      name: endpoint.hostname,
-                                    })
-                                  }
-                                >
-                                  <PauseCircle className="h-3.5 w-3.5" />
-                                  Pause
-                                </Button>
-                              )}
+                          ) : (
+                            <span className="text-[11px] text-[var(--surface-subtle-foreground)]">
+                              No runs captured
+                            </span>
+                          )}
+                        </td>
+                        <td title={formatTimestamp(endpoint.lastCheckInAt)}>
+                          <div className="space-y-1">
+                            <p className="text-[var(--foreground)]">
+                              {formatRelativeTime(endpoint.lastCheckInAt)}
+                            </p>
+                            <p className="text-[11px] text-[var(--surface-subtle-foreground)]">
+                              {formatTimestamp(endpoint.lastCheckInAt)}
+                            </p>
+                          </div>
+                        </td>
+                        <td onClick={(event) => event.stopPropagation()}>
+                          <div className="flex justify-end gap-2">
+                            {endpoint.statusBucket === "paused" ? (
                               <Button
                                 variant="outline"
                                 size="sm"
                                 onClick={() =>
-                                  setDeleteEndpoint({
+                                  setResumeEndpoint({
                                     id: endpoint.id,
                                     name: endpoint.hostname,
                                   })
                                 }
                               >
-                                <Trash2 className="h-3.5 w-3.5" />
-                                Remove
+                                <PlayCircle className="h-3.5 w-3.5" />
+                                Resume
                               </Button>
-                            </div>
-                          </td>
-                        </tr>
-
-                        {expanded ? (
-                          <tr>
-                            <td colSpan={8} className="bg-[var(--surface-subtle)]">
-                              <div className="grid gap-3 py-2 lg:grid-cols-3">
-                                <div className="rounded-2xl border border-[var(--stroke-soft)] bg-[var(--surface-card)] p-4">
-                                  <div className="flex items-center gap-2">
-                                    <Activity className="h-4 w-4 text-emerald-500" />
-                                    <p className="console-label">Runner telemetry</p>
-                                  </div>
-                                  <div className="mt-3 space-y-2 text-sm">
-                                    <KeyValue
-                                      label="Last check-in"
-                                      value={formatTimestamp(endpoint.lastCheckInAt)}
-                                    />
-                                    <KeyValue label="Version" value={endpoint.agentVersion} mono />
-                                    <KeyValue
-                                      label="Environment"
-                                      value={endpoint.environment}
-                                      mono
-                                    />
-                                    <KeyValue
-                                      label="Runner"
-                                      value={endpoint.runnerType || "--"}
-                                      mono
-                                    />
-                                  </div>
-                                </div>
-
-                                <div className="rounded-2xl border border-[var(--stroke-soft)] bg-[var(--surface-card)] p-4">
-                                  <div className="flex items-center gap-2">
-                                    <Settings className="h-4 w-4 text-sky-500" />
-                                    <p className="console-label">Control plane</p>
-                                  </div>
-                                  <div className="mt-3 space-y-2 text-sm">
-                                    <KeyValue label="Hostname" value={endpoint.hostname} mono />
-                                    <KeyValue label="IP" value={endpoint.ipAddress} mono />
-                                    <KeyValue
-                                      label="User"
-                                      value={endpoint.username || "--"}
-                                      mono
-                                    />
-                                    <KeyValue
-                                      label="Port"
-                                      value={endpoint.port ? String(endpoint.port) : "--"}
-                                      mono
-                                    />
-                                  </div>
-                                </div>
-
-                                <div className="rounded-2xl border border-[var(--stroke-soft)] bg-[var(--surface-card)] p-4">
-                                  <div className="flex items-center gap-2">
-                                    <Play className="h-4 w-4 text-amber-500" />
-                                    <p className="console-label">Recent runs</p>
-                                  </div>
-                                  <div className="mt-3 space-y-2">
-                                    {endpoint.recentTests.length === 0 ? (
-                                      <p className="text-sm text-[var(--surface-subtle-foreground)]">
-                                        No recent validation runs for this endpoint.
-                                      </p>
-                                    ) : (
-                                      endpoint.recentTests.map((test) => (
-                                        <Link
-                                          key={test.id}
-                                          href={`/tests/${test.id}`}
-                                          className="flex items-start justify-between gap-3 rounded-xl border border-[var(--stroke-soft)] bg-[var(--surface-elevated)] px-3 py-2 hover:border-[var(--accent-line)]"
-                                        >
-                                          <div className="min-w-0">
-                                            <p className="truncate text-sm font-medium text-[var(--foreground)]">
-                                              {latestTestLabel(test)}
-                                            </p>
-                                            <p className="text-[11px] text-[var(--surface-subtle-foreground)]">
-                                              {formatTimestamp(
-                                                test.started_at ||
-                                                  test.created_at ||
-                                                  test.finished_at,
-                                              )}
-                                            </p>
-                                          </div>
-                                          <Chip tone={testTone(test.status)}>
-                                            {test.status || "--"}
-                                          </Chip>
-                                        </Link>
-                                      ))
-                                    )}
-                                  </div>
-                                </div>
-                              </div>
-                            </td>
-                          </tr>
-                        ) : null}
-                      </Fragment>
+                            ) : (
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() =>
+                                  setPauseEndpoint({
+                                    id: endpoint.id,
+                                    name: endpoint.hostname,
+                                  })
+                                }
+                              >
+                                <PauseCircle className="h-3.5 w-3.5" />
+                                Pause
+                              </Button>
+                            )}
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() =>
+                                setDeleteEndpoint({
+                                  id: endpoint.id,
+                                  name: endpoint.hostname,
+                                })
+                              }
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                              Remove
+                            </Button>
+                          </div>
+                        </td>
+                      </tr>
                     );
                   })}
                 </tbody>
@@ -919,60 +1032,216 @@ function LabPageContent() {
           )}
       </div>
 
-      {currentTest ? (
-        <section className="console-panel overflow-hidden">
-          <div className="console-toolbar flex flex-wrap items-start justify-between gap-3 px-5 py-4">
-            <div>
-              <p className="console-label">Active run telemetry</p>
-              <h2 className="mt-1 text-xl font-semibold text-[var(--foreground)]">
-                Lab run #{currentTest.id}
-              </h2>
-              <p className="mt-1 text-sm text-[var(--surface-subtle-foreground)]">
-                Live status for the currently selected validation execution.
-              </p>
-            </div>
-            <Chip tone={testTone(currentTest.status)} size="md" dot>
-              {currentTest.status || "pending"}
-            </Chip>
-          </div>
-
-          <div className="space-y-5 px-5 py-5">
-            <div className="rounded-full bg-[var(--surface-subtle)] p-1">
-              <div
-                className="h-2 rounded-full bg-[var(--accent-strong)] transition-all duration-500"
-                style={{ width: `${currentTestProgress}%` }}
-              />
-            </div>
-
-            <div className="grid gap-3 md:grid-cols-4">
-              <MetricTile label="Status" value={String(currentTest.status || "--")} />
-              <MetricTile
-                label="Environment"
-                value={String(currentTest.environment || "lab")}
-              />
-              <MetricTile
-                label="Result"
-                value={String(currentTest.result || "Pending")}
-              />
-              <MetricTile
-                label="Detection"
-                value={String(
-                  currentTest.detection?.title || currentTest.detection_title || "--",
-                )}
-              />
-            </div>
-
-            {testError ? (
-              <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-700 dark:text-amber-300">
-                <div className="flex items-start gap-2">
-                  <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-                  <span>{testError}</span>
+      <Sheet
+        open={sheetMounted}
+        onOpenChange={(open) => {
+          if (!open) closeSheet();
+        }}
+      >
+        <SheetContent
+          side="right"
+          className={cn(
+            "border-[var(--stroke-soft)] !bg-[var(--surface-card)] !text-[var(--foreground)]",
+            "transition-transform transition-opacity duration-300 ease-out",
+            sheetVisible ? "translate-x-0 opacity-100" : "translate-x-full opacity-0",
+          )}
+        >
+          {displayEndpoint ? (
+            <>
+              <SheetHeader className="border-[var(--stroke-soft)]">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="console-pill">{displayEndpoint.environment}</span>
+                  <span className="console-pill console-mono">
+                    {displayEndpoint.runnerType || "runner"}
+                  </span>
+                  {displayEndpoint.username ? (
+                    <span className="console-pill console-mono">
+                      {displayEndpoint.username}
+                    </span>
+                  ) : null}
                 </div>
-              </div>
-            ) : null}
-          </div>
-        </section>
-      ) : null}
+                <SheetTitle className="flex items-center gap-2 text-[var(--foreground)]">
+                  <HardDrive className="h-4 w-4 text-[var(--accent-strong)]" />
+                  {displayEndpoint.hostname}
+                </SheetTitle>
+                <div className="flex flex-wrap items-center gap-2 text-sm text-[var(--surface-subtle-foreground)]">
+                  <Chip tone={endpointTone(displayEndpoint.statusBucket)} dot>
+                    {displayEndpoint.status}
+                  </Chip>
+                  <span>Checked in {formatRelativeTime(displayEndpoint.lastCheckInAt)}</span>
+                </div>
+              </SheetHeader>
+
+              <SheetBody>
+                {isLiveMatch && currentTest ? (
+                  <div className="mb-4 rounded-2xl border border-[var(--stroke-soft)] bg-[var(--surface-elevated)] p-4">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="flex items-center gap-2">
+                        <Activity className="h-4 w-4 text-emerald-500" />
+                        <p className="console-label">Live run telemetry — #{currentTest.id}</p>
+                      </div>
+                      <Chip tone={testTone(currentTest.status)} dot>
+                        {currentTest.status || "pending"}
+                      </Chip>
+                    </div>
+                    <div className="mt-3 rounded-full bg-[var(--surface-subtle)] p-1">
+                      <div
+                        className="h-2 rounded-full bg-[var(--accent-strong)] transition-all duration-500"
+                        style={{ width: `${currentTestProgress}%` }}
+                      />
+                    </div>
+                    <div className="mt-3 grid grid-cols-2 gap-3">
+                      <MetricTile label="Status" value={String(currentTest.status || "--")} />
+                      <MetricTile
+                        label="Environment"
+                        value={String(currentTest.environment || "lab")}
+                      />
+                      <MetricTile
+                        label="Result"
+                        value={String(currentTest.result || "Pending")}
+                      />
+                      <MetricTile
+                        label="Detection"
+                        value={String(
+                          currentTest.detection?.title || currentTest.detection_title || "--",
+                        )}
+                      />
+                    </div>
+                    {testError ? (
+                      <div className="mt-3 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-700 dark:text-amber-300">
+                        <div className="flex items-start gap-2">
+                          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                          <span>{testError}</span>
+                        </div>
+                      </div>
+                    ) : null}
+                  </div>
+                ) : null}
+
+                <div className="rounded-2xl border border-[var(--stroke-soft)] bg-[var(--surface-elevated)] p-4">
+                  <p className="console-label">Reliability</p>
+                  {displayEndpoint.recentTests.length === 0 ? (
+                    <p className="mt-2 text-sm text-[var(--surface-subtle-foreground)]">
+                      No recent validation runs to derive a trend from.
+                    </p>
+                  ) : (
+                    <div className="mt-3 flex flex-wrap items-center gap-1.5">
+                      {displayEndpoint.recentTests
+                        .slice()
+                        .reverse()
+                        .map((test) => (
+                          <span
+                            key={test.id}
+                            title={`${latestTestLabel(test)} — ${test.status || "--"}`}
+                            className={cn(
+                              "h-2.5 w-2.5 rounded-full",
+                              toneDotColor(testTone(test.status)),
+                            )}
+                          />
+                        ))}
+                      <span className="ml-2 text-[11px] text-[var(--surface-subtle-foreground)]">
+                        last {displayEndpoint.recentTests.length} runs
+                      </span>
+                    </div>
+                  )}
+                </div>
+
+                <div className="mt-4 rounded-2xl border border-[var(--stroke-soft)] bg-[var(--surface-card)] p-4">
+                  <div className="flex items-center gap-2">
+                    <Play className="h-4 w-4 text-amber-500" />
+                    <p className="console-label">Recent runs</p>
+                  </div>
+                  <div className="mt-3 space-y-2">
+                    {displayEndpoint.recentTests.length === 0 ? (
+                      <p className="text-sm text-[var(--surface-subtle-foreground)]">
+                        No recent validation runs for this endpoint.
+                      </p>
+                    ) : (
+                      displayEndpoint.recentTests.map((test) => (
+                        <Link
+                          key={test.id}
+                          href={`/tests/${test.id}`}
+                          className="flex items-start justify-between gap-3 rounded-xl border border-[var(--stroke-soft)] bg-[var(--surface-elevated)] px-3 py-2 hover:border-[var(--accent-line)]"
+                        >
+                          <div className="min-w-0">
+                            <p className="truncate text-sm font-medium text-[var(--foreground)]">
+                              {latestTestLabel(test)}
+                            </p>
+                            <p className="text-[11px] text-[var(--surface-subtle-foreground)]">
+                              {formatTimestamp(
+                                test.started_at || test.created_at || test.finished_at,
+                              )}
+                            </p>
+                          </div>
+                          <Chip tone={testTone(test.status)}>{test.status || "--"}</Chip>
+                        </Link>
+                      ))
+                    )}
+                  </div>
+                </div>
+
+                <div className="mt-4 rounded-2xl border border-[var(--stroke-soft)] bg-[var(--surface-elevated)] p-4">
+                  <div className="flex items-center gap-2">
+                    <Settings className="h-4 w-4 text-sky-500" />
+                    <p className="console-label">Diagnostics</p>
+                  </div>
+                  <div className="mt-3 space-y-2 text-sm">
+                    <KeyValue label="Raw status" value={displayEndpoint.status} mono />
+                    <KeyValue label="Bucket" value={displayEndpoint.statusBucket} mono />
+                    <KeyValue
+                      label="Port"
+                      value={displayEndpoint.port ? String(displayEndpoint.port) : "--"}
+                      mono
+                    />
+                  </div>
+                </div>
+              </SheetBody>
+
+              <SheetFooter className="border-[var(--stroke-soft)] bg-[var(--surface-elevated)]">
+                {displayEndpoint.statusBucket === "paused" ? (
+                  <Button
+                    variant="outline"
+                    onClick={() =>
+                      setResumeEndpoint({
+                        id: displayEndpoint.id,
+                        name: displayEndpoint.hostname,
+                      })
+                    }
+                  >
+                    <PlayCircle className="h-4 w-4" />
+                    Resume
+                  </Button>
+                ) : (
+                  <Button
+                    variant="outline"
+                    onClick={() =>
+                      setPauseEndpoint({
+                        id: displayEndpoint.id,
+                        name: displayEndpoint.hostname,
+                      })
+                    }
+                  >
+                    <PauseCircle className="h-4 w-4" />
+                    Pause
+                  </Button>
+                )}
+                <Button
+                  variant="outline"
+                  onClick={() =>
+                    setDeleteEndpoint({
+                      id: displayEndpoint.id,
+                      name: displayEndpoint.hostname,
+                    })
+                  }
+                >
+                  <Trash2 className="h-4 w-4" />
+                  Remove
+                </Button>
+              </SheetFooter>
+            </>
+          ) : null}
+        </SheetContent>
+      </Sheet>
 
       <ConfirmDialog
         open={Boolean(deleteEndpoint)}
