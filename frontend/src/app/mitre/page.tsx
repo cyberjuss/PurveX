@@ -25,6 +25,7 @@ import {
   getMitreTechniques,
   getAtomicTests,
   getAtomicCatalogStatus,
+  downloadAtomicCatalog,
   getCoverageSummary,
   getCoverageTrend,
   type CoverageSummary,
@@ -142,6 +143,19 @@ function MitreViewPageContent() {
   const detectionsQ = useSWR<Detection[]>("mitre:detections", getDetections);
   const techniquesQ = useSWR<MitreTechnique[]>("mitre:techniques", getMitreTechniques);
   const catalogQ = useSWR("mitre:atomic-catalog", () => getAtomicCatalogStatus().catch(() => null));
+  const [installingCatalog, setInstallingCatalog] = useState(false);
+
+  const handleInstallCatalog = useCallback(async () => {
+    setInstallingCatalog(true);
+    try {
+      await downloadAtomicCatalog();
+      await catalogQ.mutate();
+    } catch {
+      // catalogQ stays "not installed"; the button just reverts to retry.
+    } finally {
+      setInstallingCatalog(false);
+    }
+  }, [catalogQ]);
 
   const detections = useMemo(() => detectionsQ.data ?? [], [detectionsQ.data]);
   const techniques = useMemo(() => techniquesQ.data ?? [], [techniquesQ.data]);
@@ -482,9 +496,16 @@ function MitreViewPageContent() {
           </Chip>
         )}
         {atomicCatalogAvailable === false && (
-          <span className="text-xs text-[var(--surface-subtle-foreground)]">
-            Atomic catalog not installed. Install it to view executable tests.
-          </span>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleInstallCatalog}
+            disabled={installingCatalog}
+            className="h-9 gap-1.5 text-xs"
+          >
+            <Download className="h-3.5 w-3.5" />
+            {installingCatalog ? "Installing catalog..." : "Install Atomic Red Team catalog"}
+          </Button>
         )}
       </div>
 
@@ -496,7 +517,7 @@ function MitreViewPageContent() {
           <p className="mt-1 text-xs text-[var(--surface-subtle-foreground)]">Try clearing filters or broadening your search.</p>
         </div>
       ) : (
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4">
             {matrix.map((col) => (
               <div key={col.tactic} className="flex flex-col gap-2">
                 {/* Tactic header */}

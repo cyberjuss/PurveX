@@ -10,7 +10,7 @@ import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { getUsers, getUserRoles, assignRole, removeRole, listRoles, setUserPassword, setUserActive, apiFetch } from "@/lib/api";
 import { usePermissions } from "@/hooks/usePermissions";
-import { Permission, ROLE_GUIDANCE, Role } from "@/lib/permissions";
+import { Permission } from "@/lib/permissions";
 import {
   Search, UserPlus, Shield, Key, Users, Filter, CheckCircle2, XCircle, Clock,
   Download, AlertCircle, Mail, Calendar, X, Loader2, Copy
@@ -977,71 +977,6 @@ export default function UserManagementPage() {
         </Dialog>
       )}
 
-      {availableRoles.length > 0 ? (
-        <SettingsSection
-          title="Available roles"
-          description="Reference for what each role grants. Assign roles per member from the list above."
-          stacked
-        >
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            {availableRoles.map((role) => {
-              const guidance = ROLE_GUIDANCE[role.name as Role];
-              return (
-                <div
-                  key={role.id}
-                  className="rounded-lg border border-[var(--stroke-soft)] bg-[var(--surface-elevated)] p-4"
-                >
-                  <div className="flex items-center gap-2">
-                    <Shield className="h-4 w-4 text-[var(--surface-subtle-foreground)]" />
-                    <p className="text-sm font-semibold text-[var(--surface-card-foreground)]">
-                      {guidance?.label || role.name}
-                    </p>
-                  </div>
-                  {role.description ? (
-                    <p className="mt-1.5 text-xs text-[var(--surface-subtle-foreground)]">
-                      {role.description}
-                    </p>
-                  ) : null}
-                  {guidance ? (
-                    <dl className="mt-3 grid gap-2 text-xs">
-                      <div>
-                        <dt className={cn("font-semibold", toneClasses("success").text)}>
-                          Can
-                        </dt>
-                        <dd className="mt-0.5 text-[var(--surface-subtle-foreground)]">
-                          <ul className="space-y-0.5">
-                            {guidance.can.map((item) => (
-                              <li key={item} className="flex gap-1.5">
-                                <span aria-hidden>·</span>
-                                <span>{item}</span>
-                              </li>
-                            ))}
-                          </ul>
-                        </dd>
-                      </div>
-                      <div>
-                        <dt className={cn("font-semibold", toneClasses("danger").text)}>
-                          Cannot
-                        </dt>
-                        <dd className="mt-0.5 text-[var(--surface-subtle-foreground)]">
-                          <ul className="space-y-0.5">
-                            {guidance.cannot.map((item) => (
-                              <li key={item} className="flex gap-1.5">
-                                <span aria-hidden>·</span>
-                                <span>{item}</span>
-                              </li>
-                            ))}
-                          </ul>
-                        </dd>
-                      </div>
-                    </dl>
-                  ) : null}
-                </div>
-              );
-            })}
-          </div>
-        </SettingsSection>
-      ) : null}
     </SettingsPageShell>
   );
 }

@@ -415,7 +415,7 @@ export default function ExplorePage() {
                 <span className="text-[var(--foreground)] font-semibold">{filteredTechniques.length}</span> techniques
               </p>
 
-              <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
                     {tacticColumns.map((column) => {
                 const parentIds = new Set(column.techniques.map((t) => t.id.split(".")[0]));
                       const parentCount = parentIds.size;

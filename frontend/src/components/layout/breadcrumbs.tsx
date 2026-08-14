@@ -128,7 +128,7 @@ export function Breadcrumbs({ items, variant = "light", className }: Breadcrumbs
         className={cn(
           "flex flex-wrap items-center text-xs sm:text-sm",
           isHeader
-            ? "gap-1 text-slate-500"
+            ? "gap-1 text-[var(--surface-subtle-foreground)]"
             : isLight
             ? "gap-2 text-slate-500"
             : "gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-slate-200"
@@ -145,7 +145,7 @@ export function Breadcrumbs({ items, variant = "light", className }: Breadcrumbs
                   className={cn(
                     "inline-flex items-center gap-1.5 border border-transparent font-medium transition-colors",
                     isHeader
-                      ? "px-0 py-0 text-slate-500 hover:text-slate-200"
+                      ? "px-0 py-0 text-[var(--surface-subtle-foreground)] hover:text-[var(--surface-shell-foreground)]"
                       : isLight
                       ? "rounded-full px-2.5 py-1 text-slate-500 hover:text-slate-900 hover:bg-slate-100"
                       : "text-slate-200/85 hover:text-white hover:border-white/15 hover:bg-white/10"
@@ -158,7 +158,7 @@ export function Breadcrumbs({ items, variant = "light", className }: Breadcrumbs
                   className={cn(
                     "inline-flex items-center gap-1.5 font-semibold",
                     isHeader
-                      ? "px-0 py-0 text-slate-200"
+                      ? "px-0 py-0 text-[var(--surface-shell-foreground)]"
                       : isLight
                       ? "rounded-full px-2.5 py-1 text-slate-900"
                       : "border border-white/15 bg-white/10 text-white shadow-inner"
@@ -172,7 +172,7 @@ export function Breadcrumbs({ items, variant = "light", className }: Breadcrumbs
                   className={cn(
                     "inline-flex items-center gap-1.5 border border-transparent font-medium transition-colors",
                     isHeader
-                      ? "px-0 py-0 text-slate-500 hover:text-slate-200"
+                      ? "px-0 py-0 text-[var(--surface-subtle-foreground)] hover:text-[var(--surface-shell-foreground)]"
                       : isLight
                       ? "rounded-full px-2.5 py-1 text-slate-500 hover:text-slate-900 hover:bg-slate-100"
                       : "text-slate-200/85 hover:border-white/15 hover:bg-white/10 hover:text-white"
@@ -185,7 +185,7 @@ export function Breadcrumbs({ items, variant = "light", className }: Breadcrumbs
                 <ChevronRight
                   className={cn(
                     "h-3.5 w-3.5",
-                    isHeader ? "text-slate-500" : isLight ? "text-slate-400" : "text-slate-500"
+                    isHeader ? "text-[var(--surface-subtle-foreground)]" : isLight ? "text-slate-400" : "text-slate-500"
                   )}
                   strokeWidth={2.5}
                 />
