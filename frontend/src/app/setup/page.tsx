@@ -30,6 +30,7 @@ export default function SetupPage() {
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [serverError, setServerError] = useState<string | null>(null);
+  const [agreedToTerms, setAgreedToTerms] = useState(false);
 
   const form = useZodForm(setupSchema, {
     username: "admin",
@@ -67,6 +68,10 @@ export default function SetupPage() {
     setServerError(null);
     const parsed = form.validate();
     if (!parsed.success) return;
+    if (!agreedToTerms) {
+      setServerError("You must agree to the Terms of Service and Privacy Policy to continue.");
+      return;
+    }
 
     setSubmitting(true);
     try {
@@ -146,6 +151,26 @@ export default function SetupPage() {
                   At least 12 characters, including upper, lower, and a number.
                 </p>
               </div>
+
+              <label className="flex items-start gap-2 text-sm text-muted-foreground">
+                <input
+                  type="checkbox"
+                  checked={agreedToTerms}
+                  onChange={(e) => setAgreedToTerms(e.target.checked)}
+                  className="mt-0.5 h-4 w-4 shrink-0"
+                />
+                <span>
+                  I agree to the{" "}
+                  <a href="https://purve-x-landing-page.vercel.app/legal/terms" target="_blank" rel="noreferrer" className="text-primary hover:underline">
+                    Terms of Service
+                  </a>{" "}
+                  and{" "}
+                  <a href="https://purve-x-landing-page.vercel.app/legal/privacy" target="_blank" rel="noreferrer" className="text-primary hover:underline">
+                    Privacy Policy
+                  </a>
+                  .
+                </span>
+              </label>
 
               <button
                 type="submit"
