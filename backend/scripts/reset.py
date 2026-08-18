@@ -46,7 +46,12 @@ async def main() -> None:
             target = f"username '{args.username}'" if args.username else f"email '{args.email}'"
             raise SystemExit(f"No user found for {target}.")
 
-        password = args.password or getpass.getpass("New password: ")
+        if args.password:
+            password = args.password
+        else:
+            password = getpass.getpass("New password (8+ characters, upper/lower/digit/symbol): ")
+            if password != getpass.getpass("Confirm password: "):
+                raise SystemExit("Passwords did not match.")
         if not password:
             raise SystemExit("Password is required.")
 
