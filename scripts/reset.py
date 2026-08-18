@@ -13,16 +13,28 @@ failed_login_attempts / locked_until). Nothing in the app can unlock an
 account otherwise -- not even another admin -- so this is also the
 answer to "the only admin locked themselves out, now what."
 
-Usage:
-    python scripts/reset.py
-    python scripts/reset.py --username <username>
-    python scripts/reset.py --email <email>
+Uses the same venv and database as the running app, so run it with the
+backend's own Python (see scripts/purvex.sh for where that venv lives),
+e.g. from the repo root:
+
+    backend/venv/bin/python scripts/reset.py
+    backend/venv/bin/python scripts/reset.py --username <username>
+    backend/venv/bin/python scripts/reset.py --email <email>
+
+Or activate that venv first and just run `python scripts/reset.py`.
 """
 
 import argparse
 import asyncio
 import getpass
+import sys
 from datetime import datetime, timezone
+from pathlib import Path
+
+# This file lives in scripts/, a sibling of backend/ (which is where the
+# `app` package and its venv actually live) -- add it to sys.path so the
+# import below resolves no matter what directory this is run from.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "backend"))
 
 from sqlalchemy import select
 
