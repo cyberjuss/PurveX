@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """Reset a PurveX user's password directly, bypassing email.
 
 The self-service /auth/password-reset flow delivers its reset link by
@@ -13,28 +14,45 @@ failed_login_attempts / locked_until). Nothing in the app can unlock an
 account otherwise -- not even another admin -- so this is also the
 answer to "the only admin locked themselves out, now what."
 
-Uses the same venv and database as the running app, so run it with the
-backend's own Python (see scripts/purvex.sh for where that venv lives),
-e.g. from the repo root:
+Run directly, from anywhere -- no venv activation needed:
 
-    backend/venv/bin/python scripts/reset.py
-    backend/venv/bin/python scripts/reset.py --username <username>
-    backend/venv/bin/python scripts/reset.py --email <email>
+    ./scripts/reset.py
+    ./scripts/reset.py --username <username>
+    ./scripts/reset.py --email <email>
 
-Or activate that venv first and just run `python scripts/reset.py`.
+(On Windows, or if it's not executable yet, run it as
+`<python> scripts/reset.py` instead.)
 """
 
 import argparse
 import asyncio
 import getpass
+import os
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
 # This file lives in scripts/, a sibling of backend/ (which is where the
-# `app` package and its venv actually live) -- add it to sys.path so the
-# import below resolves no matter what directory this is run from.
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "backend"))
+# `app` package, its dependencies, and its venv all actually live).
+_BACKEND_DIR = Path(__file__).resolve().parent.parent / "backend"
+
+# Re-exec under the backend's own venv Python if we're not already running
+# under it -- so `./reset.py` works directly without activating that venv
+# by hand first, the same way purvex.sh's launcher is self-contained.
+_venv_python = _BACKEND_DIR / "venv" / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+if _venv_python.exists() and Path(sys.executable).resolve() != _venv_python.resolve():
+    import subprocess
+
+    # subprocess.run rather than os.execv -- more portable (execv has
+    # inconsistent stdio/process-replacement behavior on Windows) and
+    # inherits this process's stdin/stdout/stderr by default, so
+    # interactive prompts still work normally through the re-exec.
+    result = subprocess.run([str(_venv_python), str(Path(__file__).resolve()), *sys.argv[1:]])
+    sys.exit(result.returncode)
+
+# Add backend/ to sys.path so the import below resolves no matter what
+# directory this is run from.
+sys.path.insert(0, str(_BACKEND_DIR))
 
 from sqlalchemy import select
 

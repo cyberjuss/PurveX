@@ -1,0 +1,6 @@
+# These carry a #! shebang and run directly on Linux/macOS -- a stray \r
+# from CRLF line endings breaks the shebang (interpreter path becomes
+# "python3\r", which doesn't exist). Force LF regardless of platform or
+# local core.autocrlf settings.
+scripts/*.sh text eol=lf
+scripts/reset.py text eol=lf
