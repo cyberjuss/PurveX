@@ -36,34 +36,47 @@ from pathlib import Path
 # `app` package, its dependencies, and its venv all actually live).
 _BACKEND_DIR = Path(__file__).resolve().parent.parent / "backend"
 
-# Re-exec under the backend's own venv Python if we're not already running
-# under it -- so `./reset.py` works directly without activating that venv
-# by hand first, the same way purvex.sh's launcher is self-contained.
-# Some venvs only create a versioned "python3" symlink, not a bare
-# "python" one, so check both rather than assume.
-_venv_dir = _BACKEND_DIR / "venv"
-if os.name == "nt":
-    _venv_candidates = [_venv_dir / "Scripts" / "python.exe"]
-else:
-    _venv_candidates = [_venv_dir / "bin" / "python", _venv_dir / "bin" / "python3"]
-_venv_python = next((p for p in _venv_candidates if p.exists()), None)
+# Re-exec under the backend's own venv Python if a venv isn't already
+# active -- so `./reset.py` works directly without activating it by hand
+# first, the same way purvex.sh's launcher is self-contained.
+#
+# Deliberately NOT comparing resolved file paths (e.g.
+# Path(sys.executable).resolve() != venv_python.resolve()) to decide this:
+# venv/bin/python3 is very often a symlink straight to the system
+# interpreter binary, so resolving through it collapses "invoked via the
+# venv" and "invoked as bare system Python" to the exact same file,
+# making that comparison wrongly conclude a venv is already active when
+# its site-packages were never actually activated. sys.prefix vs
+# sys.base_prefix is the mechanism Python itself uses to answer "is a
+# venv currently active", so it's what we check too.
+_in_venv = sys.prefix != sys.base_prefix
 
-if _venv_python is None:
-    print(
-        f"[reset.py] Warning: no venv Python found under {_venv_dir} -- "
-        f"continuing with {sys.executable}, which may be missing dependencies "
-        f"(run '{_BACKEND_DIR.parent}/scripts/purvex.sh --setup' first if this fails).",
-        file=sys.stderr,
-    )
-elif Path(sys.executable).resolve() != _venv_python.resolve():
-    import subprocess
+if not _in_venv:
+    _venv_dir = _BACKEND_DIR / "venv"
+    if os.name == "nt":
+        _venv_candidates = [_venv_dir / "Scripts" / "python.exe"]
+    else:
+        # Some venvs only create a versioned "python3" symlink, not a
+        # bare "python" one, so check both rather than assume.
+        _venv_candidates = [_venv_dir / "bin" / "python", _venv_dir / "bin" / "python3"]
+    _venv_python = next((p for p in _venv_candidates if p.exists()), None)
 
-    # subprocess.run rather than os.execv -- more portable (execv has
-    # inconsistent stdio/process-replacement behavior on Windows) and
-    # inherits this process's stdin/stdout/stderr by default, so
-    # interactive prompts still work normally through the re-exec.
-    result = subprocess.run([str(_venv_python), str(Path(__file__).resolve()), *sys.argv[1:]])
-    sys.exit(result.returncode)
+    if _venv_python is None:
+        print(
+            f"[reset.py] Warning: no venv Python found under {_venv_dir} -- "
+            f"continuing with {sys.executable}, which may be missing dependencies "
+            f"(run '{_BACKEND_DIR.parent}/scripts/purvex.sh --setup' first if this fails).",
+            file=sys.stderr,
+        )
+    else:
+        import subprocess
+
+        # subprocess.run rather than os.execv -- more portable (execv has
+        # inconsistent stdio/process-replacement behavior on Windows) and
+        # inherits this process's stdin/stdout/stderr by default, so
+        # interactive prompts still work normally through the re-exec.
+        result = subprocess.run([str(_venv_python), str(Path(__file__).resolve()), *sys.argv[1:]])
+        sys.exit(result.returncode)
 
 # Add backend/ to sys.path so the import below resolves no matter what
 # directory this is run from.
