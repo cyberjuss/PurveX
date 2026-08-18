@@ -9,8 +9,8 @@ the web flow does: password complexity, no reuse of the current or
 recent passwords, and revoking any session issued before the reset.
 
 Usage:
-    python scripts/reset_password.py --username <username>
-    python scripts/reset_password.py --email <email>
+    python scripts/reset.py --username <username>
+    python scripts/reset.py --email <email>
 """
 
 import argparse
