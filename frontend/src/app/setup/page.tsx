@@ -20,10 +20,16 @@ const FIELD_LABEL_CLASSNAME =
 const FIELD_CLASSNAME =
   "h-12 rounded-[10px] border border-black/[0.08] bg-black/[0.015] pl-11 text-base shadow-[inset_0_1px_2px_rgba(0,0,0,0.03)] transition-all duration-150 placeholder:text-muted-foreground/50 hover:border-black/[0.14] focus-visible:border-primary/60 focus-visible:bg-background focus-visible:ring-[3px] focus-visible:ring-primary/15 focus-visible:shadow-none dark:border-white/[0.08] dark:bg-white/[0.03] dark:hover:border-white/[0.16] dark:focus-visible:border-primary/50";
 
-const setupSchema = z.object({
-  username: usernameSchema,
-  password: passwordSchema,
-});
+const setupSchema = z
+  .object({
+    username: usernameSchema,
+    password: passwordSchema,
+    confirmPassword: passwordSchema,
+  })
+  .refine((data) => data.password === data.confirmPassword, {
+    message: "Passwords do not match.",
+    path: ["confirmPassword"],
+  });
 
 export default function SetupPage() {
   const router = useRouter();
@@ -35,6 +41,7 @@ export default function SetupPage() {
   const form = useZodForm(setupSchema, {
     username: "admin",
     password: "",
+    confirmPassword: "",
   });
 
   useEffect(() => {
@@ -150,6 +157,27 @@ export default function SetupPage() {
                 <p className="mt-1.5 text-xs text-muted-foreground">
                   At least 12 characters, including upper, lower, and a number.
                 </p>
+              </div>
+
+              <div>
+                <label htmlFor="confirmPassword" className={FIELD_LABEL_CLASSNAME}>
+                  Confirm password
+                </label>
+                <div className="relative">
+                  <Lock className="pointer-events-none absolute left-3.5 top-1/2 h-[18px] w-[18px] -translate-y-1/2 text-muted-foreground/50" />
+                  <Input
+                    id="confirmPassword"
+                    type="password"
+                    value={form.values.confirmPassword}
+                    onChange={(e) => form.setField("confirmPassword", e.target.value)}
+                    onBlur={() => form.touch("confirmPassword")}
+                    autoComplete="new-password"
+                    aria-invalid={!!form.errors.confirmPassword}
+                    aria-describedby="confirmPassword-error"
+                    className={FIELD_CLASSNAME}
+                  />
+                </div>
+                <FieldError id="confirmPassword-error" message={form.errors.confirmPassword} />
               </div>
 
               <label className="flex items-start gap-2 text-sm text-muted-foreground">
