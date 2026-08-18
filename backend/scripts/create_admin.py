@@ -7,7 +7,7 @@ from sqlalchemy import select
 from app import models
 from app.config import settings
 from app.db import async_sessionmaker
-from app.security import hash_password, verify_password
+from app.security import hash_password, validate_password_complexity, verify_password
 
 
 async def ensure_org(session) -> models.Organization:
@@ -86,9 +86,17 @@ async def main() -> None:
             if verify_password(settings.DEFAULT_ADMIN_PASSWORD, admin.hashed_password):
                 print("Default admin password detected. Please set a new password.")
                 username = admin.username or admin.email
-                password = args.password or getpass.getpass("Enter password: ")
+                if args.password:
+                    password = args.password
+                else:
+                    password = getpass.getpass("Password: ")
+                    if password != getpass.getpass("Confirm password: "):
+                        raise SystemExit("Passwords did not match.")
                 if not password:
                     raise SystemExit("Password is required.")
+                is_valid, error = validate_password_complexity(password)
+                if not is_valid:
+                    raise SystemExit(f"Password does not meet requirements: {error}")
                 admin.hashed_password = hash_password(password)
                 await session.commit()
                 await ensure_admin_role(session, admin, admin.organization_id)
@@ -96,12 +104,23 @@ async def main() -> None:
             else:
                 print("Admin password is already non-default; no action needed.")
             return
-        username = (args.username or "").strip() or "admin"
-        email = (args.email or "").strip() or username
         print("Create Admin")
-        password = args.password or getpass.getpass("Enter password: ")
+        username = (args.username or "").strip()
+        if not username:
+            username = input("Username [admin]: ").strip() or "admin"
+        email = (args.email or "").strip() or username
+
+        if args.password:
+            password = args.password
+        else:
+            password = getpass.getpass("Password: ")
+            if password != getpass.getpass("Confirm password: "):
+                raise SystemExit("Passwords did not match.")
         if not password:
             raise SystemExit("Password is required.")
+        is_valid, error = validate_password_complexity(password)
+        if not is_valid:
+            raise SystemExit(f"Password does not meet requirements: {error}")
         org = await ensure_org(session)
         user = admin
         if not user:
