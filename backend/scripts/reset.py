@@ -9,6 +9,7 @@ the web flow does: password complexity, no reuse of the current or
 recent passwords, and revoking any session issued before the reset.
 
 Usage:
+    python scripts/reset.py
     python scripts/reset.py --username <username>
     python scripts/reset.py --email <email>
 """
@@ -33,17 +34,24 @@ async def main() -> None:
     parser.add_argument("--password", help="New password (optional; will prompt if omitted).")
     args = parser.parse_args()
 
-    if not args.username and not args.email:
-        raise SystemExit("Provide --username or --email.")
+    username = args.username
+    email = args.email
+    if not username and not email:
+        username = input("Username or email: ").strip()
+        if not username:
+            raise SystemExit("Username or email is required.")
+        if "@" in username:
+            email = username
+            username = None
 
     async with async_sessionmaker() as session:
-        if args.username:
-            result = await session.execute(select(models.User).where(models.User.username == args.username))
+        if username:
+            result = await session.execute(select(models.User).where(models.User.username == username))
         else:
-            result = await session.execute(select(models.User).where(models.User.email == args.email))
+            result = await session.execute(select(models.User).where(models.User.email == email))
         user = result.scalar_one_or_none()
         if not user:
-            target = f"username '{args.username}'" if args.username else f"email '{args.email}'"
+            target = f"username '{username}'" if username else f"email '{email}'"
             raise SystemExit(f"No user found for {target}.")
 
         if args.password:
