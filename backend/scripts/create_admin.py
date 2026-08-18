@@ -81,7 +81,11 @@ async def main() -> None:
         admin = existing_admin.scalars().first()
         if args.only_if_missing and admin:
             print("Admin user already exists; skipping bootstrap.")
-            return
+            # Distinct exit code so callers (purvex.sh's bootstrap_admin) can
+            # tell "already existed, nothing changed" apart from "created a
+            # new one" -- they need very different follow-up messaging, and
+            # neither is an error.
+            raise SystemExit(3)
         if args.ensure_secure and admin:
             if verify_password(settings.DEFAULT_ADMIN_PASSWORD, admin.hashed_password):
                 print("Default admin password detected. Please set a new password.")

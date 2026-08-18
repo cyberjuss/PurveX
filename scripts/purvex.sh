@@ -731,10 +731,28 @@ bootstrap_admin() {
 
   # Reached after wait_for_backend_ready, so the DB (Postgres) is already
   # up and migrated -- no separate readiness wait needed here. create_admin.py
-  # prints its own "Create Admin" header.
-  if $PYTHON scripts/create_admin.py --only-if-missing; then
+  # prints its own "Create Admin" header. Deliberately not capturing its
+  # output here: on a genuinely fresh DB it prompts interactively for a
+  # username and password, and $(...) command substitution buffers stdout
+  # until the whole thing exits, which would hide those prompts from the
+  # terminal until after the user had already tried to answer them.
+  # `|| admin_status=$?` rather than a bare command + `admin_status=$?` on
+  # the next line -- this file runs under `set -e`, so an unguarded
+  # non-zero exit here (3, or a real failure) would abort the whole
+  # install right at this line instead of reaching the branch below.
+  # Being the left side of `||` is one of the documented exemptions.
+  admin_status=0
+  $PYTHON scripts/create_admin.py --only-if-missing || admin_status=$?
+  if [ "${admin_status}" -eq 0 ]; then
     touch "${marker}"
     info "Admin created. Use those credentials to sign in."
+  elif [ "${admin_status}" -eq 3 ]; then
+    # exit 3 = create_admin.py found an admin already there and left it
+    # alone (see its own --only-if-missing branch) -- distinct from success
+    # (a new account) and from failure, so this needs its own message
+    # instead of misreporting a fresh reset.
+    touch "${marker}"
+    info "Admin account already exists. Sign in with its existing credentials, or run scripts/reset.py to set a new password."
   else
     warn "Admin bootstrap failed; will retry next start."
   fi
