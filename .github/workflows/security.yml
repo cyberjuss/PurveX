@@ -22,7 +22,7 @@ jobs:
         python-version: '3.11'
 
     - name: Scan tracked files for committed secrets
-      run: python scripts/scan_secrets.py
+      run: python scripts/guard.py
     
     - name: Install Python dependencies
       run: |
