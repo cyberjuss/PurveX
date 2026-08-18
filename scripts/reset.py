@@ -39,8 +39,23 @@ _BACKEND_DIR = Path(__file__).resolve().parent.parent / "backend"
 # Re-exec under the backend's own venv Python if we're not already running
 # under it -- so `./reset.py` works directly without activating that venv
 # by hand first, the same way purvex.sh's launcher is self-contained.
-_venv_python = _BACKEND_DIR / "venv" / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
-if _venv_python.exists() and Path(sys.executable).resolve() != _venv_python.resolve():
+# Some venvs only create a versioned "python3" symlink, not a bare
+# "python" one, so check both rather than assume.
+_venv_dir = _BACKEND_DIR / "venv"
+if os.name == "nt":
+    _venv_candidates = [_venv_dir / "Scripts" / "python.exe"]
+else:
+    _venv_candidates = [_venv_dir / "bin" / "python", _venv_dir / "bin" / "python3"]
+_venv_python = next((p for p in _venv_candidates if p.exists()), None)
+
+if _venv_python is None:
+    print(
+        f"[reset.py] Warning: no venv Python found under {_venv_dir} -- "
+        f"continuing with {sys.executable}, which may be missing dependencies "
+        f"(run '{_BACKEND_DIR.parent}/scripts/purvex.sh --setup' first if this fails).",
+        file=sys.stderr,
+    )
+elif Path(sys.executable).resolve() != _venv_python.resolve():
     import subprocess
 
     # subprocess.run rather than os.execv -- more portable (execv has
