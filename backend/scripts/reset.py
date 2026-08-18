@@ -8,6 +8,11 @@ server access reset the password directly, applying the same checks
 the web flow does: password complexity, no reuse of the current or
 recent passwords, and revoking any session issued before the reset.
 
+Also clears any failed-login lockout (see auth.login's
+failed_login_attempts / locked_until). Nothing in the app can unlock an
+account otherwise -- not even another admin -- so this is also the
+answer to "the only admin locked themselves out, now what."
+
 Usage:
     python scripts/reset.py
     python scripts/reset.py --username <username>
@@ -82,15 +87,23 @@ async def main() -> None:
                 if verify_password(password, entry.hashed_password):
                     raise SystemExit("New password cannot match any of the user's recent passwords.")
 
+        was_locked = bool(getattr(user, "locked_until", None))
+
         now = datetime.now(timezone.utc)
         new_hash = hash_password(password)
         user.hashed_password = new_hash
         # Revoke any session issued before this reset, same as the
         # self-service flow -- see auth.get_current_user's token_valid_after check.
         user.token_valid_after = now
+        # Clear any failed-login lockout -- otherwise the new password still
+        # won't work until the lockout timer expires on its own.
+        user.failed_login_attempts = 0
+        user.locked_until = None
         session.add(models.PasswordHistory(user_id=user.id, hashed_password=new_hash))
         await session.commit()
         print(f"Password reset for {user.username} ({user.email}). Existing sessions are now invalid.")
+        if was_locked:
+            print("Account was locked out from failed login attempts -- that lock has been cleared too.")
 
 
 if __name__ == "__main__":
