@@ -1,18 +1,16 @@
 """Regression tests for session revocation on password change.
 
-JWTs are stateless, so an admin-forced or self-service password reset
-didn't by itself invalidate any already-issued token for that user — if an
-account was compromised and the password reset specifically because of
-that, the attacker's existing session kept working until it naturally
-expired. get_current_user now rejects any token whose `iat` predates
+JWTs are stateless, so an admin-forced password reset didn't by itself
+invalidate any already-issued token for that user — if an account was
+compromised and the password reset specifically because of that, the
+attacker's existing session kept working until it naturally expired.
+get_current_user now rejects any token whose `iat` predates
 `User.token_valid_after`, which set_user_password (rbac.py) and
-confirm_password_reset (password_reset.py) both set on every change.
+scripts/reset.py both set on every change.
 """
 from __future__ import annotations
 
 import time
-import uuid
-from datetime import datetime, timedelta, timezone
 
 import pytest
 import pytest_asyncio
@@ -102,50 +100,6 @@ async def test_admin_password_reset_revokes_existing_session(revocation_context)
     new_request = _make_request({"Authorization": f"Bearer {new_token}"})
     result = await auth_router.get_current_user(new_request, session)
     assert result.id == victim.id
-
-
-@pytest.mark.asyncio
-async def test_self_service_reset_revokes_existing_session(revocation_context):
-    from app import models, schemas
-    from app.security import create_access_token, decode_access_token
-    import app.routers.auth as auth_router
-    import app.routers.password_reset as reset_router
-    session, admin, victim = revocation_context
-
-    old_token = create_access_token(data={"sub": victim.email, "uid": victim.id})
-    old_request = _make_request({"Authorization": f"Bearer {old_token}"})
-    result = await auth_router.get_current_user(old_request, session)
-    assert result.id == victim.id
-
-    # Mint a reset token the way request_password_reset does, and persist
-    # the matching PasswordResetToken row confirm_password_reset checks
-    # against.
-    reset_token = create_access_token(
-        data={"sub": victim.email, "uid": victim.id, "purpose": "password_reset"},
-        expires_minutes=30,
-    )
-    claims = decode_access_token(reset_token)
-    session.add(
-        models.PasswordResetToken(
-            user_id=victim.id,
-            jti=claims["jti"],
-            expires_at=datetime.fromtimestamp(claims["exp"], tz=timezone.utc),
-        )
-    )
-    await session.commit()
-
-    time.sleep(1.1)
-
-    await reset_router.confirm_password_reset(
-        payload=reset_router.PasswordResetConfirm(
-            token=reset_token, new_password="Self-Service-New1!",
-        ),
-        db=session,
-    )
-
-    with pytest.raises(HTTPException) as exc:
-        await auth_router.get_current_user(old_request, session)
-    assert exc.value.status_code == 401
 
 
 @pytest.mark.asyncio

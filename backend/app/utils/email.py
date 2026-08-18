@@ -81,30 +81,6 @@ def _wrap_html(title: str, body_html: str) -> str:
 """
 
 
-async def send_password_reset_email(to: str, reset_link: str) -> bool:
-    subject = "Reset your PurveX password"
-    text_body = (
-        "We received a request to reset your PurveX password.\n\n"
-        f"Reset it here: {reset_link}\n\n"
-        "This link expires in 30 minutes. If you did not request this, you can ignore this email."
-    )
-    html_body = _wrap_html(
-        "Reset your password",
-        f"""
-        <p style="margin:0 0 20px;font-size:14px;line-height:1.6;color:#3f4a63;">
-          We received a request to reset your PurveX password. This link expires in 30 minutes.
-        </p>
-        <a href="{reset_link}" style="display:inline-block;padding:10px 20px;background:#5546e0;color:#ffffff;text-decoration:none;border-radius:8px;font-size:14px;font-weight:600;">
-          Reset password
-        </a>
-        <p style="margin:20px 0 0;font-size:12px;line-height:1.6;color:#8a95ac;">
-          If you did not request this, you can safely ignore this email.
-        </p>
-        """,
-    )
-    return await send_email(to, subject, text_body, html_body)
-
-
 async def send_invite_email(to: str, invite_link: str, inviter_name: str | None = None) -> bool:
     # inviter_name comes from an admin's username/email, which has no
     # character restriction — escape it before it lands in the HTML body.

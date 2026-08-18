@@ -23,8 +23,6 @@ const AUTH_COOKIE = "access_token";
 const PUBLIC_PREFIXES = [
   "/login",
   "/setup",
-  "/forgot-password",
-  "/reset-password",
   "/accept-invite",
   "/legal",
 ];

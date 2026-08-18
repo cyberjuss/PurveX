@@ -36,7 +36,6 @@ from .routers import assistant as assistant_router
 from .routers import atomic as atomic_router
 from .routers import mitre as mitre_router
 from .routers import rbac as rbac_router
-from .routers import password_reset as password_reset_router
 from .routers import reports as reports_router
 from .routers import onboarding as onboarding_router
 from .routers import proposals as proposals_router
@@ -847,7 +846,6 @@ app.include_router(assistant_router.router)
 app.include_router(atomic_router.router)
 app.include_router(mitre_router.router)
 app.include_router(rbac_router.router)  # /rbac/me/roles, /rbac/me/permissions, etc.
-app.include_router(password_reset_router.router)
 app.include_router(reports_router.router)  # /reports/generate, /reports/, /reports/{report_id}/download
 app.include_router(onboarding_router.router)  # /onboarding/status
 app.include_router(proposals_router.router)  # /proposals (AI remediation guardrails)

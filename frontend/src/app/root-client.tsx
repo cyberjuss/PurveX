@@ -131,7 +131,7 @@ export default function RootClientLayout({
     return () => observer.disconnect();
   }, [pathname, children]);
   const isLoginPage = pathname === "/login";
-  const PUBLIC_AUTH_PAGES = ["/setup", "/forgot-password", "/reset-password", "/accept-invite"];
+  const PUBLIC_AUTH_PAGES = ["/setup", "/accept-invite"];
   const isPublicAuthPage = isLoginPage || PUBLIC_AUTH_PAGES.includes(pathname);
   const isFullBleedPage = ["/agent"].some((route) => pathname.startsWith(route));
   const isTopLevelRoute = segments.length <= 1;

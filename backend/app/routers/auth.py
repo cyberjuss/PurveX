@@ -113,14 +113,13 @@ async def _authenticate_request(
             detail="Could not validate credentials",
         )
 
-    # SECURITY: single-purpose tokens (password-reset, invite) are minted
-    # with the same signing key/algorithm as a real session so they must
-    # never be usable as a general Bearer credential. Each of those tokens
-    # is validated and consumed directly by its own endpoint
-    # (password_reset.confirm_password_reset, auth.accept_invite) via
-    # decode_access_token — neither depends on get_current_user — so
+    # SECURITY: single-purpose tokens (e.g. invite links) are minted with
+    # the same signing key/algorithm as a real session so they must never
+    # be usable as a general Bearer credential. Each is validated and
+    # consumed directly by its own endpoint (auth.accept_invite) via
+    # decode_access_token — it doesn't depend on get_current_user — so
     # rejecting any such claim here is safe and closes the bypass without
-    # affecting those flows.
+    # affecting that flow.
     if payload.get("purpose"):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -169,8 +168,8 @@ async def _authenticate_request(
     # SECURITY: reject tokens issued before the user's last password change.
     # JWTs are otherwise stateless, so without this a password reset (e.g.
     # in response to a suspected compromise) wouldn't invalidate whatever
-    # session the attacker already had. See set_user_password and
-    # confirm_password_reset, which set token_valid_after.
+    # session the attacker already had. See set_user_password (rbac.py)
+    # and scripts/reset.py, which both set token_valid_after.
     token_valid_after = getattr(user, "token_valid_after", None)
     if token_valid_after is not None:
         issued_at = payload.get("iat")
@@ -619,8 +618,8 @@ class AcceptInviteRequest(BaseModel):
 @router.post("/invite/accept", response_model=dict)
 async def accept_invite(payload: AcceptInviteRequest, db: DBSession):
     """Public endpoint: an invited user sets their password and activates
-    their account. Mirrors /auth/password-reset/confirm's validation shape,
-    but against UserInviteToken and clearing is_pending_activation."""
+    their account, validating against UserInviteToken and clearing
+    is_pending_activation."""
     from ..utils.security import sanitize_string
 
     token = sanitize_string(payload.token, max_length=4096)

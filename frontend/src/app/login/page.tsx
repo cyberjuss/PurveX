@@ -2,7 +2,6 @@
 
 import { Suspense, useEffect, useState } from "react";
 import Image from "next/image";
-import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { z } from "zod";
 import { getApiBaseCandidates, getBootstrapStatus } from "@/lib/api";
@@ -285,18 +284,9 @@ function LoginPageContent() {
               </div>
 
               <div>
-                <div className="mb-2 flex items-center justify-between">
-                  <label htmlFor="password" className={`${FIELD_LABEL_CLASSNAME} mb-0`}>
-                    Password
-                  </label>
-                  <Link
-                    href="/forgot-password"
-                    className="text-xs font-medium text-muted-foreground transition hover:text-foreground"
-                    tabIndex={-1}
-                  >
-                    Forgot password?
-                  </Link>
-                </div>
+                <label htmlFor="password" className={FIELD_LABEL_CLASSNAME}>
+                  Password
+                </label>
                 <div className="relative">
                   <Lock className="pointer-events-none absolute left-3.5 top-1/2 h-[18px] w-[18px] -translate-y-1/2 text-muted-foreground/50" />
                   <Input

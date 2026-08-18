@@ -77,27 +77,12 @@ class PasswordHistory(Base):
     user = relationship("User", back_populates="password_history")
 
 
-class PasswordResetToken(Base):
-    """Track self-service password reset tokens so each token is single-use."""
-
-    __tablename__ = "password_reset_tokens"
-
-    id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
-    jti = Column(String, unique=True, index=True, nullable=False)
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-    expires_at = Column(DateTime(timezone=True), nullable=False)
-    used_at = Column(DateTime(timezone=True), nullable=True)
-
-
 class UserInviteToken(Base):
     """Track admin-issued invite tokens so each invite link is single-use.
 
-    Separate table from PasswordResetToken even though the shape is
-    identical — invites and resets have different lifecycles (7 days vs 30
-    minutes) and different semantics (activates a pending account vs.
-    changes an existing password), and keeping them apart avoids a token
-    minted for one purpose ever being replayable for the other.
+    Its own table rather than a shared generic token store, so a token
+    minted for one purpose (activating a pending account) can never be
+    replayed for a different one.
     """
 
     __tablename__ = "user_invite_tokens"
