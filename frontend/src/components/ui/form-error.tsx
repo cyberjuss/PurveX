@@ -1,6 +1,7 @@
 import { AlertCircle } from "lucide-react";
 
 import { cn } from "@/lib/utils";
+import { toneClasses } from "@/lib/status-tone";
 
 /**
  * Inline per-field error, rendered right under the input. Keep the DOM node
@@ -22,7 +23,8 @@ export function FieldError({
       role={message ? "alert" : undefined}
       aria-live="polite"
       className={cn(
-        "mt-1.5 min-h-[1.25rem] text-xs text-rose-600",
+        "mt-1.5 min-h-[1.25rem] text-xs",
+        toneClasses("danger").text,
         !message && "sr-only",
         className,
       )}
@@ -49,11 +51,13 @@ export function FormError({
     <div
       role="alert"
       className={cn(
-        "flex items-start gap-2 rounded-xl border border-rose-500/20 bg-rose-500/[0.05] px-3 py-2.5 text-xs text-rose-800",
+        "flex items-start gap-2 rounded-xl border bg-rose-50 dark:bg-rose-500/10 px-3 py-2.5 text-xs",
+        toneClasses("danger").border,
+        toneClasses("danger").text,
         className,
       )}
     >
-      <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-rose-500" />
+      <AlertCircle className={cn("mt-0.5 h-3.5 w-3.5 shrink-0", toneClasses("danger").icon)} />
       <span className="min-w-0 flex-1 leading-relaxed">{message}</span>
     </div>
   );

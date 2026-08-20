@@ -26,7 +26,6 @@ import {
   Eye,
   Layers
 } from "lucide-react";
-import { Breadcrumbs } from "@/components/layout/breadcrumbs";
 import Link from "next/link";
 import {
   Select,

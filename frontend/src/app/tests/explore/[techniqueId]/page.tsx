@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
+import { Chip } from "@/components/ui/chip";
 import { Input } from "@/components/ui/input";
 import { Copy as CopyIcon } from "lucide-react";
 import {
@@ -38,10 +38,7 @@ export default function TechniqueExplorePage() {
   const anyLabSafe = atomics.some((t) => t.is_safe);
   const allLabSafe = atomics.length > 0 && atomics.every((t) => t.is_safe);
   const safetyLabel = allLabSafe ? "Lab-safe set" : anyLabSafe ? "Mixed safety" : "Review carefully";
-  const safetyTone =
-    allLabSafe || anyLabSafe
-      ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
-      : "bg-amber-50 text-amber-700 border border-amber-200";
+  const safetyTone: "success" | "warning" = allLabSafe || anyLabSafe ? "success" : "warning";
   const summaryRunHref = buildRunTestHref({
     t: techniqueId,
     a: atomics[0]?.id ? String(atomics[0].id) : undefined,
@@ -212,9 +209,7 @@ export default function TechniqueExplorePage() {
                 <span>{uniquePlatforms.length ? uniquePlatforms.join(", ") : "N/A"}</span>
                 <span className="text-slate-400">|</span>
                 <span className="font-semibold text-slate-900">Safety:</span>
-                <span className={`inline-flex items-center rounded-full px-2 py-[2px] text-[10px] border ${safetyTone}`}>
-                  {safetyLabel}
-                </span>
+                <Chip tone={safetyTone} size="sm">{safetyLabel}</Chip>
               </div>
               {Object.entries(
                 atomics.reduce<Record<string, AtomicTestDefinition[]>>((acc, test) => {
@@ -265,15 +260,9 @@ export default function TechniqueExplorePage() {
                                 {allPlatforms.join(" / ")}
                               </span>
                             )}
-                            <span
-                              className={`inline-flex items-center rounded-full px-2 py-[2px] text-[10px] border ${
-                                isGroupSafe
-                                  ? "bg-emerald-50 text-emerald-700 border-emerald-200"
-                                  : "bg-amber-50 text-amber-700 border-amber-200"
-                              }`}
-                            >
+                            <Chip tone={isGroupSafe ? "success" : "warning"} size="sm">
                               {isGroupSafe ? "Lab-safe set" : "Review carefully"}
-                            </span>
+                            </Chip>
                             <a
                               href={mitreUrl}
                               target="_blank"
@@ -321,15 +310,9 @@ export default function TechniqueExplorePage() {
                                         {test.platforms.join(", ")}
                                       </span>
                                     )}
-                                    <Badge
-                                      className={
-                                        test.is_safe
-                                            ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
-                                            : "bg-amber-50 text-amber-700 border border-amber-200"
-                                      }
-                                    >
+                                    <Chip tone={test.is_safe ? "success" : "warning"} size="sm">
                                       {test.is_safe ? "Lab-safe" : "Use with caution"}
-                                    </Badge>
+                                    </Chip>
                                     </div>
                                   </div>
                                   <div className="flex items-center gap-2">

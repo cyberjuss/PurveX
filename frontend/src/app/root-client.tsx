@@ -375,7 +375,7 @@ export default function RootClientLayout({
               sidebarOpen={sidebarOpen}
               onToggleSidebar={() => setSidebarOpen((prev) => !prev)}
               breadcrumbs={
-                showBreadcrumbs ? <Breadcrumbs variant="header" className="text-xs" /> : null
+                showBreadcrumbs ? <Breadcrumbs className="text-xs" /> : null
               }
             />
             <a

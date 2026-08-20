@@ -1,6 +1,7 @@
 import { AlertCircle, RefreshCw } from "lucide-react";
 import { Button } from "./button";
 import { cn } from "@/lib/utils";
+import { toneClasses } from "@/lib/status-tone";
 
 interface ErrorStateProps {
   title?: string;
@@ -13,7 +14,7 @@ export function ErrorState({ title = "Error", message, onRetry, className }: Err
   return (
     <div className={cn("flex flex-col items-center justify-center py-12 space-y-4", className)}>
       <div className="flex items-center gap-3">
-        <AlertCircle className="h-8 w-8 text-red-400" />
+        <AlertCircle className={cn("h-8 w-8", toneClasses("danger").icon)} />
         <div className="text-center">
           <h3 className="text-lg font-semibold text-foreground">{title}</h3>
           <p className="text-sm text-muted-foreground mt-1">{message}</p>

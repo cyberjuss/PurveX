@@ -30,7 +30,7 @@ export function LoadingState({
       role="status"
       aria-live="polite"
       className={cn(
-        "flex min-h-16 items-center justify-center gap-3 text-sm text-slate-500 dark:text-slate-400",
+        "flex min-h-16 items-center justify-center gap-3 text-sm text-[var(--surface-subtle-foreground)]",
         padding[size],
         className,
       )}

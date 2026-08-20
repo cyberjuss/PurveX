@@ -145,8 +145,12 @@ export default function SettingsPage() {
       label: "Testing Policy",
       description: "Set allowed environments, production guardrails, and data retention rules.",
       icon: ShieldCheck,
+      // The backend auto-creates a default policy row on first read, so a
+      // successful fetch says nothing about whether anyone has actually
+      // customized it -- defaults are a real, enforced policy, not a gap.
+      // Only the fetch itself failing to resolve is worth flagging.
       status: hasPolicy ? "configured" : "default",
-      statusText: hasPolicy ? "Configured" : "Using defaults",
+      statusText: hasPolicy ? "Configured" : undefined,
       category: "advanced",
     },
     {

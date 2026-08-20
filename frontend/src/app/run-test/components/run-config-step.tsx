@@ -200,10 +200,10 @@ export function RunConfigStep({
       {error && errorIsUpgrade ? (
         <UpgradeBanner message={error} />
       ) : error ? (
-        <div className="p-4 rounded-lg border border-red-500/40 bg-red-500/10">
+        <div className={cn("p-4 rounded-lg border", toneClasses("danger").border, `${toneClasses("danger").bg}/10`)}>
           <div className="flex items-center gap-2">
-            <AlertTriangle className="h-5 w-5 text-red-400" />
-            <p className="text-sm text-red-200">{error}</p>
+            <AlertTriangle className={cn("h-5 w-5", toneClasses("danger").icon)} />
+            <p className={cn("text-sm", toneClasses("danger").text)}>{error}</p>
           </div>
         </div>
       ) : null}
@@ -216,17 +216,17 @@ export function RunConfigStep({
         </div>
       )}
       {(mitreLoadWarning || runnerLoadWarning) && (
-        <div className="p-4 rounded-lg border border-amber-300 bg-amber-50">
-          <div className="space-y-2 text-sm text-amber-900">
+        <div className={cn("p-4 rounded-lg border", toneClasses("warning").border, `${toneClasses("warning").bg}/10`)}>
+          <div className={cn("space-y-2 text-sm", toneClasses("warning").text)}>
             {mitreLoadWarning && (
               <div className="flex items-start gap-2">
-                <AlertTriangle className="mt-0.5 h-4 w-4 text-amber-700" />
+                <AlertTriangle className={cn("mt-0.5 h-4 w-4", toneClasses("warning").icon)} />
                 <p>{mitreLoadWarning}</p>
               </div>
             )}
             {runnerLoadWarning && (
               <div className="flex items-start gap-2">
-                <AlertTriangle className="mt-0.5 h-4 w-4 text-amber-700" />
+                <AlertTriangle className={cn("mt-0.5 h-4 w-4", toneClasses("warning").icon)} />
                 <p>{runnerLoadWarning}</p>
               </div>
             )}

@@ -20,6 +20,7 @@ import {
 import { format, formatDistanceToNow, intervalToDuration } from "date-fns";
 import { buildRunTestHref } from "@/app/run-test/lib/run-test-url";
 import { cn } from "@/lib/utils";
+import { scoreToTone, toneClasses } from "@/lib/status-tone";
 import {
   AlertTriangle,
   ArrowLeft,
@@ -91,12 +92,6 @@ function resultLabel(result?: string) {
   return result;
 }
 
-function scoreTone(score?: number | null) {
-  if (typeof score !== "number") return "text-[var(--surface-subtle-foreground)]";
-  if (score >= 80) return "text-emerald-600 dark:text-emerald-300";
-  if (score >= 50) return "text-amber-600 dark:text-amber-300";
-  return "text-rose-600 dark:text-rose-300";
-}
 
 function modeMeta(mode?: string | null): {
   label: string;
@@ -276,7 +271,7 @@ export default function TestDetailPage() {
           {mode.label}
         </Badge>
         {typeof data.score === "number" && (
-          <span className={cn("font-semibold", scoreTone(data.score))}>
+          <span className={cn("font-semibold", toneClasses(scoreToTone(data.score)).text)}>
             {data.score}/100
           </span>
         )}

@@ -34,6 +34,7 @@ import { Permission } from "@/lib/permissions";
 import { usePermissions } from "@/hooks/usePermissions";
 import { buildRunTestHref } from "@/app/run-test/lib/run-test-url";
 import { cn } from "@/lib/utils";
+import { scoreToTone, toneClasses } from "@/lib/status-tone";
 import { PageContainer } from "@/components/layout/page-container";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -178,13 +179,6 @@ function resultTone(result?: string | null): ChipTone {
   if (value === "FAIL") return "danger";
   if (value === "INCONCLUSIVE") return "warning";
   return "neutral";
-}
-
-function scoreTone(score?: number | null) {
-  if (typeof score !== "number") return "text-slate-500 dark:text-slate-400";
-  if (score >= 80) return "text-emerald-600";
-  if (score >= 50) return "text-amber-600";
-  return "text-rose-600";
 }
 
 export default function DetectionDetailPage() {
@@ -345,7 +339,7 @@ export default function DetectionDetailPage() {
     return (
       <PageContainer>
         <Card>
-          <CardContent className="pt-6 text-sm text-rose-600">Invalid detection id.</CardContent>
+          <CardContent className={cn("pt-6 text-sm", toneClasses("danger").text)}>Invalid detection id.</CardContent>
         </Card>
       </PageContainer>
     );
@@ -364,7 +358,7 @@ export default function DetectionDetailPage() {
       <PageContainer>
         <Card>
           <CardContent className="space-y-2 pt-6">
-            <p className="text-sm font-semibold text-rose-600">{error || "Detection not found."}</p>
+            <p className={cn("text-sm font-semibold", toneClasses("danger").text)}>{error || "Detection not found."}</p>
             <Link href="/detections">
               <Button variant="outline">Back to detections</Button>
             </Link>
@@ -477,7 +471,7 @@ export default function DetectionDetailPage() {
             <Stat
               label="Score"
               value={typeof detection.last_score === "number" ? `${detection.last_score}` : "-"}
-              valueClassName={scoreTone(detection.last_score)}
+              valueClassName={toneClasses(scoreToTone(detection.last_score)).text}
             />
             <Stat label="Validations" value={String(tests.length)} />
             <Stat label="Evidence" value={String(events.length)} />
@@ -646,7 +640,7 @@ export default function DetectionDetailPage() {
                           {test.result || test.status || "-"}
                         </Chip>
                       </TableCell>
-                      <TableCell className={cn("text-sm font-medium", scoreTone(test.score))}>
+                      <TableCell className={cn("text-sm font-medium", toneClasses(scoreToTone(test.score)).text)}>
                         {typeof test.score === "number" ? test.score : "-"}
                       </TableCell>
                       <TableCell className="text-sm text-slate-600 dark:text-slate-300">{test.environment || "-"}</TableCell>
