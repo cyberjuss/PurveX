@@ -39,7 +39,6 @@ import {
   Server,
   Clock,
   FileText,
-  AlertCircle,
 } from "lucide-react";
 import { format, parseISO } from "date-fns";
 import { cn } from "@/lib/utils";
@@ -401,11 +400,6 @@ export default function AuditLogPage() {
           <div className="flex items-center justify-center gap-2 rounded-lg border border-dashed border-[var(--stroke-soft)] bg-[var(--surface-elevated)] py-12 text-sm text-[var(--surface-subtle-foreground)]">
             <FileText className="h-5 w-5" />
             No audit events match your filters.
-          </div>
-        ) : error ? (
-          <div className="flex items-center justify-center gap-2 rounded-lg border border-rose-200 bg-rose-50 py-8 text-sm text-rose-700">
-            <AlertCircle className="h-5 w-5" />
-            {error}
           </div>
         ) : (
           <>
