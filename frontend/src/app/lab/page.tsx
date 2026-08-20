@@ -186,7 +186,6 @@ function LabPageContent() {
 
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
-  const [failingOnly, setFailingOnly] = useState(false);
 
   // Sheet inspector — selection is stored as an id (not the row object) so
   // it stays correct across refetches/local status updates instead of
@@ -350,15 +349,6 @@ function LabPageContent() {
     const query = search.trim().toLowerCase();
     return endpoints.filter((endpoint) => {
       if (statusFilter !== "all" && endpoint.statusBucket !== statusFilter) return false;
-      if (
-        failingOnly &&
-        !endpoint.recentTests.some((test) => {
-          const status = (test.status || "").toUpperCase();
-          return status === "FAIL" || status === "ERROR" || status === "INCONCLUSIVE";
-        })
-      ) {
-        return false;
-      }
       if (!query) return true;
       return [
         endpoint.hostname,
@@ -372,7 +362,7 @@ function LabPageContent() {
         .toLowerCase()
         .includes(query);
     });
-  }, [endpoints, failingOnly, search, statusFilter]);
+  }, [endpoints, search, statusFilter]);
 
   const statusCounts = useMemo(() => {
     return endpoints.reduce<Record<EndpointBucket, number>>(
@@ -382,15 +372,6 @@ function LabPageContent() {
       },
       { online: 0, degraded: 0, paused: 0, unknown: 0 },
     );
-  }, [endpoints]);
-
-  const recentFailureCount = useMemo(() => {
-    return endpoints.filter((endpoint) =>
-      endpoint.recentTests.some((test) => {
-        const status = (test.status || "").toUpperCase();
-        return status === "FAIL" || status === "ERROR" || status === "INCONCLUSIVE";
-      }),
-    ).length;
   }, [endpoints]);
 
   const currentTestStatus = (currentTest?.status || "pending").toLowerCase();
@@ -562,7 +543,6 @@ function LabPageContent() {
   function clearFilters() {
     setSearch("");
     setStatusFilter("all");
-    setFailingOnly(false);
   }
 
   if (endpointsLoading && endpoints.length === 0) {
@@ -617,7 +597,7 @@ function LabPageContent() {
         </div>
       ) : null}
 
-      {/* Search + status tabs + triage toggle. */}
+      {/* Search + status tabs. */}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="relative w-full sm:max-w-xs">
           <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--surface-subtle-foreground)]" />
@@ -658,19 +638,6 @@ function LabPageContent() {
               );
             })}
           </div>
-          <button
-            type="button"
-            onClick={() => setFailingOnly((value) => !value)}
-            className="rounded-full focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-line)]"
-          >
-            <Chip
-              tone={failingOnly ? "warning" : "muted"}
-              appearance={failingOnly ? "subtle" : "outline"}
-              className="cursor-pointer"
-            >
-              Needs triage
-            </Chip>
-          </button>
         </div>
       </div>
 
@@ -720,7 +687,7 @@ function LabPageContent() {
             </div>
           ) : (
             <div
-              key={`${statusFilter}|${failingOnly}|${search}`}
+              key={`${statusFilter}|${search}`}
               className={cn(
                 "stagger-children divide-y divide-[var(--stroke-soft)] overflow-hidden rounded-xl border border-[var(--stroke-soft)] bg-[var(--surface-elevated)] shadow-sm transition-opacity duration-200",
                 refreshing && endpoints.length > 0 && "pointer-events-none opacity-60",
