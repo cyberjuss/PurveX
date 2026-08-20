@@ -1425,7 +1425,25 @@ async def delete_environment_runner(
     runner_config = result.scalar_one_or_none()
     if not runner_config:
         raise HTTPException(status_code=404, detail="Environment Runner Config not found or access denied")
-    
+
+    # AgentCommand.runner_id is NOT NULL with no ON DELETE CASCADE, and
+    # AgentRegistrationToken.used_by_runner_id references this row too --
+    # any queued pause/resume/stop command, or the token that originally
+    # registered this runner, blocks the delete below with a
+    # ForeignKeyViolation that would otherwise surface as an unhandled 500.
+    # Commands are pure queue entries with no value once the runner is
+    # gone, so delete them outright; the registration token keeps its own
+    # audit value, so just clear the now-dangling reference instead of
+    # deleting the token record.
+    await db.execute(
+        delete(models.AgentCommand).where(models.AgentCommand.runner_id == runner_id)
+    )
+    await db.execute(
+        models.AgentRegistrationToken.__table__.update()
+        .where(models.AgentRegistrationToken.used_by_runner_id == runner_id)
+        .values(used_by_runner_id=None)
+    )
+
     await db.execute(
         delete(models.EnvironmentRunnerConfig).where(
             models.EnvironmentRunnerConfig.id == runner_id,
