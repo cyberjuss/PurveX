@@ -81,14 +81,14 @@ export function RunConfigStep({
   onRunTest: () => void;
 }) {
   return (
-    <div className="space-y-8">
+    <div className="space-y-10">
       {!canSelectTargetHost && (
         <p className="text-xs text-[var(--surface-subtle-foreground)] leading-relaxed">
           Pick a target on the left to configure environment and host.
         </p>
       )}
-      <div className="grid gap-6 md:grid-cols-2">
-        <div className="space-y-3">
+      <div className="grid gap-8 md:grid-cols-2">
+        <div className="space-y-4">
           <Label htmlFor="environment-select" className="text-[var(--foreground)] text-sm font-medium flex items-center gap-2">
             <Server className="h-4 w-4 text-[var(--surface-subtle-foreground)]" />
             Environment
@@ -118,7 +118,7 @@ export function RunConfigStep({
           </p>
         </div>
 
-        <div className="space-y-3">
+        <div className="space-y-4">
           <Label htmlFor="target-host" className="text-[var(--foreground)] text-sm font-medium flex items-center gap-2">
             <Settings className="h-4 w-4 text-[var(--surface-subtle-foreground)]" />
             Target Host
@@ -171,7 +171,7 @@ export function RunConfigStep({
       </div>
 
       {environment === "lab" && (
-        <div className="space-y-3">
+        <div className="space-y-4">
           <Label className="text-[var(--foreground)] text-sm font-medium">Lab Operating System</Label>
           <p className="text-xs text-[var(--surface-subtle-foreground)] leading-relaxed">
             Choose which lab VMs this scenario should exercise
@@ -243,8 +243,8 @@ export function RunConfigStep({
       )}
 
       {/* Execution Options */}
-      <div className="space-y-4 pt-6 border-t border-[var(--stroke-soft)]">
-        <div className="space-y-3">
+      <div className="space-y-5 pt-8 border-t border-[var(--stroke-soft)]">
+        <div className="space-y-4">
           <Label className="text-[var(--foreground)] text-sm font-medium">Run Mode</Label>
           <p className="text-xs text-[var(--surface-subtle-foreground)] leading-relaxed">
             Choose to run immediately or set a schedule.
@@ -353,7 +353,7 @@ export function RunConfigStep({
         )}
 
         {/* Action Buttons */}
-        <div className="flex items-center gap-4 pt-6 border-t border-[var(--stroke-soft)]">
+        <div className="flex items-center gap-4 pt-8 border-t border-[var(--stroke-soft)]">
           <Button
             onClick={onRunTest}
             disabled={!canRun}
