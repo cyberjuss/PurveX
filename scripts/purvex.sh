@@ -448,7 +448,7 @@ setup_database() {
     fi
 
     local pg_password pg_password_confirm
-    read -r -s -p "Create PostgreSQL password: " pg_password < /dev/tty
+    read -r -s -p "Create new password: " pg_password < /dev/tty
     printf "\n"
     if [ -z "${pg_password}" ]; then
       fail "A password is required."
