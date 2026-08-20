@@ -783,7 +783,7 @@ function AtomicTestCard({ test, onRun }: { test: AtomicTestDefinition; onRun: ()
       {expanded && (
         <div className="border-t border-[var(--stroke-soft)] px-4 py-3">
           {description && (
-            <p className="mb-3 whitespace-pre-wrap text-xs text-[var(--surface-subtle-foreground)]">{description}</p>
+            <p className="mb-3 whitespace-pre-wrap text-[13px] text-[var(--surface-subtle-foreground)]">{description}</p>
           )}
           {primaryCommand && (
             <div>
