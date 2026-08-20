@@ -120,8 +120,8 @@ async def main() -> None:
         if args.password:
             password = args.password
         else:
-            password = getpass.getpass("New password (8+ characters, upper/lower/digit/symbol): ")
-            if password != getpass.getpass("Confirm password: "):
+            password = getpass.getpass("Create new password (8+ characters, upper/lower/digit/symbol): ")
+            if password != getpass.getpass("Re-enter password: "):
                 raise SystemExit("Passwords did not match.")
         if not password:
             raise SystemExit("Password is required.")

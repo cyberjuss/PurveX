@@ -447,11 +447,16 @@ setup_database() {
       fail "PostgreSQL needs a password and no terminal is attached. Set DATABASE_URL in .env manually, then re-run --setup."
     fi
 
-    local pg_password
-    read -r -s -p "Enter password: " pg_password < /dev/tty
+    local pg_password pg_password_confirm
+    read -r -s -p "Create PostgreSQL password: " pg_password < /dev/tty
     printf "\n"
     if [ -z "${pg_password}" ]; then
       fail "A password is required."
+    fi
+    read -r -s -p "Re-enter password: " pg_password_confirm < /dev/tty
+    printf "\n"
+    if [ "${pg_password}" != "${pg_password_confirm}" ]; then
+      fail "Passwords did not match. Re-run --setup and try again."
     fi
 
     # psql's `-v`/`:'pass'` interpolation is only honored when reading a
