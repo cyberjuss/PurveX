@@ -21,9 +21,7 @@ import {
   CheckCircle2,
   XCircle,
   AlertTriangle,
-  RefreshCw,
   Bell,
-  Trash2,
   X,
   Inbox,
   ChevronRight,
@@ -321,37 +319,6 @@ export default function NotificationsPage() {
     });
   };
 
-  const dismissMany = (items: UnifiedNotification[]) => {
-    const platformBackendIds = items
-      .filter((n) => n.type === "platform" && n.metadata?.notificationId != null)
-      .map((n) => n.metadata!.notificationId as number);
-    const otherIds = items.filter((n) => n.type !== "platform").map((n) => n.id);
-
-    if (platformBackendIds.length > 0) {
-      setPlatformNotifications((prev) =>
-        prev.filter((n) => !platformBackendIds.includes(n.metadata?.notificationId as number))
-      );
-      void Promise.all(platformBackendIds.map((id) => apiDismissNotification(id).catch(() => {})));
-    }
-    if (otherIds.length > 0) {
-      setDismissedIds((prev) => {
-        const next = new Set(prev);
-        otherIds.forEach((id) => next.add(id));
-        writeDismissedIds(next);
-        return next;
-      });
-    }
-  };
-
-  const clearVisibleNotifications = () => {
-    dismissMany(filteredNotifications);
-  };
-
-  const cleanOldNotifications = () => {
-    const cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000;
-    dismissMany(notifications.filter((notification) => notification.timestamp.getTime() < cutoff));
-  };
-
   if (loading) {
     return (
       <PageContainer>
@@ -401,38 +368,6 @@ export default function NotificationsPage() {
             <p className="mt-1 text-sm text-[var(--surface-subtle-foreground)]">
               Validation runs, trust changes, and setup issues that need attention.
             </p>
-          </div>
-          <div className="flex items-center gap-2">
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={cleanOldNotifications}
-              disabled={notifications.length === 0}
-              className="h-8 whitespace-nowrap text-xs"
-            >
-              <Trash2 className="mr-1.5 h-3.5 w-3.5" />
-              Dismiss old
-            </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={clearVisibleNotifications}
-              disabled={filteredNotifications.length === 0}
-              className="h-8 whitespace-nowrap text-xs"
-            >
-              <X className="mr-1.5 h-3.5 w-3.5" />
-              Dismiss all
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => void loadData()}
-              disabled={refreshing}
-              className="h-8 whitespace-nowrap text-xs"
-            >
-              <RefreshCw className={cn("mr-1.5 h-3.5 w-3.5", refreshing && "animate-spin")} />
-              Refresh
-            </Button>
           </div>
         </header>
 

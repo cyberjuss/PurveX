@@ -1271,10 +1271,6 @@ export function RegisterAgentDialog({ open, onOpenChange, onRegistered }: Regist
                 {commandCopied ? "Copied" : "Copy run command"}
               </Button>
             </div>
-            <p className="text-xs text-muted-foreground">
-              Run it on the target machine and paste the token when prompted (or pass it via env var / flag).
-              {selectedScript === "bash" && " After download: chmod +x register_agent.sh."}
-            </p>
           </TabsContent>
 
           <TabsContent value="ssh" className="pt-4">
