@@ -404,12 +404,30 @@ export default function RootClientLayout({
                 </div>
               </main>
               <footer className="border-t border-[var(--stroke-soft)] bg-[var(--surface-elevated)] text-[var(--surface-elevated-foreground)]">
-                <div className="flex h-20 w-full flex-col items-center justify-center gap-1 px-4 text-[11px] leading-tight text-slate-600 dark:text-slate-400 sm:px-6 lg:px-10">
-                  <span className="text-center font-semibold text-slate-800">© 2025 PurveX</span>
-                  <div className="flex flex-wrap items-center justify-center gap-x-3 gap-y-1 text-[11px] text-slate-600 dark:text-slate-400">
-                    <Link href="/legal/terms" className="hover:text-indigo-600 hover:underline underline-offset-4">Terms</Link>
-                    <Link href="/legal/privacy" className="hover:text-indigo-600 hover:underline underline-offset-4">Privacy</Link>
-                    <Link href="/legal/attribution" className="hover:text-indigo-600 hover:underline underline-offset-4">Attribution &amp; Licenses</Link>
+                <div className="flex h-20 w-full flex-col items-center justify-center gap-1 px-4 text-[11px] leading-tight text-[var(--surface-subtle-foreground)] sm:px-6 lg:px-10">
+                  <span className="text-center font-semibold text-[var(--foreground)]">
+                    © {new Date().getFullYear()} PurveX
+                  </span>
+                  <div className="flex flex-wrap items-center justify-center gap-x-3 gap-y-1 text-[11px] text-[var(--surface-subtle-foreground)]">
+                    <a
+                      href="https://purve-x-landing-page.vercel.app/legal/terms"
+                      target="_blank"
+                      rel="noreferrer"
+                      className="hover:text-[var(--accent-strong)] hover:underline underline-offset-4"
+                    >
+                      Terms
+                    </a>
+                    <a
+                      href="https://purve-x-landing-page.vercel.app/legal/privacy"
+                      target="_blank"
+                      rel="noreferrer"
+                      className="hover:text-[var(--accent-strong)] hover:underline underline-offset-4"
+                    >
+                      Privacy
+                    </a>
+                    <Link href="/legal/attribution" className="hover:text-[var(--accent-strong)] hover:underline underline-offset-4">
+                      Attribution &amp; Licenses
+                    </Link>
                   </div>
                 </div>
               </footer>
