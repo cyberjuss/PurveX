@@ -666,7 +666,10 @@ async def delete_siem_connection(
         )
         await session.commit()
 
-    return {"message": "SIEM Connection deleted successfully"}
+    # See the matching comment in delete_environment_runner -- 204 must not
+    # carry a body, and Starlette won't set Content-Length for this status
+    # code, so a body here sends a malformed response.
+    return None
 
 @router.get("/siem-connections/{siem_id}/alerts", response_model=List[schemas.SIEMAlert])
 async def get_siem_alerts(
@@ -1444,7 +1447,13 @@ async def delete_environment_runner(
         )
         await session.commit()
 
-    return {"message": "Environment Runner Config deleted successfully"}
+    # 204 must not carry a body -- Starlette skips Content-Length for this
+    # status code specifically (responses.py), so returning one here sends
+    # a body with no framing header, which a proxy in front of this API
+    # can reasonably choke on or hang against instead of just passing it
+    # through. The frontend already treats 204 as "succeeded, no payload"
+    # (see apiFetch), so there's nothing depending on this message anyway.
+    return None
 
 # --- Testing Policy & Safety Settings ---
 
