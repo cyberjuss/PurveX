@@ -591,10 +591,10 @@ export default function ReportsPage() {
 
       {adjustOpen ? (
         <Card className="print:hidden">
-          <CardContent className="space-y-5">
-            <div className="space-y-2">
+          <CardContent className="space-y-6">
+            <div className="space-y-3">
               <Label>Window</Label>
-              <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+              <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
                 <input
                   type="date"
                   value={startDate}
@@ -611,7 +611,7 @@ export default function ReportsPage() {
               </div>
             </div>
 
-            <div className="space-y-2">
+            <div className="space-y-3">
               <Label>Environments</Label>
               <div className="inline-flex rounded-lg border border-[var(--stroke-soft)] bg-[var(--surface-elevated)] p-1">
                 {DEFAULT_ENVIRONMENTS.map((environment) => {
@@ -624,8 +624,8 @@ export default function ReportsPage() {
                       className={cn(
                         "rounded-md border px-4 py-1.5 text-sm font-medium capitalize transition-all",
                         active
-                          ? "border-[var(--stroke-soft)] bg-[var(--surface-card)] text-[var(--foreground)] shadow-sm"
-                          : "border-transparent text-[var(--surface-subtle-foreground)] hover:bg-[var(--surface-card)] hover:text-[var(--foreground)]",
+                          ? "border-[var(--accent-line)] bg-[var(--accent-soft)] text-[var(--accent-strong)] shadow-sm"
+                          : "border-transparent text-[var(--surface-subtle-foreground)] hover:bg-[var(--surface-subtle)] hover:text-[var(--foreground)]",
                       )}
                     >
                       {environment}
@@ -635,7 +635,7 @@ export default function ReportsPage() {
               </div>
             </div>
 
-            <div className="space-y-2">
+            <div className="space-y-3">
               <Label>Show</Label>
               <div className="flex flex-wrap gap-2">
                 {SECTIONS.map((section) => {
@@ -649,7 +649,7 @@ export default function ReportsPage() {
                     >
                       <Chip
                         tone={visible ? "accent" : "muted"}
-                        appearance={visible ? "subtle" : "outline"}
+                        appearance={visible ? "solid" : "outline"}
                         className="cursor-pointer"
                       >
                         {section.label}
