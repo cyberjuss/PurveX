@@ -5,7 +5,6 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Clock, Search, Eye } from "lucide-react";
 import { Chip, type ChipProps } from "@/components/ui/chip";
-import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -72,8 +71,8 @@ export default function TestsAuditPage() {
       setError(null);
       const data = await getTests();
       setTests(data);
-    } catch (err: any) {
-      setError(err?.message || "Failed to load test executions.");
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Failed to load test executions.");
     } finally {
       setLoading(false);
     }
@@ -153,20 +152,20 @@ export default function TestsAuditPage() {
         <CardContent className="pt-4 pb-4">
           <div className="flex flex-col lg:flex-row gap-3">
             <div className="flex-1 relative">
-              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-slate-500" />
+              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-[var(--surface-subtle-foreground)]" />
               <Input
                 placeholder="Search by detection, technique, or test id..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="pl-9 bg-[var(--surface-card)] border-[var(--stroke-soft)] text-[var(--foreground)] placeholder:text-slate-500 dark:placeholder:text-slate-400"
+                className="pl-9 bg-[var(--surface-card)] border-[var(--stroke-soft)] text-[var(--foreground)] placeholder:text-[var(--surface-subtle-foreground)] dark:placeholder:text-slate-400"
               />
             </div>
             <div className="flex flex-wrap gap-2">
               <Select value={resultFilter} onValueChange={(v: ResultFilter) => setResultFilter(v)}>
-                <SelectTrigger className="h-10 w-[150px] border-slate-300 bg-white text-[var(--foreground)]">
+                <SelectTrigger className="h-10 w-[150px]">
                   <SelectValue placeholder="Result" />
                 </SelectTrigger>
-                <SelectContent className="bg-white border border-[var(--stroke-soft)]">
+                <SelectContent>
                   <SelectItem value="all">All results</SelectItem>
                   <SelectItem value="PASS">Pass</SelectItem>
                   <SelectItem value="FAIL">Fail</SelectItem>
@@ -177,10 +176,10 @@ export default function TestsAuditPage() {
                 </SelectContent>
               </Select>
               <Select value={envFilter} onValueChange={(v: EnvFilter) => setEnvFilter(v)}>
-                <SelectTrigger className="h-10 w-[150px] border-slate-300 bg-white text-[var(--foreground)]">
+                <SelectTrigger className="h-10 w-[150px]">
                   <SelectValue placeholder="Environment" />
                 </SelectTrigger>
-                <SelectContent className="bg-white border border-[var(--stroke-soft)]">
+                <SelectContent>
                   <SelectItem value="all">All environments</SelectItem>
                   <SelectItem value="lab">Lab</SelectItem>
                   <SelectItem value="dev">Dev</SelectItem>
@@ -188,10 +187,10 @@ export default function TestsAuditPage() {
                 </SelectContent>
               </Select>
               <Select value={timeFilter} onValueChange={(v: TimeFilter) => setTimeFilter(v)}>
-                <SelectTrigger className="h-10 w-[140px] border-slate-300 bg-white text-[var(--foreground)]">
+                <SelectTrigger className="h-10 w-[140px]">
                   <SelectValue placeholder="Time range" />
                 </SelectTrigger>
-                <SelectContent className="bg-white border border-[var(--stroke-soft)]">
+                <SelectContent>
                   <SelectItem value="all">All time</SelectItem>
                   <SelectItem value="24h">Last 24h</SelectItem>
                   <SelectItem value="7d">Last 7 days</SelectItem>
@@ -207,15 +206,15 @@ export default function TestsAuditPage() {
         <Card className="border-2 border-[var(--stroke-soft)] bg-[var(--surface-card)] shadow-md">
           <CardContent className="pt-12 pb-12 text-center">
             <p className="text-lg font-semibold text-[var(--foreground)] mb-2">No test executions found</p>
-            <p className="text-sm text-slate-600">Try adjusting your filters or run a new test.</p>
+            <p className="text-sm text-[var(--surface-subtle-foreground)]">Try adjusting your filters or run a new test.</p>
           </CardContent>
         </Card>
       ) : (
         <Card className="border-2 border-[var(--stroke-soft)] bg-[var(--surface-card)] shadow-md">
           <CardContent className="pt-4 pb-4">
             <div className="overflow-x-auto">
-              <table className="min-w-full text-left text-[12px] text-slate-700">
-                <thead className="border-b border-[var(--stroke-soft)] text-[10px] uppercase tracking-wider text-slate-500">
+              <table className="min-w-full text-left text-[12px] text-[var(--foreground)]">
+                <thead className="border-b border-[var(--stroke-soft)] text-[10px] uppercase tracking-wider text-[var(--surface-subtle-foreground)]">
                   <tr>
                     <th className="py-2.5 pr-4">Time</th>
                     <th className="py-2.5 pr-4">Finished</th>
@@ -232,7 +231,7 @@ export default function TestsAuditPage() {
                     <th className="py-2.5 pr-2 text-right">Actions</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-slate-100">
+                <tbody className="divide-y divide-[var(--stroke-soft)]">
                   {filteredTests.map((test) => {
                     const result = (test.result || test.status || "N/A").toUpperCase();
                     return (
@@ -254,23 +253,23 @@ export default function TestsAuditPage() {
                           }
                         }}
                       >
-                        <td className="py-3 pr-4 whitespace-nowrap text-slate-600">
+                        <td className="py-3 pr-4 whitespace-nowrap text-[var(--surface-subtle-foreground)]">
                           <div className="flex items-center gap-2">
-                            <Clock className="h-3 w-3 text-slate-400" />
+                            <Clock className="h-3 w-3 text-[var(--surface-subtle-foreground)]" />
                             <span>{new Date(test.started_at).toLocaleString()}</span>
                           </div>
                         </td>
-                        <td className="py-3 pr-4 whitespace-nowrap text-slate-600">
+                        <td className="py-3 pr-4 whitespace-nowrap text-[var(--surface-subtle-foreground)]">
                           {test.finished_at ? new Date(test.finished_at).toLocaleString() : "—"}
                         </td>
-                        <td className="py-3 pr-4 whitespace-nowrap text-slate-600">
+                        <td className="py-3 pr-4 whitespace-nowrap text-[var(--surface-subtle-foreground)]">
                           {formatDuration(test.started_at, test.finished_at)}
                         </td>
                         <td className="py-3 pr-4 max-w-[200px]">
                           <div className="text-[var(--foreground)] truncate">
                             {test.initiated_by_username || "Unknown user"}
                           </div>
-                          <div className="text-[11px] text-slate-500 truncate">
+                          <div className="text-[11px] text-[var(--surface-subtle-foreground)] truncate">
                             {test.initiated_by_role || "Unknown role"}
                           </div>
                         </td>
@@ -279,33 +278,33 @@ export default function TestsAuditPage() {
                             {test.detection_title || "No detection"}
                           </div>
                           {test.detection_id && (
-                            <div className="text-[11px] text-slate-500 truncate">ID: {test.detection_id}</div>
+                            <div className="text-[11px] text-[var(--surface-subtle-foreground)] truncate">ID: {test.detection_id}</div>
                           )}
                         </td>
-                        <td className="py-3 pr-4 whitespace-nowrap font-mono text-slate-600">
+                        <td className="py-3 pr-4 whitespace-nowrap font-mono text-[var(--surface-subtle-foreground)]">
                           {test.technique_id || "—"}
                         </td>
                         <td className="py-3 pr-4 max-w-[220px]">
-                          <span className="text-[11px] text-slate-500 truncate block">
+                          <span className="text-[11px] text-[var(--surface-subtle-foreground)] truncate block">
                             {test.marker || "—"}
                           </span>
                         </td>
-                        <td className="py-3 pr-4 uppercase text-slate-600">
+                        <td className="py-3 pr-4 uppercase text-[var(--surface-subtle-foreground)]">
                           {test.environment || "—"}
                         </td>
                         <td className="py-3 pr-4">
                           <Chip tone={getResultTone(result)}>{getResultLabel(result)}</Chip>
                         </td>
-                        <td className="py-3 pr-4 text-slate-600">{test.status || "—"}</td>
-                        <td className="py-3 pr-4 text-slate-600">
+                        <td className="py-3 pr-4 text-[var(--surface-subtle-foreground)]">{test.status || "—"}</td>
+                        <td className="py-3 pr-4 text-[var(--surface-subtle-foreground)]">
                           {typeof test.score === "number" ? test.score : "—"}
                         </td>
-                        <td className="py-3 pr-4 text-slate-600">#{test.id}</td>
+                        <td className="py-3 pr-4 text-[var(--surface-subtle-foreground)]">#{test.id}</td>
                         <td className="py-3 pr-2 text-right">
                           <Link
                             href={`/tests/${test.id}`}
                             onClick={(e) => e.stopPropagation()}
-                            className="inline-flex items-center gap-1 text-[11px] text-sky-600 hover:text-sky-700 font-medium"
+                            className="inline-flex items-center gap-1 text-[11px] text-[var(--accent-strong)] hover:opacity-80 font-medium"
                           >
                             <Eye className="h-3 w-3" />
                             View
