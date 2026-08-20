@@ -121,7 +121,10 @@ export default function SettingsPage() {
       label: "License",
       description: "View your current plan limits, or paste a license key to unlock the paid tier.",
       icon: KeyRound,
-      status: plan === "paid" ? "configured" : "default",
+      // Free is a normal, resolved state -- not a gap needing review --
+      // so this only reads as "default" (needs attention) while the plan
+      // hasn't loaded yet, never just because it's the free tier.
+      status: plan ? "configured" : "default",
       statusText: plan === "paid" ? "Paid plan" : plan === "free" ? "Free plan" : undefined,
       category: "core",
     },
