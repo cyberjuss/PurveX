@@ -663,3 +663,92 @@ async def set_user_status(
         await session.commit()
 
     return {"message": "User reactivated" if payload.is_active else "User deactivated"}
+
+
+@router.delete("/users/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_user(
+    user_id: int,
+    db: DBSession,
+    current_user: CurrentUser,
+):
+    """Permanently delete a user account (admin only). Unlike deactivation,
+    this is irreversible.
+
+    Rows that are purely this user's own (role assignments, password
+    history, invite tokens they issued or were issued to them) are
+    deleted outright. Rows with independent audit/record value
+    (audit log entries, test runs, proposals, agent commands, ...) keep
+    existing -- the *_by_user_id FK is just cleared, same as the runner
+    delete does for AgentRegistrationToken. Each of those already stores
+    a denormalized email/username alongside the FK for exactly this case,
+    so "who did this" survives the account being gone. Reports are the
+    one exception: generated_by is NOT NULL with no independent value
+    beyond the org that owns them, so they're deleted rather than
+    requiring a migration to relax the column.
+    """
+    await require_permission(current_user, Permission.SETTINGS_USERS_MANAGE, db)
+    org_id = require_org_id(current_user)
+
+    if user_id == current_user.id:
+        raise HTTPException(status_code=400, detail="You cannot delete your own account")
+
+    user = await db.get(models.User, user_id)
+    if not user or user.organization_id != org_id:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    if user.is_admin:
+        remaining_admins = await db.execute(
+            select(func.count()).select_from(models.User).where(
+                models.User.organization_id == org_id,
+                models.User.is_admin == True,  # noqa: E712
+                models.User.id != user_id,
+            )
+        )
+        if remaining_admins.scalar_one() == 0:
+            raise HTTPException(status_code=400, detail="Cannot delete the last administrator")
+
+    deleted_email = user.email
+
+    await db.execute(delete(models.PasswordHistory).where(models.PasswordHistory.user_id == user_id))
+    await db.execute(delete(models.UserRole).where(models.UserRole.user_id == user_id))
+    await db.execute(
+        delete(models.UserInviteToken).where(
+            or_(
+                models.UserInviteToken.user_id == user_id,
+                models.UserInviteToken.invited_by_user_id == user_id,
+            )
+        )
+    )
+
+    for model, column in (
+        (models.Detection, "stage_changed_by"),
+        (models.Test, "initiated_by_user_id"),
+        (models.DetectionProposal, "proposed_by_user_id"),
+        (models.DetectionProposal, "reviewed_by_user_id"),
+        (models.AuditEvent, "user_id"),
+        (models.AgentCommand, "issued_by_user_id"),
+        (models.AgentRegistrationToken, "issued_by_user_id"),
+        (models.TestSchedule, "created_by_user_id"),
+    ):
+        await db.execute(
+            model.__table__.update()
+            .where(getattr(model, column) == user_id)
+            .values(**{column: None})
+        )
+
+    await db.execute(delete(models.Report).where(models.Report.generated_by == user_id))
+    await db.execute(delete(models.User).where(models.User.id == user_id))
+    await db.commit()
+
+    async with async_sessionmaker() as session:
+        session.add(
+            models.AuditEvent(
+                user_id=current_user.id,
+                user_email=current_user.email,
+                action="USER_DELETED",
+                resource_type="user",
+                resource_id=str(user_id),
+                details=f"Deleted {deleted_email}",
+            )
+        )
+        await session.commit()

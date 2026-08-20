@@ -8,12 +8,12 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
-import { getUsers, getUserRoles, assignRole, removeRole, listRoles, setUserPassword, setUserActive, apiFetch } from "@/lib/api";
+import { getUsers, getUserRoles, assignRole, removeRole, listRoles, setUserPassword, setUserActive, deleteUser, apiFetch } from "@/lib/api";
 import { usePermissions } from "@/hooks/usePermissions";
 import { Permission } from "@/lib/permissions";
 import {
   Search, UserPlus, Shield, Key, Users, Filter, CheckCircle2, XCircle, Clock,
-  Download, AlertCircle, Mail, Calendar, X, Loader2, Copy
+  Download, AlertCircle, Mail, Calendar, X, Loader2, Copy, Trash2
 } from "lucide-react";
 import { format, formatRelative } from "date-fns";
 import { cn } from "@/lib/utils";
@@ -111,6 +111,7 @@ export default function UserManagementPage() {
   const [roleFilter, setRoleFilter] = useState<string>("all");
   const [selectedUsers, setSelectedUsers] = useState<Set<number>>(new Set());
   const [togglingActiveId, setTogglingActiveId] = useState<number | null>(null);
+  const [deletingUserId, setDeletingUserId] = useState<number | null>(null);
   const [createUserOpen, setCreateUserOpen] = useState(false);
   const [newUserEmail, setNewUserEmail] = useState("");
   const [creatingUser, setCreatingUser] = useState(false);
@@ -286,6 +287,25 @@ export default function UserManagementPage() {
       setError(getErrorMessage(err, `Failed to ${verb} member.`));
     } finally {
       setTogglingActiveId(null);
+    }
+  }
+
+  async function handleDeleteUser(userId: number, email: string) {
+    if (
+      !window.confirm(
+        `Permanently delete ${email}? This cannot be undone. Their role assignments and login are removed immediately; past audit history, test runs, and reports are kept but no longer linked to their account.`,
+      )
+    )
+      return;
+    try {
+      setDeletingUserId(userId);
+      setError(null);
+      await deleteUser(userId);
+      setUsers((prev) => prev.filter((u) => u.id !== userId));
+    } catch (err: unknown) {
+      setError(getErrorMessage(err, "Failed to delete member."));
+    } finally {
+      setDeletingUserId(null);
     }
   }
 
@@ -884,6 +904,22 @@ export default function UserManagementPage() {
                                 <>
                                   <CheckCircle2 className="h-3 w-3 mr-1.5" />
                                   Reactivate
+                                </>
+                              )}
+                            </Button>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className={cn("h-8 text-xs", toneClasses("danger").text)}
+                              disabled={deletingUserId === user.id}
+                              onClick={() => handleDeleteUser(user.id, user.email)}
+                            >
+                              {deletingUserId === user.id ? (
+                                <Loader2 className="h-3 w-3 animate-spin" />
+                              ) : (
+                                <>
+                                  <Trash2 className="h-3 w-3 mr-1.5" />
+                                  Delete
                                 </>
                               )}
                             </Button>

@@ -1395,6 +1395,10 @@ export async function setUserActive(userId: number, isActive: boolean): Promise<
   });
 }
 
+export async function deleteUser(userId: number): Promise<void> {
+  await apiFetch(`/rbac/users/${userId}`, { method: "DELETE" });
+}
+
 export async function getBootstrapStatus(): Promise<BootstrapStatus> {
   return apiFetch("/auth/bootstrap/status", { cache: "no-store" });
 }

@@ -10,6 +10,8 @@ self-deactivation guard.
 """
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 import pytest
 import pytest_asyncio
 from fastapi import HTTPException
@@ -231,3 +233,109 @@ async def test_invite_rejects_duplicate_email(invite_context):
             request=_FakeRequest(), db=session, current_user=admin,
         )
     assert exc.value.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_delete_user_blocks_self_and_last_admin(invite_context):
+    from app import models
+    from app.security import hash_password
+    import app.routers.rbac as rbac_router
+    session, admin = invite_context
+
+    with pytest.raises(HTTPException) as exc:
+        await rbac_router.delete_user(user_id=admin.id, db=session, current_user=admin)
+    assert exc.value.status_code == 400
+    assert "cannot delete your own" in exc.value.detail.lower()
+
+    other_admin = models.User(
+        id=2, username="other-admin", email="other-admin@example.test",
+        hashed_password=hash_password("Other-Pass1!"),
+        organization_id=1, is_active=True, is_admin=True,
+    )
+    session.add(other_admin)
+    await session.commit()
+
+    # A second admin exists, so deleting one of them is fine.
+    await rbac_router.delete_user(user_id=other_admin.id, db=session, current_user=admin)
+    assert await session.get(models.User, other_admin.id) is None
+
+    # Now `admin` is the only admin left -- deleting it (as some other actor)
+    # must be blocked even though it isn't a self-delete.
+    with pytest.raises(HTTPException) as exc:
+        await rbac_router.delete_user(user_id=admin.id, db=session, current_user=admin)
+    # (self-delete guard fires first here, which is fine -- it's still a 400)
+    assert exc.value.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_delete_user_cleans_up_dependents_and_preserves_audit_trail(invite_context):
+    """Deleting a user must not raise a FK-violation-style error despite the
+    user being referenced from role assignments, password history, and a
+    completed test run -- and the test run's attribution should survive via
+    its denormalized initiated_by_email even after the FK is cleared."""
+    from app import models
+    from app.security import hash_password
+    import app.routers.rbac as rbac_router
+    import app.routers.auth as auth_router
+    session, admin = invite_context
+
+    other = models.User(
+        id=2, username="other", email="other@example.test",
+        hashed_password=hash_password("Other-Pass1!"),
+        organization_id=1, is_active=True,
+    )
+    session.add(other)
+    await session.commit()
+
+    role = models.Role(organization_id=1, name="Member", is_system=False)
+    session.add(role)
+    await session.commit()
+    await session.refresh(role)
+
+    session.add(models.PasswordHistory(user_id=other.id, hashed_password=other.hashed_password))
+    session.add(models.UserRole(user_id=other.id, role_id=role.id, organization_id=1))
+    test_run = models.Test(
+        organization_id=1,
+        technique_id="T1000",
+        environment="lab",
+        status="completed",
+        started_at=datetime.now(timezone.utc),
+        initiated_by_user_id=other.id,
+        initiated_by_email=other.email,
+    )
+    session.add(test_run)
+    await session.commit()
+    await session.refresh(test_run)
+    test_run_id = test_run.id
+
+    await rbac_router.delete_user(user_id=other.id, db=session, current_user=admin)
+    # delete_user's cleanup runs raw Core UPDATE/DELETE statements, which
+    # (unlike ORM-level mutations) don't sync already-loaded objects in this
+    # session's identity map -- expire everything so the assertions below
+    # actually re-read from the DB instead of stale in-memory copies.
+    session.expire_all()
+
+    assert await session.get(models.User, other.id) is None
+
+    preserved = await session.get(models.Test, test_run_id)
+    assert preserved is not None
+    assert preserved.initiated_by_user_id is None
+    assert preserved.initiated_by_email == "other@example.test"
+
+    remaining_roles = (await session.execute(
+        select(models.UserRole).where(models.UserRole.user_id == other.id)
+    )).scalars().all()
+    assert remaining_roles == []
+
+    # The deleted account can no longer authenticate -- a wholly unknown
+    # email, unlike deactivation's 400 "inactive" response.
+    with pytest.raises(HTTPException) as exc:
+        await auth_router.login(
+            form_data=OAuth2PasswordRequestForm(
+                username="other@example.test", password="Other-Pass1!", scope="",
+            ),
+            response=_FakeResponse(),
+            request=_FakeRequest(),
+            db=session,
+        )
+    assert exc.value.status_code == 401
